@@ -66,7 +66,7 @@ export function closeAllSockets(): void {
 }
 
 export interface SocketHandle {
-  send(d: string | ArrayBufferLike | ArrayBufferView): void;
+  send(d: string | ArrayBufferLike | ArrayBufferView): boolean;
   close(): void;
 }
 
@@ -126,7 +126,9 @@ export function connectSocket(path: string, handlers: SocketHandlers, opts: { re
 
   const handle: SocketHandle = {
     send(d) {
-      if (ws?.readyState === OPEN) ws.send(d);
+      if (ws?.readyState !== OPEN) return false;
+      ws.send(d);
+      return true;
     },
     close() {
       registry.delete(handle);

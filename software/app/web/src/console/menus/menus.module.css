@@ -43,3 +43,4 @@
 .oskRow { display: flex; gap: 3px; }
 .oskKey { flex: 1 1 0; min-width: 0; padding: 6px 2px; font-size: 0.85em; }
 .oskKeyOn { background: rgba(94, 196, 255, 0.3); color: var(--ac); }
+.inputGroup { border: 0; margin: 0; padding: 0; min-inline-size: 0; }

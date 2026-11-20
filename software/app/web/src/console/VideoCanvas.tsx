@@ -27,7 +27,7 @@ interface Props {
 /** Draws the newest decoded stream frame and turns focused keyboard and pointer input into HID messages. */
 export function VideoCanvas({ scale, onPointer, cursor }: Props) {
   const { t } = useTranslation();
-  const { send } = useEventsContext();
+  const { send, viewOnly } = useEventsContext();
   const config = useQuery({ queryKey: CONFIG_KEY, queryFn: () => unwrap(api.GET('/api/config')), staleTime: Infinity });
   const relative = config.data?.hid.mouse_mode === 'rel';
   const wheelDir = config.data?.hid.wheel_dir;
@@ -88,8 +88,8 @@ export function VideoCanvas({ scale, onPointer, cursor }: Props) {
 
   const emit = useCallback(
     (m: ClientMessage) => {
+      if (!send(m)) return;
       if (m.t === 'mouse_abs' || m.t === 'mouse_rel') lastPointer.current = m;
-      send(m);
       onPointer?.(m);
     },
     [send, onPointer],
@@ -130,7 +130,7 @@ export function VideoCanvas({ scale, onPointer, cursor }: Props) {
   // React registers wheel listeners as passive, so preventDefault needs a native one.
   useEffect(() => {
     const el = canvas.current;
-    if (!el) return;
+    if (!el || viewOnly) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const m = wheel.current(e.deltaY, { deltaMode: e.deltaMode, dir: wheelDir, speed: wheelSpeed });
@@ -138,7 +138,7 @@ export function VideoCanvas({ scale, onPointer, cursor }: Props) {
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [emit, wheelDir, wheelSpeed]);
+  }, [emit, wheelDir, wheelSpeed, viewOnly]);
 
   const releaseInput = useCallback(() => {
     pressed.current.forEach((code) => send({ t: 'key', code, down: false }));
@@ -150,6 +150,7 @@ export function VideoCanvas({ scale, onPointer, cursor }: Props) {
     buttons.current = 0;
     const last = lastPointer.current;
     if (last?.buttons) emit(last.t === 'mouse_abs' ? { ...last, buttons: 0 } : relMessage(0, 0, 0));
+    lastPointer.current = null;
   }, [emit, send]);
 
   useEffect(() => {
@@ -165,6 +166,12 @@ export function VideoCanvas({ scale, onPointer, cursor }: Props) {
       releaseInput();
     };
   }, [releaseInput]);
+
+  useEffect(() => {
+    if (!viewOnly) return;
+    releaseInput();
+    if (document.pointerLockElement === canvas.current) document.exitPointerLock?.();
+  }, [viewOnly, releaseInput]);
 
   const onKey = (e: React.KeyboardEvent<HTMLCanvasElement>) => {
     const m = keyMessage(e.nativeEvent);
@@ -204,23 +211,24 @@ export function VideoCanvas({ scale, onPointer, cursor }: Props) {
   return (
     <canvas
       ref={canvas}
-      tabIndex={0}
+      tabIndex={viewOnly ? -1 : 0}
       role="application"
       aria-label={t('console.screen')}
       style={{ display: 'block', margin: 'auto', outline: 'none', cursor, ...SCALE_STYLE[scale] }}
-      onKeyDown={onKey}
-      onKeyUp={onKey}
+      onKeyDown={viewOnly ? undefined : onKey}
+      onKeyUp={viewOnly ? undefined : onKey}
       onBlur={releaseInput}
       onPointerCancel={releaseInput}
       onContextMenu={(e) => e.preventDefault()}
       onPointerDown={(e) => {
+        if (viewOnly) return;
         e.currentTarget.focus();
         if (relative && document.pointerLockElement !== e.currentTarget) void e.currentTarget.requestPointerLock?.();
         e.currentTarget.setPointerCapture?.(e.pointerId);
         onPointerEvent(e);
       }}
-      onPointerUp={onPointerEvent}
-      onPointerMove={onPointerEvent}
+      onPointerUp={viewOnly ? undefined : onPointerEvent}
+      onPointerMove={viewOnly ? undefined : onPointerEvent}
     />
   );
 }

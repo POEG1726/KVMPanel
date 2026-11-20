@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { useEventsContext } from '../../api/EventsProvider';
 import { CURSORS, useUi, type CursorStyle } from '../../state/ui';
 import { Select, Slider, Switch } from '../../ui';
 import { ErrorLine, useConfig, usePatchConfig } from './hooks';
@@ -6,6 +7,7 @@ import s from './menus.module.css';
 
 export function MouseMenu() {
   const { t } = useTranslation();
+  const { viewOnly } = useEventsContext();
   const hid = useConfig()?.hid;
   const { patch, error } = usePatchConfig();
   const cursor = useUi((u) => u.cursor);
@@ -19,7 +21,8 @@ export function MouseMenu() {
   return (
     <div className={s.panel}>
       <div className={s.head}>{t('mouse.title')}</div>
-      {hid && (
+      {viewOnly && <p className={s.hint}>{t('console.viewOnlyHint')}</p>}
+      {hid && !viewOnly && (
         <>
           <div className={s.row}>
             <span>{t('mouse.mode')}</span>
@@ -40,7 +43,7 @@ export function MouseMenu() {
         <span>{t('mouse.cursor')}</span>
         <Select label={t('mouse.cursor')} value={cursor} options={CURSORS.map((c) => ({ value: c, label: cursorLabel[c] }))} onChange={setCursor} />
       </div>
-      {hid && (
+      {hid && !viewOnly && (
         <>
           <div className={s.row}>
             <span>{t('mouse.wheelDir')}</span>

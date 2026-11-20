@@ -23,6 +23,7 @@
     "mismatch": "The passwords do not match."
   },
   "console": {
+    "viewOnlyHint": "This session is view only. Remote keyboard and mouse input is disabled.",
     "title": "Console",
     "screen": "Remote screen"
   },

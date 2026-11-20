@@ -19,7 +19,7 @@ const Context = createContext<PasteState | null>(null);
 /** A paste may still be rejected after the user closes the keyboard menu. */
 export function PasteProvider({ events, children }: { events: EventsState; children: ReactNode }) {
   const { t } = useTranslation();
-  const { connected, onServerError, send } = events;
+  const { connected, viewOnly, onServerError, send } = events;
   const [text, setText] = useState('');
   const [error, setError] = useState<PasteState['error']>(null);
   const [pending, setPending] = useState(false);
@@ -37,19 +37,18 @@ export function PasteProvider({ events, children }: { events: EventsState; child
   }), [onServerError, t]);
 
   useEffect(() => {
-    if (!connected) setPending(false);
+    if (!connected || viewOnly) setPending(false);
     return () => {
       clearTimeout(timer.current);
       timer.current = undefined;
     };
-  }, [connected]);
+  }, [connected, viewOnly]);
 
   function submit() {
-    if (!connected || timer.current !== undefined) return;
+    if (!connected || timer.current !== undefined || !send({ t: 'paste', text })) return;
     const submitted = revision.current;
     setError(null);
     setPending(true);
-    send({ t: 'paste', text });
     timer.current = setTimeout(() => {
       timer.current = undefined;
       setPending(false);

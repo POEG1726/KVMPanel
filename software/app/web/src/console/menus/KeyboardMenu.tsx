@@ -21,7 +21,7 @@ const shortcutMessage = (keys: string[]): ClientMessage => ({ t: 'shortcut', key
 
 export function KeyboardMenu() {
   const { t } = useTranslation();
-  const { send, connected } = useEventsContext();
+  const { send, connected, viewOnly } = useEventsContext();
   const hid = useConfig()?.hid;
   const { patch, error } = usePatchConfig();
   const [section, setSection] = useState<Section | null>(null);
@@ -53,8 +53,9 @@ export function KeyboardMenu() {
   }));
 
   return (
-    <div className={`${s.panel} ${section === 'osk' ? s.wide : ''}`}>
+    <fieldset disabled={viewOnly} className={`${s.panel} ${s.inputGroup} ${section === 'osk' ? s.wide : ''}`}>
       <div className={s.head}>{t('keyboard.title')}</div>
+      {viewOnly && <p className={s.hint}>{t('console.viewOnlyHint')}</p>}
 
       <div className={s.row}>
         <Button aria-expanded={section === 'paste'} onClick={() => toggle('paste')}>
@@ -81,13 +82,12 @@ export function KeyboardMenu() {
           {t('keyboard.osk')}
         </Button>
       </div>
-      {section === 'osk' && <ScreenKeyboard onKey={(code, down) => send({ t: 'key', code, down })} />}
+      {!viewOnly && section === 'osk' && <ScreenKeyboard onKey={(code, down) => send({ t: 'key', code, down })} />}
 
       <div className={s.row}>
         <Button
           onClick={() => {
-            send(shortcutMessage(CAD));
-            toast(t('keyboard.cadSent'));
+            if (send(shortcutMessage(CAD))) toast(t('keyboard.cadSent'));
           }}
         >
           {t('keyboard.cad')}
@@ -152,6 +152,6 @@ export function KeyboardMenu() {
         </div>
       )}
       <ErrorLine message={error} />
-    </div>
+    </fieldset>
   );
 }

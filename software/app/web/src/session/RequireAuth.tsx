@@ -44,7 +44,7 @@ export function RequireAuth() {
   // The password change ends this user's other sessions, so the socket is only opened afterwards.
   if (user.must_change_password) return <ChangePasswordDialog />;
   return (
-    <EventsProvider enabled={!workspaceRoute || user.role === 'admin' || user.permissions.includes('console')}>
+    <EventsProvider user={user} enabled={!workspaceRoute || user.role === 'admin' || user.permissions.includes('console')}>
       <ConnectionBanner />
       <Outlet />
     </EventsProvider>
