@@ -9,8 +9,7 @@ Signed-off-by: Codex <noreply@openai.com>
 ---
  .../bindings/media/allwinner,sun20i-d1-csi.yaml    | 114 +++++++++++++++++++++
  .../bindings/media/i2c/lontium,lt8619c.yaml        |  70 +++++++++++++
- MAINTAINERS                                        |  12 +++
- 3 files changed, 196 insertions(+)
+ 2 files changed, 184 insertions(+)
 
 diff --git a/Documentation/devicetree/bindings/media/allwinner,sun20i-d1-csi.yaml b/Documentation/devicetree/bindings/media/allwinner,sun20i-d1-csi.yaml
 new file mode 100644
@@ -134,7 +133,7 @@ index 000000000..71860744e
 +...
 diff --git a/Documentation/devicetree/bindings/media/i2c/lontium,lt8619c.yaml b/Documentation/devicetree/bindings/media/i2c/lontium,lt8619c.yaml
 new file mode 100644
-index 000000000..029f3542a
+index 000000000..1b2cc1397
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/media/i2c/lontium,lt8619c.yaml
 @@ -0,0 +1,70 @@
@@ -147,7 +146,7 @@ index 000000000..029f3542a
 +title: Lontium LT8619C HDMI to BT.656 receiver
 +
 +maintainers:
-+  - KVMPanel <noreply@openai.com>
++  - POEG1726 <poeg1726g@gmail.com>
 +
 +description:
 +  HDMI receiver with an external crystal. This board implementation uses
@@ -208,33 +207,3 @@ index 000000000..029f3542a
 +            };
 +        };
 +    };
-diff --git a/MAINTAINERS b/MAINTAINERS
-index 5821d97ae..6e65aa4e9 100644
---- a/MAINTAINERS
-+++ b/MAINTAINERS
-@@ -884,6 +884,13 @@ L:	linux-crypto@vger.kernel.org
- S:	Maintained
- F:	drivers/crypto/allwinner/
- 
-+ALLWINNER D1 CSIC DRIVER
-+M:	Nguyen Minh Tien <tien.nguyenminh@embeddedlinux.blog>
-+L:	linux-media@vger.kernel.org
-+S:	Maintained
-+T:	git git://linuxtv.org/media.git
-+F:	Documentation/devicetree/bindings/media/allwinner,sun20i-d1-csi.yaml
-+
- ALLWINNER DMIC DRIVERS
- M:	Ban Tao <fengzheng923@gmail.com>
- L:	linux-sound@vger.kernel.org
-@@ -14586,6 +14593,11 @@ S:	Maintained
- T:	git git://git.kernel.org/pub/scm/linux/kernel/git/hid/hid.git
- F:	drivers/hid/hid-lg-g15.c
- 
-+LONTIUM LT8619C KVMPanel CAPTURE SUPPORT
-+L:	linux-media@vger.kernel.org
-+S:	Odd Fixes
-+F:	Documentation/devicetree/bindings/media/i2c/lontium,lt8619c.yaml
-+
- LONTIUM LT8912B MIPI TO HDMI BRIDGE
- M:	Adrien Grassein <adrien.grassein@gmail.com>
- S:	Maintained

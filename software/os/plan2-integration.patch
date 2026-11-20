@@ -6,7 +6,7 @@ diff --git a/docs/linux-6.18.md b/docs/linux-6.18.md
  日期：2026-11-20。检查基线：v6.18 与 v6.18.64。
  
 -已在 Ubuntu 24.04 WSL 交叉编译 6.18.64 的 `sunxi_defconfig`、上游 T113 DTB 和本板 `zImage` / DTB。表中的外设结论来自源码检查，等待实板验证。构建命令见 [开发说明](development.md)。
-+在 Ubuntu WSL 的 Linux 6.18.64 上构建板级内核、模块和组合 DTB。QEMU virt 已验证用户态、USB 枚举，以及 LT8619C、CSIC、TD4322 三个模块的加载和卸载。四份新增内核补丁通过 checkpatch --strict，五个驱动对象通过 W=1 编译，组合 DTB 通过相关绑定的 dt-validate。本板尚未上电。[构建与测试命令](development.md#构建应用所需的内核模块和组合-dtb)
++在 Ubuntu WSL 的 Linux 6.18.64 上构建板级内核、模块和组合 DTB。QEMU virt 已验证用户态、USB 枚举，以及 LT8619C、CSIC、TD4322 三个模块的加载和卸载。四份私有内核补丁使用 checkpatch --strict 检查；每份仅有一条 FILE_PATH_CHANGES 提醒审核上游 MAINTAINERS，项目在 binding 中记录维护人，五个驱动对象通过 W=1 编译，组合 DTB 通过相关绑定的 dt-validate。本板尚未上电。[构建与测试命令](development.md#构建应用所需的内核模块和组合-dtb)
  
  ## 结果
  
@@ -145,7 +145,7 @@ diff --git a/docs/development.md b/docs/development.md
 +    "$files/dts/sun8i-t113i-kvmpanel-drivers.dts" -o "$out/board.pp"
 +dtc -I dts -O dtb -o "$out/sun8i-t113i-kvmpanel-drivers.dtb" "$out/board.pp"
 +for patch in "$files"/patches/000{3,4}-*.patch; do
-+    "$linux/scripts/checkpatch.pl" --strict "$patch"
++    "$linux/scripts/checkpatch.pl" --strict --ignore FILE_PATH_CHANGES "$patch"
 +done
 +```
 +

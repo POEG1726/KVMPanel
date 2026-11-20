@@ -12,7 +12,6 @@ Link: https://lore.kernel.org/linux-media/20260930154835.402684-3-tien.nguyenmin
 Link: https://github.com/rockchip-linux/kernel/blob/develop-6.1/drivers/media/i2c/lt8619c.c
 Signed-off-by: Codex <noreply@openai.com>
 ---
- MAINTAINERS                                        |    2 +
  arch/riscv/boot/dts/allwinner/sunxi-d1s-t113.dtsi  |   31 +
  drivers/media/i2c/Kconfig                          |   15 +
  drivers/media/i2c/Makefile                         |    1 +
@@ -22,28 +21,8 @@ Signed-off-by: Codex <noreply@openai.com>
  drivers/media/platform/sunxi/sun20i-csi/Kconfig    |   17 +
  drivers/media/platform/sunxi/sun20i-csi/Makefile   |    4 +
  .../media/platform/sunxi/sun20i-csi/sun20i_csi.c   | 1405 ++++++++++++++++++++
- 10 files changed, 2077 insertions(+)
+ 9 files changed, 2075 insertions(+)
 
-diff --git a/MAINTAINERS b/MAINTAINERS
-index 6e65aa4e9..96bac9dd2 100644
---- a/MAINTAINERS
-+++ b/MAINTAINERS
-@@ -890,6 +890,7 @@ L:	linux-media@vger.kernel.org
- S:	Maintained
- T:	git git://linuxtv.org/media.git
- F:	Documentation/devicetree/bindings/media/allwinner,sun20i-d1-csi.yaml
-+F:	drivers/media/platform/sunxi/sun20i-csi/
- 
- ALLWINNER DMIC DRIVERS
- M:	Ban Tao <fengzheng923@gmail.com>
-@@ -14597,6 +14598,7 @@ LONTIUM LT8619C KVMPanel CAPTURE SUPPORT
- L:	linux-media@vger.kernel.org
- S:	Odd Fixes
- F:	Documentation/devicetree/bindings/media/i2c/lontium,lt8619c.yaml
-+F:	drivers/media/i2c/lt8619c.c
- 
- LONTIUM LT8912B MIPI TO HDMI BRIDGE
- M:	Adrien Grassein <adrien.grassein@gmail.com>
 diff --git a/arch/riscv/boot/dts/allwinner/sunxi-d1s-t113.dtsi b/arch/riscv/boot/dts/allwinner/sunxi-d1s-t113.dtsi
 index 63e252b44..c25c85bfc 100644
 --- a/arch/riscv/boot/dts/allwinner/sunxi-d1s-t113.dtsi

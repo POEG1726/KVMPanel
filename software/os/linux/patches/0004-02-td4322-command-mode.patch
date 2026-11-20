@@ -10,7 +10,6 @@ disp2 lowlevel_v2x (de_dsi.c, de_lcd_sun50iw10.c and disp_al.c).
 
 Signed-off-by: Codex <noreply@openai.com>
 ---
- MAINTAINERS                            |   1 +
  drivers/gpu/drm/panel/Kconfig          |  10 ++
  drivers/gpu/drm/panel/Makefile         |   1 +
  drivers/gpu/drm/panel/panel-td4322.c   | 260 +++++++++++++++++++++++++++++++++
@@ -18,20 +17,8 @@ Signed-off-by: Codex <noreply@openai.com>
  drivers/gpu/drm/sun4i/sun4i_tcon.h     |   2 +
  drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c | 204 +++++++++++++++++++++++---
  drivers/gpu/drm/sun4i/sun6i_mipi_dsi.h |  11 ++
- 8 files changed, 491 insertions(+), 31 deletions(-)
+ 7 files changed, 490 insertions(+), 31 deletions(-)
 
-diff --git a/MAINTAINERS b/MAINTAINERS
-index 3183d26f3..6a5c23579 100644
---- a/MAINTAINERS
-+++ b/MAINTAINERS
-@@ -8136,6 +8136,7 @@ DRM DRIVER FOR SYNAPTICS TD4322 PANELS
- M:	POEG1726 <poeg1726g@gmail.com>
- S:	Maintained
- F:	Documentation/devicetree/bindings/display/panel/synaptics,td4322.yaml
-+F:	drivers/gpu/drm/panel/panel-td4322.c
- 
- DRM DRIVER FOR SYNOPSYS DESIGNWARE DISPLAYPORT BRIDGE
- M:	Andy Yan <andy.yan@rock-chips.com>
 diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
 index 967265ed6..6fd79e944 100644
 --- a/drivers/gpu/drm/panel/Kconfig

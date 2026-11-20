@@ -7,8 +7,7 @@ signals of the four-lane 1080x1920 module in the supplier reference.
 Signed-off-by: Codex <noreply@openai.com>
 ---
  .../bindings/display/panel/synaptics,td4322.yaml   | 49 ++++++++++++++++++++++
- MAINTAINERS                                        |  5 +++
- 2 files changed, 54 insertions(+)
+ 1 file changed, 49 insertions(+)
 
 diff --git a/Documentation/devicetree/bindings/display/panel/synaptics,td4322.yaml b/Documentation/devicetree/bindings/display/panel/synaptics,td4322.yaml
 new file mode 100644
@@ -65,19 +64,3 @@ index 000000000..db300d1f7
 +  - vddi-supply
 +
 +unevaluatedProperties: false
-diff --git a/MAINTAINERS b/MAINTAINERS
-index 5821d97ae..3183d26f3 100644
---- a/MAINTAINERS
-+++ b/MAINTAINERS
-@@ -8132,6 +8132,11 @@ S:	Maintained
- F:	Documentation/devicetree/bindings/display/panel/synaptics,r63353.yaml
- F:	drivers/gpu/drm/panel/panel-synaptics-r63353.c
- 
-+DRM DRIVER FOR SYNAPTICS TD4322 PANELS
-+M:	POEG1726 <poeg1726g@gmail.com>
-+S:	Maintained
-+F:	Documentation/devicetree/bindings/display/panel/synaptics,td4322.yaml
-+
- DRM DRIVER FOR SYNOPSYS DESIGNWARE DISPLAYPORT BRIDGE
- M:	Andy Yan <andy.yan@rock-chips.com>
- S:	Maintained
