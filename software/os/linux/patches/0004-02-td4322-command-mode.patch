@@ -13,12 +13,12 @@ Signed-off-by: Codex <noreply@openai.com>
  MAINTAINERS                            |   1 +
  drivers/gpu/drm/panel/Kconfig          |  10 ++
  drivers/gpu/drm/panel/Makefile         |   1 +
- drivers/gpu/drm/panel/panel-td4322.c   | 257 +++++++++++++++++++++++++++++++++
+ drivers/gpu/drm/panel/panel-td4322.c   | 260 +++++++++++++++++++++++++++++++++
  drivers/gpu/drm/sun4i/sun4i_tcon.c     |  33 +++--
  drivers/gpu/drm/sun4i/sun4i_tcon.h     |   2 +
  drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c | 204 +++++++++++++++++++++++---
  drivers/gpu/drm/sun4i/sun6i_mipi_dsi.h |  11 ++
- 8 files changed, 488 insertions(+), 31 deletions(-)
+ 8 files changed, 491 insertions(+), 31 deletions(-)
 
 diff --git a/MAINTAINERS b/MAINTAINERS
 index 3183d26f3..6a5c23579 100644
@@ -67,10 +67,10 @@ index 3615a761b..d8c0c5f75 100644
  obj-$(CONFIG_DRM_PANEL_SONY_TULIP_TRULY_NT35521) += panel-sony-tulip-truly-nt35521.o
 diff --git a/drivers/gpu/drm/panel/panel-td4322.c b/drivers/gpu/drm/panel/panel-td4322.c
 new file mode 100644
-index 000000000..8adc51213
+index 000000000..80a10af39
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-td4322.c
-@@ -0,0 +1,257 @@
+@@ -0,0 +1,260 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * panel-td4322.c
@@ -281,7 +281,10 @@ index 000000000..8adc51213
 +	if (IS_ERR(ctx->reset))
 +		return dev_err_probe(dev, PTR_ERR(ctx->reset), "failed to get panel reset\n");
 +
-+	mutex_init(&ctx->lock);
++	ret = devm_mutex_init(dev, &ctx->lock);
++	if (ret)
++		return ret;
++
 +	ctx->dsi = dsi;
 +	mipi_dsi_set_drvdata(dsi, ctx);
 +	dsi->lanes = 4;
