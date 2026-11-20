@@ -140,6 +140,7 @@ pub struct Inner {
     pub started: Instant,
     pub config_updates: broadcast::Sender<Value>,
     pub events: broadcast::Sender<String>,
+    pub socket_closes: tokio::sync::watch::Sender<u16>,
     pub hw: Arc<dyn hardware::Hardware>,
     auth: Mutex<auth::Auth>,
     cfg: Mutex<config::ConfigState>,
@@ -157,6 +158,7 @@ impl App {
             started: Instant::now(),
             config_updates: broadcast::channel(256).0,
             events: broadcast::channel(256).0,
+            socket_closes: tokio::sync::watch::channel(0).0,
             hw,
             auth: Mutex::new(auth::Auth::open(data_dir)?),
             cfg: Mutex::new(config::ConfigState::open(data_dir)?),
@@ -166,6 +168,15 @@ impl App {
         self.storage.status()
     }
     pub fn emit(&self, event: &str) {
+        match event {
+            "disconnect_sessions" => {
+                self.socket_closes.send_replace(4409);
+            }
+            "kvm_restarting" => {
+                self.socket_closes.send_replace(1012);
+            }
+            _ => {}
+        }
         let _ = self.events.send(event.to_owned());
     }
     pub fn socket_code(&self, h: &HeaderMap, perm: &str, event: &str) -> Option<u16> {

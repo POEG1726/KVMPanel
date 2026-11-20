@@ -49,7 +49,8 @@ async fn upgrade(
 ) -> Response {
     // Subscribe before checking the cookie so changes racing the handshake are observed.
     let events = app.events.subscribe();
-    ws.on_upgrade(move |socket| terminal(socket, app, headers, events, q.kind))
+    let closes = app.socket_closes.subscribe();
+    ws.on_upgrade(move |socket| terminal(socket, app, headers, events, closes, q.kind))
 }
 
 fn ioctl_winsize(fd: RawFd, cols: u16, rows: u16) -> io::Result<()> {
@@ -229,6 +230,7 @@ async fn terminal(
     app: App,
     headers: HeaderMap,
     mut events: tokio::sync::broadcast::Receiver<String>,
+    mut closes: tokio::sync::watch::Receiver<u16>,
     kind: Option<String>,
 ) {
     if let Some(code) = app.socket_code(&headers, "terminal", "") {
@@ -282,11 +284,12 @@ async fn terminal(
     };
     let code = tokio::select! {
         biased;
+        _=closes.changed()=>*closes.borrow_and_update(),
         code=async{
             loop{
                 match events.recv().await{
                     Ok(event)=>if let Some(c)=app.socket_code(&headers,"terminal",&event){break c;},
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>break app.socket_code(&headers,"terminal","").unwrap_or(1012),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>if let Some(c)=app.socket_code(&headers,"terminal",""){break c;},
                     Err(_)=>break 1012,
                 }
             }
