@@ -75,3 +75,12 @@ Mock 的测试会对照 `openapi.yaml` 校验每一个响应。初始账号为 `
 | `kvm_restarting` | kvmd 即将重启，随后服务端以 1012 关闭连接 |
 | `error` | `bad_message`：格式不对，这条消息丢弃，连接不断；`forbidden`：只读会话发了输入 |
 | `pong` | 回应 `ping` |
+
+## 视频流：`/api/stream`
+
+- 要求已登录且有 `console` 权限，关闭码和 `/api/ws` 相同。
+- 服务端发给客户端的**每条二进制消息就是一整张 JPEG**，以 `FF D8` 开头、`FF D9` 结尾。分辨率跟随 HDMI 输入，帧率不超过 `config.video.fps_max`。
+- 客户端可以发文本消息 `{"t":"pause"}` 和 `{"t":"resume"}`，比如标签页切到后台时暂停。
+- `config.video.frame_diff` 为 true 时，画面没变就不发。客户端不能把“一段时间没收到帧”当成断线，判断连接状态请看 `/api/ws`。
+- 上一帧还没发完时，新帧直接丢弃（背压），所以慢速网络下帧率会自动降下来。
+- 截图：`GET /api/stream/snapshot.jpg`。EDID：`/api/video/edid`。详见 `openapi.yaml`。

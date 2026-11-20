@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { contract } from './contract.js';
 import { defaultConfig, type Config } from './configDefaults.js';
+import { edid1080p } from './frames.js';
 
 export const ALL_PERMISSIONS = [
   'console', 'power', 'media', 'terminal', 'files', 'device',
@@ -56,6 +57,7 @@ export interface State {
   locks: Locks;
   power: Power;
   media: MediaState;
+  edid: { hex: string; preset: '1080p' | 'custom' };
 }
 
 export function hashPassword(password: string, salt = randomBytes(16).toString('hex')): { salt: string; hash: string } {
@@ -85,5 +87,6 @@ export function createState(opts: { now?: () => number; sleep?: (ms: number) => 
     locks: { num: false, caps: false, scroll: false },
     power: { on: true, hdd: false },
     media: { mounted: null, mode: null },
+    edid: { hex: edid1080p(), preset: '1080p' },
   };
 }

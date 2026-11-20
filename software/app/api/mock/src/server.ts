@@ -5,6 +5,7 @@ import { createState, type State } from './state.js';
 import { registerAuth } from './routes/auth.js';
 import { registerConfig } from './routes/config.js';
 import { registerWs } from './routes/ws.js';
+import { registerStream } from './routes/stream.js';
 
 export interface ServerOptions {
   now?: () => number;
@@ -29,6 +30,7 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
   registerAuth(app, state);
   registerConfig(app, state);
   registerWs(app, state);
+  registerStream(app, state);
 
   return app;
 }

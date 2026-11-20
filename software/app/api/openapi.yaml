@@ -286,6 +286,73 @@ paths:
                   reenumerating: { const: true }
         '401': *unauthenticated
         '403': *forbidden
+  /api/stream/snapshot.jpg:
+    get:
+      operationId: getSnapshot
+      summary: Current HDMI frame as JPEG (console permission)
+      responses:
+        '200':
+          description: JPEG image
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+        '401': *unauthenticated
+        '403': *forbidden
+        '503':
+          description: No HDMI signal (error=no_signal)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/video/edid:
+    get:
+      operationId: getEdid
+      summary: EDID presented to the PC on the HDMI input (console permission)
+      responses:
+        '200':
+          description: Current EDID
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Edid' }
+        '401': *unauthenticated
+        '403': *forbidden
+    put:
+      operationId: putEdid
+      summary: Replace the EDID; the PC sees a hot-plug (device permission)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hex]
+              additionalProperties: false
+              properties:
+                hex: { type: string }
+      responses:
+        '200':
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Edid' }
+        '400':
+          description: Not 128 or 256 bytes of hex, or missing the EDID header (error=bad_edid)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/video/edid/reset:
+    post:
+      operationId: resetEdid
+      summary: Restore the built-in 1080p60 EDID (device permission)
+      responses:
+        '200':
+          description: Restored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Edid' }
+        '401': *unauthenticated
+        '403': *forbidden
 components:
   securitySchemes:
     session:
@@ -456,3 +523,10 @@ components:
           additionalProperties: false
           properties:
             enabled: { type: boolean, default: true, description: false keeps only the dashboard }
+    Edid:
+      type: object
+      required: [hex, preset]
+      additionalProperties: false
+      properties:
+        hex: { type: string, pattern: '^00ffffffffffff00([0-9a-f]{240}|[0-9a-f]{496})$', description: 128 or 256 bytes, lowercase hex }
+        preset: { type: string, enum: ['1080p', custom] }
