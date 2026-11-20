@@ -28,6 +28,7 @@ use std::{
 use uuid::Uuid;
 
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
 struct Settings {
     scripts: BTreeMap<String, String>,
     network: Value,
