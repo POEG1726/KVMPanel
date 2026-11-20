@@ -324,6 +324,100 @@ describe('Update page offline upload', () => {
 });
 
 describe('Update job progress', () => {
+  it.each(['online', 'offline'] as const)('recovers the pending %s submission and follows its job after reopening', async (kind) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let submits = 0;
+    configureApi({ fetch: async (input, init) => {
+      const req = new Request(input, init);
+      if (req.method === 'POST' || req.method === 'PUT') {
+        submits++;
+        const response = await jar.fetch(req);
+        await gate;
+        return response;
+      }
+      return jar.fetch(req);
+    } });
+    const qc = client();
+    mount('update', qc);
+    if (kind === 'offline') {
+      fireEvent.change(await screen.findByLabelText(t('settings.update.offlineFile')), { target: { files: [new File(['pkg'], 'update.tar')] } });
+    } else {
+      fireEvent.click(await screen.findByRole('button', { name: t('settings.update.install') }));
+    }
+    const confirm = await screen.findByRole('dialog', { name: t('settings.update.installTitle') });
+    fireEvent.click(within(confirm).getByRole('button', { name: t('settings.update.install') }));
+    await waitFor(() => expect(submits).toBe(1));
+    cleanup();
+    mount('update', qc);
+    try {
+      expect(await screen.findByRole('button', { name: t('settings.update.install') })).toBeDisabled();
+      expect(screen.getByLabelText(t('settings.update.offlineFile'))).toBeDisabled();
+    } finally { release(); }
+    await screen.findByRole('progressbar');
+    expect(submits).toBe(1);
+  });
+
+  it('does not start an offline PUT with a new session after hashing finishes', async () => {
+    const file = new File(['pkg'], 'update.tar');
+    const chunk = file.slice();
+    const data = await chunk.arrayBuffer();
+    let finish!: (bytes: ArrayBuffer) => void;
+    const hashRead = vi.spyOn(chunk, 'arrayBuffer').mockReturnValue(new Promise<ArrayBuffer>((resolve) => { finish = resolve; }));
+    vi.spyOn(file, 'slice').mockReturnValue(chunk);
+    const qc = client();
+    mount('update', qc);
+    fireEvent.change(await screen.findByLabelText(t('settings.update.offlineFile')), { target: { files: [file] } });
+    const confirm = await screen.findByRole('dialog', { name: t('settings.update.installTitle') });
+    fireEvent.click(within(confirm).getByRole('button', { name: t('settings.update.install') }));
+    await waitFor(() => expect(hashRead).toHaveBeenCalled());
+    cleanup();
+    qc.clear();
+    mount('update', qc);
+    expect(await screen.findByRole('button', { name: t('settings.update.install') })).toBeEnabled();
+    let uploads = 0;
+    configureApi({ fetch: async (input, init) => {
+      const req = new Request(input, init);
+      if (req.method === 'PUT') uploads++;
+      return jar.fetch(req);
+    } });
+    await act(async () => { finish(data); });
+    expect(uploads).toBe(0);
+  });
+
+  it('discards an update response that arrives after logout and login', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let waiting = false;
+    let polls = 0;
+    configureApi({ fetch: async (input, init) => {
+      const req = new Request(input, init);
+      const path = new URL(req.url).pathname;
+      if (path === '/api/update/apply') {
+        waiting = true;
+        await gate;
+        return Response.json({ job: { id: 'old-job', state: 'running', progress: 0 } });
+      }
+      if (path.includes('/api/update/jobs/')) polls++;
+      return jar.fetch(req);
+    } });
+    const qc = client();
+    mount('update', qc);
+    fireEvent.click(await screen.findByRole('button', { name: t('settings.update.install') }));
+    const confirm = await screen.findByRole('dialog', { name: t('settings.update.installTitle') });
+    fireEvent.click(within(confirm).getByRole('button', { name: t('settings.update.install') }));
+    await waitFor(() => expect(waiting).toBe(true));
+    cleanup();
+    qc.clear();
+    mount('update', qc);
+    await screen.findByRole('button', { name: t('settings.update.install') });
+    await act(async () => { release(); });
+    cleanup();
+    mount('update', qc);
+    expect(await screen.findByRole('button', { name: t('settings.update.install') })).toBeEnabled();
+    expect(polls).toBe(0);
+  });
+
   it('resumes tracking the installation on returning to settings and announces completion once per job', async () => {
     const qc = client();
     mount('update', qc);

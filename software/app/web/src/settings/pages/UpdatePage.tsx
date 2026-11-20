@@ -1,5 +1,5 @@
 import { useEffect, useState, type ChangeEvent } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { ApiError, api, unwrap } from '../../api/client';
 import { sha256File } from '../../api/fileHash';
@@ -14,20 +14,24 @@ export const JOB_POLL_MS = 1000;
 const ACTIVE_JOB_KEY = ['update', 'activeJob'] as const;
 const NOTIFIED_JOB_KEY = ['update', 'notifiedJob'] as const;
 const MAX_PACKAGE_BYTES = 256 * 1024 * 1024;
+type Installation = { phase: 'idle' | 'submitting' } | { phase: 'tracking'; jobId: string } | { phase: 'failed'; error: unknown };
 
 /** Update channel and server, online check/install, and offline package upload. */
 export function UpdatePage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
-  const info = useQuery({ queryKey: UPDATE_KEY, queryFn: () => unwrap(api.GET('/api/update')) });
+  const info = useQuery({ queryKey: UPDATE_KEY, queryFn: ({ signal }) => unwrap(api.GET('/api/update', { signal })) });
   const { error, run } = useRun();
-  const [jobId, setJobId] = useState(() => qc.getQueryData<string>(ACTIVE_JOB_KEY));
-  const [submitting, setSubmitting] = useState(false);
+  // Keep the submission and job visible across page unmounts, until the signed-in session is cleared.
+  const installation = useQuery<Installation>({
+    queryKey: ACTIVE_JOB_KEY, queryFn: skipToken, initialData: { phase: 'idle' }, gcTime: Infinity,
+  }).data;
+  const jobId = installation?.phase === 'tracking' ? installation.jobId : undefined;
   const [confirming, setConfirming] = useState(false);
   const [offlineFile, setOfflineFile] = useState<File | null>(null);
   const job = useQuery({
     queryKey: ['update', 'job', jobId],
-    queryFn: async () => (await unwrap(api.GET('/api/update/jobs/{id}', { params: { path: { id: jobId! } } }))).job,
+    queryFn: async ({ signal }) => (await unwrap(api.GET('/api/update/jobs/{id}', { signal, params: { path: { id: jobId! } } }))).job,
     enabled: !!jobId,
     refetchInterval: (q) => (q.state.data?.state === 'running' || !q.state.data ? JOB_POLL_MS : false),
   });
@@ -38,7 +42,7 @@ export function UpdatePage() {
       toast(t('settings.update.installed'));
     }
   }, [completedId, qc, t]);
-  const busy = submitting || (!!jobId && (job.isPending || job.data?.state === 'running'));
+  const busy = installation?.phase === 'submitting' || (!!jobId && (job.isPending || job.data?.state === 'running'));
 
   const d = info.data;
   const saveSettings = (part: Partial<{ channel: 'stable' | 'preview'; server: string }>) =>
@@ -57,22 +61,28 @@ export function UpdatePage() {
     e.target.value = '';
   };
   const install = async (file?: File) => {
-    setSubmitting(true);
+    const cache = qc.getQueryCache();
+    const session = cache.find<Installation>({ queryKey: ACTIVE_JOB_KEY });
+    if (busy || !installation || !session || session.state.data !== installation) return;
+    session.setData({ phase: 'submitting' });
+    const current = () => cache.find<Installation>({ queryKey: ACTIVE_JOB_KEY }) === session;
     try {
-      await run(async () => {
-        if (file && file.size > MAX_PACKAGE_BYTES) throw new ApiError(413, 'too_large');
-        const result = file
-          ? await unwrap(api.PUT('/api/update/offline', {
-              params: { header: { 'X-Sha256': await sha256File(file) } },
-              body: file as never, bodySerializer: () => file,
-              headers: { 'content-type': 'application/octet-stream' },
-            }))
-          : await unwrap(api.POST('/api/update/apply'));
-        qc.setQueryData(ACTIVE_JOB_KEY, result.job.id);
-        setJobId(result.job.id);
-      });
-    } finally {
-      setSubmitting(false);
+      if (file && file.size > MAX_PACKAGE_BYTES) throw new ApiError(413, 'too_large');
+      const sha = file ? await sha256File(file) : undefined;
+      if (!current()) return;
+      const response = file
+        ? await api.PUT('/api/update/offline', {
+            params: { header: { 'X-Sha256': sha! } },
+            body: file as never, bodySerializer: () => file,
+            headers: { 'content-type': 'application/octet-stream' },
+          })
+        : await api.POST('/api/update/apply');
+      // Ignore a previous user's late response, including its authentication errors.
+      if (!current()) return;
+      const result = await unwrap(Promise.resolve(response));
+      session.setData({ phase: 'tracking', jobId: result.job.id });
+    } catch (error) {
+      if (current()) session.setData({ phase: 'failed', error });
     }
   };
 
@@ -120,7 +130,7 @@ export function UpdatePage() {
           <span>{t(`settings.update.state.${job.data.state}`)}</span>
         </Group>
       )}
-      <Alert message={error ?? (job.error ? errorText(t, job.error) : null)} />
+      <Alert message={error ?? (installation?.phase === 'failed' ? errorText(t, installation.error) : job.error ? errorText(t, job.error) : null)} />
       {offlineFile && (
         <ConfirmDialog
           title={t('settings.update.installTitle')}
