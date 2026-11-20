@@ -872,6 +872,251 @@ paths:
         '401': *unauthenticated
         '403': *forbidden
         '404': *notFound
+  /api/device:
+    get:
+      operationId: getDevice
+      summary: Board information (device permission); same data as the panel's Device Info page
+      responses:
+        '200':
+          description: Device info
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceInfo' }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/device/action:
+    post:
+      operationId: deviceAction
+      summary: reboot / shutdown the board (not the PC), restart kvmd (web sessions see kvm_restarting then close 1012; the panel keeps running), reset the HID gadget, or disconnect all console sessions (device permission)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              additionalProperties: false
+              properties:
+                action: { $ref: '#/components/schemas/DeviceAction' }
+      responses:
+        '202': *accepted
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/network:
+    get:
+      operationId: getNetwork
+      responses:
+        '200':
+          description: Network settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkConfig' }
+        '401': *unauthenticated
+        '403': *forbidden
+    put:
+      operationId: putNetwork
+      summary: Replace network settings; static mode requires ip, mask and gateway (network permission)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NetworkConfig' }
+      responses:
+        '200':
+          description: Stored (applied after the response is sent)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkConfig' }
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/tailscale:
+    get:
+      operationId: getTailscale
+      responses:
+        '200':
+          description: Tailscale state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [installed, running]
+                additionalProperties: false
+                properties:
+                  installed: { type: boolean }
+                  running: { type: boolean }
+                  ip: { type: string }
+                  login_url: { type: string, description: Present while waiting for the user to authorise the device }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/tailscale/{action}:
+    parameters:
+      - { name: action, in: path, required: true, schema: { type: string, enum: [install, uninstall, up, down, login, logout] } }
+    post:
+      operationId: tailscaleAction
+      responses:
+        '202': *accepted
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/update:
+    get:
+      operationId: getUpdate
+      summary: App-bundle update state (updates permission). Updates replace kvmd, panel and the web files only.
+      responses:
+        '200':
+          description: Versions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [current, channel, server]
+                additionalProperties: false
+                properties:
+                  current: { type: string }
+                  latest: { type: string }
+                  channel: { type: string, enum: [stable, preview] }
+                  server: { type: string }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/update/check:
+    post:
+      operationId: checkUpdate
+      responses:
+        '200':
+          description: Checked; latest is filled when the server answered
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [current]
+                additionalProperties: false
+                properties:
+                  current: { type: string }
+                  latest: { type: string }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/update/apply:
+    post:
+      operationId: applyUpdate
+      responses:
+        '202':
+          description: Update started; kvmd restarts when done
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UpdateJobEnvelope' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '409': *conflict
+  /api/update/offline:
+    put:
+      operationId: uploadUpdate
+      summary: Upload an app-bundle package (application/octet-stream) with its X-Sha256
+      parameters:
+        - { name: X-Sha256, in: header, required: true, schema: { type: string, pattern: '^[0-9a-fA-F]{64}$' } }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '202':
+          description: Verified; install started
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UpdateJobEnvelope' }
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+        '422':
+          description: error=checksum_mismatch
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/mcp:
+    get:
+      operationId: getMcp
+      responses:
+        '200':
+          description: MCP state; the key itself is never returned here
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled, key_hint]
+                additionalProperties: false
+                properties:
+                  enabled: { type: boolean }
+                  key_hint: { type: [string, 'null'], description: Last 4 characters of the key }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/mcp/regenerate:
+    post:
+      operationId: regenerateMcpKey
+      summary: Create a new key (the old one stops working). This is the only response that contains the full key.
+      responses:
+        '200':
+          description: New key
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [key]
+                additionalProperties: false
+                properties:
+                  key: { type: string, minLength: 32 }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/about:
+    get:
+      operationId: getAbout
+      security: []
+      responses:
+        '200':
+          description: Product information
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [name, version, licenses_url]
+                additionalProperties: false
+                properties:
+                  name: { const: KVMPanel }
+                  version: { type: string }
+                  licenses_url: { type: string }
+  /api/branding/logo:
+    get:
+      operationId: getLogo
+      security: []
+      responses:
+        '200':
+          description: Logo image
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+            image/svg+xml:
+              schema: { type: string }
+        '404': *notFound
+    put:
+      operationId: putLogo
+      summary: Replace the logo (image/png or image/svg+xml, ≤ 256 KiB; device permission)
+      requestBody:
+        required: true
+        content:
+          image/png:
+            schema: { type: string, format: binary }
+          image/svg+xml:
+            schema: { type: string }
+      responses:
+        '204': *noContent
+        '401': *unauthenticated
+        '403': *forbidden
+        '413':
+          description: error=too_large
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 components:
   securitySchemes:
     session:
@@ -1131,3 +1376,73 @@ components:
       properties:
         name: { type: string, pattern: '^[A-Za-z0-9._-]{1,64}$' }
         size: { type: integer, minimum: 0 }
+    DeviceAction:
+      type: string
+      enum: [reboot, shutdown, restart_kvm, reset_hid, disconnect_sessions]
+    UsedTotal:
+      type: object
+      required: [used, total]
+      additionalProperties: false
+      properties:
+        used: { type: number, minimum: 0, description: bytes }
+        total: { type: number, minimum: 0, description: bytes }
+    DeviceInfo:
+      type: object
+      required: [hostname, version, kernel, uptime_s, ip, mac, link_mbps, soc_temp_c, mem, data, lux]
+      additionalProperties: false
+      properties:
+        hostname: { type: string }
+        version: { type: string }
+        kernel: { type: string }
+        uptime_s: { type: integer, minimum: 0 }
+        ip: { type: [string, 'null'] }
+        mac: { type: string }
+        link_mbps: { type: integer, minimum: 0, description: 0 when the cable is out }
+        soc_temp_c: { type: [number, 'null'] }
+        mem: { $ref: '#/components/schemas/UsedTotal' }
+        data: { $ref: '#/components/schemas/UsedTotal' }
+        lux: { type: [number, 'null'], description: BH1750 reading }
+    NetworkConfig:
+      type: object
+      required: [mode, dns, https, http_port, bind]
+      additionalProperties: false
+      properties:
+        mode: { type: string, enum: [dhcp, static] }
+        ip: { type: string, format: ipv4 }
+        mask: { type: string, format: ipv4 }
+        gateway: { type: string, format: ipv4 }
+        dns:
+          type: object
+          required: [mode, servers]
+          additionalProperties: false
+          properties:
+            mode: { type: string, enum: [dhcp, manual] }
+            servers: { type: array, items: { type: string }, maxItems: 4 }
+        https:
+          type: object
+          required: [enabled, port]
+          additionalProperties: false
+          properties:
+            enabled: { type: boolean }
+            port: { type: integer, minimum: 1, maximum: 65535 }
+            cert_path: { type: string }
+            key_path: { type: string }
+        http_port: { type: integer, minimum: 1, maximum: 65535 }
+        bind: { type: string, description: 'Listen address, e.g. 0.0.0.0' }
+      if:
+        properties: { mode: { const: static } }
+      then:
+        required: [ip, mask, gateway]
+    UpdateJobEnvelope:
+      type: object
+      required: [job]
+      additionalProperties: false
+      properties:
+        job:
+          type: object
+          required: [id, state, progress]
+          additionalProperties: false
+          properties:
+            id: { type: string }
+            state: { type: string, enum: [running, done, failed] }
+            progress: { type: integer, minimum: 0, maximum: 100 }

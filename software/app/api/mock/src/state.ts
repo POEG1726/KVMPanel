@@ -74,6 +74,14 @@ export interface State {
   jobs: DownloadJob[];
   share: { exported_to_host: boolean };
   scripts: Map<string, string>;
+  network: {
+    mode: 'dhcp' | 'static'; ip?: string; mask?: string; gateway?: string;
+    dns: { mode: 'dhcp' | 'manual'; servers: string[] };
+    https: { enabled: boolean; port: number; cert_path?: string; key_path?: string };
+    http_port: number; bind: string;
+  };
+  mcpKey: string | null;
+  logo: { type: string; data: Buffer } | null;
 }
 
 export function hashPassword(password: string, salt = randomBytes(16).toString('hex')): { salt: string; hash: string } {
@@ -110,5 +118,8 @@ export function createState(opts: { now?: () => number; sleep?: (ms: number) => 
     jobs: [],
     share: { exported_to_host: false },
     scripts: new Map(),
+    network: { mode: 'dhcp', dns: { mode: 'dhcp', servers: [] }, https: { enabled: false, port: 443 }, http_port: 80, bind: '0.0.0.0' },
+    mcpKey: null,
+    logo: null,
   };
 }
