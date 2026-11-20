@@ -1,0 +1,91 @@
+{
+  "date": "2026-11-20",
+  "imports": [
+    {
+      "source": "C:\\Users\\Linro\\Documents\\ChatGPT\\JLCEDA\\review\\t113i_linux618_audit_20261120\\source_audit.json",
+      "destination": "provenance/research-20261120/source_audit.json",
+      "context": "2026-11-20 static v6.18.64 audit; not hardware validation",
+      "size": 16747,
+      "sha256": "f7eb5ffadf06eef4ea6868423d14f521a1ad973ee3727ae6ca74286a63e53ebe"
+    },
+    {
+      "source": "C:\\Users\\Linro\\Documents\\ChatGPT\\JLCEDA\\review\\t113i_linux618_audit_20261120\\board_components.json",
+      "destination": "hardware/reference/board-components-20261120.json",
+      "context": "2026-11-20 live PCB component properties; not a netlist or manufacturing BOM",
+      "size": 1586,
+      "sha256": "2357a5577a8cb0b1a156e3ca8b49f5495b305470abdc08608d9d10be8cca10fe"
+    },
+    {
+      "source": "C:\\Users\\Linro\\Documents\\ChatGPT\\JLCEDA\\review\\T113-i_Datasheet_V1.4.pdf",
+      "destination": "hardware/reference/datasheets/T113-i_Datasheet_V1.4.pdf",
+      "context": "Existing local reference; preserve exact bytes; redistribution rights not assessed",
+      "size": 6791374,
+      "sha256": "923c95cff2e34fbe976f20b07b9c9b3b64cfbb5e8b8a6f2fc39e04feb4684c50"
+    },
+    {
+      "source": "C:\\Users\\Linro\\Documents\\ChatGPT\\JLCEDA\\review\\T113-i_EVB_V1_0_20220507.pdf",
+      "destination": "hardware/reference/datasheets/T113-i_EVB_V1_0_20220507.pdf",
+      "context": "Existing local reference; preserve exact bytes; redistribution rights not assessed",
+      "size": 1560879,
+      "sha256": "18d1245e9a14a149d19b7e54b3b4a98af4f18c5e88b5e4c76933b78b6e8d7635"
+    },
+    {
+      "source": "C:\\Users\\Linro\\Documents\\ChatGPT\\JLCEDA\\review\\T113-i_Industrial-DevKit_V12_PLUS.pdf",
+      "destination": "hardware/reference/datasheets/T113-i_Industrial-DevKit_V12_PLUS.pdf",
+      "context": "Existing local reference; preserve exact bytes; redistribution rights not assessed",
+      "size": 2177751,
+      "sha256": "0b87cfbf15ab6308239b7c3adadcc16c18c31df44f99d2595806ccb8f7571b41"
+    },
+    {
+      "source": "C:\\Users\\Linro\\Documents\\ChatGPT\\JLCEDA\\review\\T113_hw_guide.pdf",
+      "destination": "hardware/reference/datasheets/T113_hw_guide.pdf",
+      "context": "Existing local reference; preserve exact bytes; redistribution rights not assessed",
+      "size": 3364078,
+      "sha256": "af559282e5db4ba458ec5ec33b27c6a5631ebeecb5e7953b51c5647c364faf35"
+    },
+    {
+      "source": "C:\\Users\\Linro\\Documents\\ChatGPT\\JLCEDA\\review\\t113i_linux618_audit_20261120\\lt8619c_rockchip.c",
+      "destination": "sources/donors/research-20261120/lt8619c_rockchip.c",
+      "context": "Prior read-only audit reference; provenance links documented in research note; not a complete build tree",
+      "size": 51606,
+      "sha256": "a599950463cc44edd1336365e227547ad19365cf95f43c718fc44a3614afb1bb"
+    },
+    {
+      "source": "C:\\Users\\Linro\\Documents\\ChatGPT\\JLCEDA\\review\\t113i_linux618_audit_20261120\\tina_sun8iw20p1.dtsi",
+      "destination": "sources/donors/research-20261120/tina_sun8iw20p1.dtsi",
+      "context": "Prior read-only audit reference; provenance links documented in research note; not a complete build tree",
+      "size": 55162,
+      "sha256": "8f369e5e8bbd974ec05215543af40834ecdd5b5acdc90f1527cb4f55fdbe0028"
+    },
+    {
+      "source": "C:\\Users\\Linro\\Documents\\ChatGPT\\JLCEDA\\review\\t113i_linux618_audit_20261120\\tina_t113i_board.dts",
+      "destination": "sources/donors/research-20261120/tina_t113i_board.dts",
+      "context": "Prior read-only audit reference; provenance links documented in research note; not a complete build tree",
+      "size": 52275,
+      "sha256": "be25056d383679ff008db0a38c61a0bc00bf62c8d81104cdc875eb576847266d"
+    },
+    {
+      "source": "C:\\Users\\Linro\\Documents\\ChatGPT\\JLCEDA\\review\\t113i_linux618_audit_20261120\\uboot_psci.c",
+      "destination": "sources/donors/research-20261120/uboot_psci.c",
+      "context": "Prior read-only audit reference; provenance links documented in research note; not a complete build tree",
+      "size": 8548,
+      "sha256": "d5933263d5fe377fb2ddddcabd18f24acbbc3576c2f609f46898a71d312f1e7a"
+    },
+    {
+      "source": "C:\\Users\\Linro\\Documents\\ChatGPT\\JLCEDA\\review\\t113i_linux618_audit_20261120\\uboot_dram_sun20i_d1.c",
+      "destination": "sources/donors/research-20261120/uboot_dram_sun20i_d1.c",
+      "context": "Prior read-only audit reference; provenance links documented in research note; not a complete build tree",
+      "size": 34810,
+      "sha256": "425fedc3f5845c7faae41cbe47e4b62a1af028787724096c0add94074d329142"
+    }
+  ],
+  "eda_native_export": {
+    "status": "not-completed",
+    "project_uuid": "7ec139b420d34d068a8c558049193205",
+    "project_name": "OC_Controller",
+    "board": "Monitor",
+    "attempted_destination": "hardware/eda/OC_Controller_snapshot_20261120.epro2",
+    "tool_error": "未启用扩展和独立脚本的外部交互权限",
+    "note": "No permission change or elevation performed. Original source project was not modified."
+  }
+}

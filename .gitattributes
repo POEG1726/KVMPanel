@@ -1,0 +1,13 @@
+* text=auto eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.py text eol=lf
+*.sh text eol=lf
+*.mk text eol=lf
+*.dts text eol=lf
+*.dtsi text eol=lf
+*.patch text eol=lf
+*.pdf -text
+*.png -text
+*.epro -text
+*.epro2 -text

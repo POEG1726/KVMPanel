@@ -1,0 +1,25 @@
+# Local upstream repositories and acquisition state
+/sources/repos/
+/sources/donors/
+/sources/state.json
+/sources/workspaces.json
+/downloads/
+/build/
+/artifacts/
+/logs/
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+!.env.example
+node_modules/
+*.log
+# EDA snapshots are locally archived; hashes and provenance are tracked.
+/hardware/eda/*.epro
+/hardware/eda/*.epro2
+/hardware/exports/generated/
+/hardware/reference/datasheets/
+# Vendor archives / credentials must not enter the project repository.
+*.key
+*.pem
