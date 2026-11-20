@@ -106,7 +106,11 @@ async fn greetings_metrics_filter_threshold_and_pc_lifetime() {
         16
     );
     let by_id = |id: &str| metrics.iter().find(|m| m["id"] == id).unwrap();
-    assert!(by_id("mem.dimm.a1")["value"].is_null());
+    let dims: Vec<_> = metrics
+        .iter()
+        .filter_map(|m| m["id"].as_str()?.strip_prefix("mem.dimm."))
+        .collect();
+    assert_eq!(dims, ["a2", "b2"]);
     assert!(by_id("mem.dimm.a2")["value"].is_number());
     assert_eq!(by_id("ssd.0.temp")["label"], "SSD 2T");
     let temp = by_id("cpu.tctl");

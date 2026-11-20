@@ -90,6 +90,13 @@ impl Host {
         self.last_seen = Some((now, ts));
     }
 
+    fn snapshot(&mut self) -> Self {
+        let captured = self.clone();
+        // Preserve the reported inventory. A missed sample in the next second
+        // is null, rather than displaying the previous measurement as fresh.
+        self.samples.values_mut().for_each(|sample| *sample = None);
+        captured
+    }
     fn online(&self, now: Instant) -> bool {
         self.last_seen
             .is_some_and(|(last, _)| now.saturating_duration_since(last) < Duration::from_secs(3))
@@ -156,7 +163,7 @@ async fn sampler(app: App, tx: broadcast::Sender<Value>, pc: watch::Sender<bool>
             if app.sim && app.console.sim_pc_connected.load(Ordering::Relaxed) {
                 host.last_seen = Some((now, ts));
             }
-            host.clone()
+            host.snapshot()
         };
         let connected = if app.sim {
             app.console.sim_pc_connected.load(Ordering::Relaxed)
@@ -425,6 +432,22 @@ pub async fn serve(app: App, addr: &str) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn missing_metrics_are_omitted_but_reported_slots_survive_a_missing_read() {
+        let mut host = Host::default();
+        let mut report = [0; 64];
+        report[0] = 3;
+        let payload = b"mem.dimm.c1=46.5";
+        report[1..1 + payload.len()].copy_from_slice(payload);
+        let (id, value) = TextReportDecoder.decode(&report).unwrap();
+        host.ingest(id, value, Instant::now(), 1000);
+        for expected in [json!(46.5), Value::Null] {
+            let m = metrics::snapshot(0., &json!({}), Some(&host.snapshot().samples));
+            assert_eq!(m.len(), 1);
+            assert_eq!(m[0]["id"], "mem.dimm.c1");
+            assert_eq!(m[0]["value"], expected);
+        }
+    }
     #[test]
     fn host_gaps_clear_old_metrics_before_reconnect() {
         let now = Instant::now();

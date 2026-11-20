@@ -13,7 +13,7 @@ struct Metric {
     max: f64,
     group: &'static str,
     warn: Option<f64>,
-    simulated: Option<f64>,
+    simulated: f64,
 }
 
 impl Metric {
@@ -33,13 +33,13 @@ impl Metric {
             max: range.1,
             group,
             warn: None,
-            simulated: Some(value),
+            simulated: value,
         }
     }
 }
 
 // Use one catalogue for both paths so IDs, layout ranges and units also work before a PC reports a value.
-fn catalogue(t: f64) -> Vec<Metric> {
+fn catalogue(t: f64, samples: Option<&Samples>) -> Vec<Metric> {
     let a = ((t / 9.).sin() + 1.) / 2.;
     let b = ((t / 13. + 1.).sin() + 1.) / 2.;
     // Repeatable phase offsets give the PC preview small independent fluctuations.
@@ -153,22 +153,25 @@ fn catalogue(t: f64) -> Vec<Metric> {
             24. + 5. * a + 0.2 * jitter(13.),
         ),
     ]);
-    for (slot, value) in [
-        ("a1", None),
-        ("a2", Some(38. + 10. * a + 0.2 * jitter(14.))),
-        ("b1", None),
-        ("b2", Some(40. + 10. * a + 0.2 * jitter(15.))),
-    ] {
-        let mut metric = Metric::new(
+    let slots: Vec<(&str, f64)> = match samples {
+        Some(reported) => reported
+            .keys()
+            .filter_map(|id| dimm_slot(id).map(|slot| (slot, 0.0)))
+            .collect(),
+        None => vec![
+            ("a2", 38. + 10. * a + 0.2 * jitter(14.)),
+            ("b2", 40. + 10. * a + 0.2 * jitter(15.)),
+        ],
+    };
+    for (slot, value) in slots {
+        m.push(Metric::new(
             &format!("mem.dimm.{slot}"),
             &format!("DIMM {}", slot.to_uppercase()),
             "°C",
             (30., 60.),
             "mem",
-            0.,
-        );
-        metric.simulated = value;
-        m.push(metric);
+            value,
+        ));
     }
     m.extend([
         Metric::new("mem.mclk", "MCLK", "MHz", (2900., 3100.), "mem", 3000.),
@@ -225,18 +228,26 @@ fn catalogue(t: f64) -> Vec<Metric> {
     m
 }
 
+fn dimm_slot(id: &str) -> Option<&str> {
+    let slot = id.strip_prefix("mem.dimm.")?;
+    (!slot.is_empty()
+        && slot
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_'))
+    .then_some(slot)
+}
 pub type Samples = BTreeMap<String, Option<f64>>;
 
 pub fn snapshot(t: f64, config: &Value, samples: Option<&Samples>) -> Vec<Value> {
     let thresholds = config["thresholds"].as_object();
     let hidden = config["hidden_metrics"].as_array();
-    catalogue(t).into_iter().filter_map(|metric| {
+    catalogue(t,samples).into_iter().filter_map(|metric| {
         if hidden.is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(&metric.id))) {
             return None;
         }
         let value = match samples {
-            Some(samples) => samples.get(&metric.id).copied().flatten(),
-            None => metric.simulated.map(|v| (v * 1000.).round() / 1000.),
+            Some(samples) => *samples.get(&metric.id)?,
+            None => Some((metric.simulated * 1000.).round() / 1000.),
         };
         let mut out = json!({"id": metric.id, "label": metric.label, "unit": metric.unit, "min": metric.min, "max": metric.max, "value": value, "group": metric.group});
         let warn = thresholds.and_then(|map| map.get(&metric.id).or_else(|| {
@@ -266,9 +277,13 @@ impl ReportDecoder for TextReportDecoder {
             return None;
         }
         let (id, raw) = std::str::from_utf8(&payload[..end]).ok()?.split_once('=')?;
-        static KNOWN: LazyLock<HashSet<String>> =
-            LazyLock::new(|| catalogue(0.).into_iter().map(|metric| metric.id).collect());
-        if !KNOWN.contains(id) {
+        static KNOWN: LazyLock<HashSet<String>> = LazyLock::new(|| {
+            catalogue(0., None)
+                .into_iter()
+                .map(|metric| metric.id)
+                .collect()
+        });
+        if !KNOWN.contains(id) && dimm_slot(id).is_none() {
             return None;
         }
         let value = if raw == "null" {
