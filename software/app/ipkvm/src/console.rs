@@ -24,6 +24,7 @@ use std::{
 };
 use tokio::sync::{broadcast, watch};
 
+mod status;
 mod video;
 
 #[derive(Default)]
@@ -47,6 +48,8 @@ impl Sessions {
 }
 
 pub struct Console {
+    power_cache: status::PowerCache,
+    status_feed: status::StatusFeed,
     edid: Mutex<Vec<u8>>,
     wol: Mutex<Vec<Value>>,
     sessions: Mutex<Sessions>,
@@ -67,6 +70,8 @@ impl Console {
             Err(e) => return Err(e),
         };
         Ok(Self {
+            power_cache: Default::default(),
+            status_feed: Default::default(),
             edid: Mutex::new(DEFAULT_EDID.to_vec()),
             wol: Mutex::new(wol),
             sessions: Mutex::new(Sessions::default()),
@@ -168,7 +173,7 @@ async fn set_edid(app: App, bytes: Vec<u8>) -> Result<Json<Value>, ApiError> {
 async fn power(State(app): State<App>, h: HeaderMap) -> Result<Json<Value>, ApiError> {
     app.require(&h, "console")?;
     Ok(Json(
-        tokio::task::spawn_blocking(move || app.hw.power())
+        tokio::task::spawn_blocking(move || app.console.power_cache.read(|| app.hw.power()))
             .await
             .map_err(io::Error::other)??,
     ))
@@ -185,6 +190,7 @@ async fn press(
             v["button"].as_str().unwrap(),
             v["duration_ms"].as_u64().unwrap(),
         )?;
+        app.console.power_cache.invalidate();
         app.emit("status_changed");
         Ok::<_, io::Error>(())
     })
@@ -454,10 +460,11 @@ async fn ws(
     let ip = peer
         .map(|p| p.0 .0.ip().to_string())
         .unwrap_or_else(|| "127.0.0.1".into());
+    let closes = app.socket_closes.subscribe();
     let events = app.events.subscribe();
     // Even the largest legal paste fits when every ASCII byte is a six-byte JSON escape.
     ws.max_message_size(512 * 1024)
-        .on_upgrade(move |socket| console(socket, app, h, ip, events))
+        .on_upgrade(move |socket| console(socket, app, h, ip, events, closes))
 }
 
 async fn send_json(sock: &mut WebSocket, msg: Value) -> bool {
@@ -489,23 +496,13 @@ impl Drop for Connected {
         self.0.emit("console_sessions");
     }
 }
-async fn status(app: &App) -> Value {
-    let app = app.clone();
-    tokio::task::spawn_blocking(move || {
-        let hdmi=video::hdmi(&app);
-        let power=app.hw.power().unwrap_or_else(|_|json!({"on":false,"hdd":false}));
-        let locks=app.hw.locks().unwrap_or_else(|_|json!({"num":false,"caps":false,"scroll":false}));
-        let (fps,kbps)=if hdmi["signal"]!=true {(0,0)} else if app.sim {(28.min(app.config()["video"]["fps_max"].as_u64().unwrap_or(30)),24800)} else {*app.console.stats.lock().unwrap()};
-        let sessions:Vec<_>=app.console.sessions.lock().unwrap().entries.values().cloned().collect();
-        json!({"t":"status","hdmi":hdmi,"stream":{"fps":fps,"kbps":kbps},"power":power,"locks":locks,"sessions":sessions,"media":app.media_status()})
-    }).await.expect("read console status")
-}
 async fn console(
     mut sock: WebSocket,
     app: App,
     h: HeaderMap,
     ip: String,
     mut events: broadcast::Receiver<String>,
+    mut closes: watch::Receiver<u16>,
 ) {
     if let Some(code) = app.socket_code(&h, "console", "") {
         close(&mut sock, code).await;
@@ -522,11 +519,8 @@ async fn console(
     );
     let _connected = Connected(app.clone(), id);
     app.emit("console_sessions");
-    let mut interval = tokio::time::interval(Duration::from_secs(1));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    if !send_json(&mut sock, status(&app).await).await {
-        return;
-    }
+    let mut statuses = app.console.status_feed.subscribe(&app);
+    // Await the first sample that includes this connection.
     let mut operation: Option<futures_util::future::BoxFuture<'static, Result<(), ApiError>>> =
         None;
     let mut queue = VecDeque::<Message>::new();
@@ -534,32 +528,40 @@ async fn console(
         let busy = operation.is_some();
         let response = tokio::select! {
             biased;
+            changed=closes.changed()=>{
+                if changed.is_err(){return;}
+                let code=*closes.borrow_and_update();
+                if code==1012 {send_json(&mut sock,json!({"t":"kvm_restarting"})).await;}
+                close(&mut sock,code).await;
+                return;
+            }
             event=events.recv()=>{
-                let event=match event{
-                    Ok(s)=>s,
-                    Err(broadcast::error::RecvError::Lagged(_))=>{close(&mut sock,4409).await;return;},
-                    Err(_)=>return
+                let resync=match event {
+                    Ok(event) if event=="usb_reenumerated"=>{
+                        if !send_json(&mut sock,json!({"t":event})).await{return;}
+                        continue;
+                    }
+                    Ok(event) if event=="sessions_changed"=>false,
+                    Ok(_)=>continue,
+                    Err(broadcast::error::RecvError::Lagged(_))=>{events=events.resubscribe();true},
+                    Err(broadcast::error::RecvError::Closed)=>return,
                 };
-                if let Some(code)=app.socket_code(&h,"console",&event) {
-                    if code==1012 {send_json(&mut sock,json!({"t":"kvm_restarting"})).await;}
-                    close(&mut sock,code).await;return;
-                }
-                if event=="sessions_changed" {
-                    if let Ok(user)=app.require(&h,"console"){
-                        update_sessions(&app,|entries|{if let Some(session)=entries.get_mut(&id){session["view_only"]=user["view_only"].clone();}});
-                        if user["view_only"]==true && busy{
-                            operation=None;
-                            send_json(&mut sock,json!({"t":"error","error":"forbidden"})).await;
-                        }
+                if let Some(code)=app.socket_code(&h,"console",""){close(&mut sock,code).await;return;}
+                if let Ok(user)=app.require(&h,"console"){
+                    update_sessions(&app,|entries|{if let Some(session)=entries.get_mut(&id){session["view_only"]=user["view_only"].clone();}});
+                    if user["view_only"]==true && busy{
+                        operation=None;
+                        send_json(&mut sock,json!({"t":"error","error":"forbidden"})).await;
                     }
                 }
-                match event.as_str(){
-                    "usb_reenumerated"=>Some(json!({"t":event})),
-                    "status_changed"|"console_sessions"|"config_changed"|"sessions_changed"=>Some(status(&app).await),
-                    _=>None,
-                }
+                if resync {app.emit("status_changed");}
+                None
             },
-            _=interval.tick()=>Some(status(&app).await),
+            changed=statuses.changed()=>{
+                if changed.is_err(){return;}
+                let current=statuses.borrow_and_update().clone();
+                current.map(|v|(*v).clone())
+            },
             done=async { operation.as_mut().unwrap().await }, if busy=>{
                 operation=None;
                 done.err().map(|e|json!({"t":"error","error":match e.code.as_str(){"forbidden"=>"forbidden","unmappable"=>"unmappable",_=>"bad_message"}}))

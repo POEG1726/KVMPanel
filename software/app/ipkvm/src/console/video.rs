@@ -88,8 +88,9 @@ pub(super) async fn stream(
     ws: WebSocketUpgrade,
     h: HeaderMap,
 ) -> impl IntoResponse {
+    let closes = app.socket_closes.subscribe();
     let events = app.events.subscribe();
-    ws.on_upgrade(move |sock| stream_socket(sock, app, h, events))
+    ws.on_upgrade(move |sock| stream_socket(sock, app, h, events, closes))
 }
 
 async fn stream_socket(
@@ -97,6 +98,7 @@ async fn stream_socket(
     app: App,
     h: HeaderMap,
     mut events: broadcast::Receiver<String>,
+    mut closes: watch::Receiver<u16>,
 ) {
     if let Some(c) = app.socket_code(&h, "console", "") {
         close(&mut socket, c).await;
@@ -110,9 +112,20 @@ async fn stream_socket(
     loop {
         tokio::select! {
             biased;
+            changed=closes.changed()=>{
+                if changed.is_err(){return;}
+                let code=*closes.borrow_and_update();
+                close(&mut socket,code).await;
+                return;
+            }
             event=events.recv()=>{
-                let event=match event {Ok(s)=>s,Err(broadcast::error::RecvError::Lagged(_))=>{close(&mut socket,4409).await;return;},Err(_)=>return};
-                if let Some(code)=app.socket_code(&h,"console",&event){close(&mut socket,code).await;return;}
+                match event{
+                    Ok(event) if event=="sessions_changed"=>{},
+                    Ok(_)=>continue,
+                    Err(broadcast::error::RecvError::Lagged(_))=>{events=events.resubscribe();last=None;frames.mark_changed();},
+                    Err(broadcast::error::RecvError::Closed)=>return,
+                }
+                if let Some(code)=app.socket_code(&h,"console",""){close(&mut socket,code).await;return;}
             },
             msg=socket.recv()=>{
                 match msg{
