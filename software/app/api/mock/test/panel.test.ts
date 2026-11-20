@@ -66,7 +66,7 @@ describe('panel socket', () => {
     expect(validToPanel(tel), JSON.stringify(validToPanel.errors)).toBe(true);
     const ids = tel.metrics.map((m: { id: string }) => m.id);
     expect(ids.filter((id: string) => id.startsWith('cpu.core.'))).toHaveLength(16);
-    expect(tel.metrics.find((m: { id: string }) => m.id === 'mem.dimm.a1').value).toBeNull();
+    expect(ids.filter((id: string) => id.startsWith('mem.dimm.'))).toEqual(['mem.dimm.a2', 'mem.dimm.b2']);
     expect(tel.metrics.find((m: { id: string }) => m.id === 'mem.dimm.a2').value).toEqual(expect.any(Number));
     expect(tel.metrics.find((m: { id: string }) => m.id === 'cpu.tctl')).toMatchObject({ unit: '°C', min: 30, max: 95, warn: 85, group: 'cpu' });
     expect(tel.metrics.find((m: { id: string }) => m.id === 'ssd.0.temp').label).toBe('SSD 2T');

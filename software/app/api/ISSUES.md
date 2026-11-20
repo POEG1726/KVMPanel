@@ -36,3 +36,7 @@ Contract change: on connect and on every `{"t":"resume"}`, `/api/stream` immedia
 ## 计划 5b 的 boot 鼠标端点预算
 
 按 5b 裁定，关闭绝对鼠标且启用遥测时，遥测使用独立 HID，占用一个 IN。相对鼠标保留 boot 协议。默认配置仅关闭绝对鼠标后共用 4 IN / 1 OUT。现有 mock 的 `usbBudget` 仍按相对鼠标可承载遥测计算，网页可能少算一个 IN。建议同步 mock 和 USB 组合说明。kvmd 的预算、配置校验和 gadget 脚本均按实际占用执行。
+
+## 2026-11-20 Claude：遥测只发存在的项
+
+电脑上不存在的指标（比如空的内存槽）不再以 null 出现在 `telemetry.metrics` 里，而是直接不发；`value: null` 只表示这一项存在、但这一秒没读到。kvmd 的 sim 生成器要去掉 `mem.dimm.a1`/`b1`，真机的解码器只转发上位机上报的槽位。
