@@ -7,18 +7,67 @@ pub struct ConfigState {
 }
 impl ConfigState {
     pub fn open(dir: &Path) -> io::Result<Self> {
-        let value: Value =
-            load_or_create(&dir.join("config.json"), || Ok(schema::default_config()))?;
-        validate("Config", &value).map_err(|_| io::Error::other("invalid stored config"))?;
-        let applied = load_or_create(&dir.join("usb-applied.json"), || Ok(value["usb"].clone()))?;
-        let mut check = value.clone();
-        check["usb"] = applied.clone();
-        validate("Config", &check).map_err(|_| io::Error::other("invalid stored USB settings"))?;
-        if usb_budget(&applied)["fits"] != true {
-            return Err(io::Error::other("invalid stored USB budget"));
-        }
+        let defaults = schema::default_config();
+        let value = load_config_file(&dir.join("config.json"), &defaults, |stored| {
+            migrate(&defaults, stored)
+        })?;
+        let applied = load_config_file(&dir.join("usb-applied.json"), &value["usb"], |stored| {
+            migrate(&defaults, &json!({"usb":stored}))["usb"].clone()
+        })?;
         Ok(Self { value, applied })
     }
+}
+// Only migrate persisted settings. Incoming HTTP and panel patches remain strict.
+fn load_config_file(
+    path: &Path,
+    initial: &Value,
+    repair: impl FnOnce(&Value) -> Value,
+) -> io::Result<Value> {
+    let old = match fs::read(path) {
+        Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                eprintln!("kvmd: restoring {} after JSON error: {e}", path.display());
+                Some(Value::Null)
+            }
+        },
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e),
+    };
+    let new = old.as_ref().map(repair).unwrap_or_else(|| initial.clone());
+    if old.as_ref() != Some(&new) {
+        save(path, &new)?;
+    }
+    Ok(new)
+}
+fn migrate(defaults: &Value, stored: &Value) -> Value {
+    let mut cfg = defaults.clone();
+    let Some(sections) = stored.as_object() else {
+        eprintln!("kvmd: invalid stored config, using defaults");
+        return cfg;
+    };
+    for (name, section) in sections {
+        let Some(base) = defaults.get(name) else {
+            eprintln!("kvmd: ignoring obsolete config section {name}");
+            continue;
+        };
+        let mut candidate = base.clone();
+        if let Some(fields) = section.as_object() {
+            // Open maps (e.g. thresholds) and arrays are complete saved field values.
+            candidate.as_object_mut().unwrap().extend(fields.clone());
+        } else {
+            candidate = section.clone();
+        }
+        crate::normalize_numbers(&mut candidate);
+        cfg[name] = candidate;
+        if validate("Config", &cfg).is_err()
+            || (name == "usb" && usb_budget(&cfg[name])["fits"] != true)
+        {
+            eprintln!("kvmd: invalid stored {name} section, using defaults");
+            cfg[name] = base.clone();
+        }
+    }
+    cfg
 }
 pub fn usb_budget(u: &Value) -> Value {
     let on = |key: &str| u[key] == true;
