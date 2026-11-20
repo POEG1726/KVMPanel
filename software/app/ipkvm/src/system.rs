@@ -55,6 +55,7 @@ pub struct System {
     path: PathBuf,
     settings: Mutex<Settings>,
     tail: tokio::sync::Mutex<tailscale::Service>,
+    tail_action: Mutex<tailscale::ActionResult>,
     net_apply: tokio::sync::Mutex<()>,
     latest: Mutex<Option<String>>,
 }
@@ -81,6 +82,7 @@ impl System {
             path,
             settings: Mutex::new(settings),
             tail: Default::default(),
+            tail_action: Default::default(),
             net_apply: Default::default(),
             latest: Default::default(),
         })
