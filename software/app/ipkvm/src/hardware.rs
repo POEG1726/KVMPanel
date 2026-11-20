@@ -25,6 +25,9 @@ pub trait Hardware: Send + Sync {
     fn hdmi(&self) -> io::Result<Value>;
     fn locks(&self) -> io::Result<Value>;
     fn reset_hid(&self) -> io::Result<()>;
+    fn release_hid(&self) -> io::Result<()> {
+        self.reset_hid()
+    }
     fn read_edid(&self) -> io::Result<Vec<u8>> {
         Err(io::ErrorKind::Unsupported.into())
     }

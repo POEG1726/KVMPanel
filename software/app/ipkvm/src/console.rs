@@ -336,7 +336,7 @@ fn hid_write(
     write: impl FnOnce(&dyn crate::hardware::Hardware) -> io::Result<()>,
 ) -> Result<(), ApiError> {
     app.console
-        .write_hid(session, || app.hw.reset_hid(), || write(app.hw.as_ref()))
+        .write_hid(session, || app.hw.release_hid(), || write(app.hw.as_ref()))
 }
 
 impl Console {
