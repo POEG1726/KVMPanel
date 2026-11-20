@@ -36,6 +36,8 @@ pub trait Hardware: Send + Sync {
 }
 
 struct Sim {
+    #[cfg(test)]
+    gadget: Option<std::path::PathBuf>,
     frame_index: AtomicUsize,
     power: Mutex<bool>,
     locks: Mutex<Value>,
@@ -51,6 +53,16 @@ impl Hardware for Sim {
         Ok(())
     }
     fn apply_usb(&self, _: &Value, _: &[(OsString, OsString)]) -> io::Result<()> {
+        #[cfg(test)]
+        if let Some(path) = &self.gadget {
+            if !std::process::Command::new("sh")
+                .arg(path)
+                .status()?
+                .success()
+            {
+                return Err(io::Error::other("fake gadget failed"));
+            }
+        }
         Ok(())
     }
     fn frame(&self, quality: u8) -> io::Result<Bytes> {
@@ -108,9 +120,23 @@ pub fn open(sim: bool) -> io::Result<Arc<dyn Hardware>> {
     if !sim {
         return Ok(Arc::new(board::Board::default()));
     }
-    Ok(Arc::new(Sim {
-        frame_index: AtomicUsize::new(0),
-        power: Mutex::new(true),
-        locks: Mutex::new(json!({"num":false,"caps":false,"scroll":false})),
-    }))
+    Ok(Arc::new(Sim::new()))
+}
+impl Sim {
+    fn new() -> Self {
+        Self {
+            #[cfg(test)]
+            gadget: None,
+            frame_index: AtomicUsize::new(0),
+            power: Mutex::new(true),
+            locks: Mutex::new(json!({"num":false,"caps":false,"scroll":false})),
+        }
+    }
+}
+#[cfg(test)]
+pub(crate) fn simulated_gadget(path: std::path::PathBuf) -> Arc<dyn Hardware> {
+    Arc::new(Sim {
+        gadget: Some(path),
+        ..Sim::new()
+    })
 }

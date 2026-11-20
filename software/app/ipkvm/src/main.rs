@@ -32,8 +32,12 @@ async fn main() -> io::Result<()> {
     let app = App::new(&dir, args.sim)?;
     let web = args.web_dir.unwrap_or_else(|| "/usr/share/kvmd/web".into());
     if !app.sim {
-        if let Err(e) = app.restore_usb() {
-            eprintln!("kvmd: cannot restore USB gadget: {e}");
+        let board = app.clone();
+        if let Err(e) = tokio::task::spawn_blocking(move || board.restore_usb())
+            .await
+            .map_err(io::Error::other)?
+        {
+            eprintln!("kvmd: cannot restore USB gadget: {e:?}");
         }
     }
     tokio::spawn(kvmd::console::jiggler(app.clone()));

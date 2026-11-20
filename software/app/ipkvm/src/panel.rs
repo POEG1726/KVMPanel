@@ -201,8 +201,7 @@ async fn reply(writer: &mut (impl AsyncWrite + Unpin), msg: Value) -> io::Result
     writer.write_all(&line).await
 }
 
-fn request(app: &App, line: &str) -> Value {
-    let m: Value = serde_json::from_str(line).unwrap_or(Value::Null);
+fn request(app: &App, m: Value) -> Value {
     let mut out = json!({"t":"result","ok":false});
     if m["id"]
         .as_f64()
@@ -215,8 +214,10 @@ fn request(app: &App, line: &str) -> Value {
         return out;
     }
     let result: Result<Option<Value>, ApiError> = match m["t"].as_str() {
-        Some("get_config") => Ok(Some(app.config())),
-        Some("patch_config") => app.patch_config(&m["patch"], None).map(Some),
+        Some("get_config") => Ok(Some((*app.config()).clone())),
+        Some("patch_config") => app
+            .patch_config(&m["patch"], None)
+            .map(|cfg| Some((*cfg).clone())),
         Some("device_info") => Ok(Some(system::device_info(app))),
         Some("action") => match m["action"].as_str().unwrap() {
             "eject_media" => app.storage.eject().map(|()| {
@@ -251,6 +252,7 @@ async fn client<T: AsyncRead + AsyncWrite + Unpin>(
     mut telemetry: broadcast::Receiver<Value>,
     pc: watch::Receiver<bool>,
 ) -> io::Result<()> {
+    let mut applies = tokio::task::JoinSet::new();
     let mut events = app.events.subscribe();
     let (initial_config, mut config_updates) = app.subscribe_config();
     let (read, mut write) = tokio::io::split(io);
@@ -282,8 +284,21 @@ async fn client<T: AsyncRead + AsyncWrite + Unpin>(
                 }
                 Err(_)=>return Ok(()),
             },
-            next=lines.next()=>match next{
-                Some(Ok(line))=>reply(&mut write,request(&app,&line)).await?,
+            Some(out)=applies.join_next(), if !applies.is_empty()=>reply(&mut write,out.map_err(io::Error::other)?).await?,
+            next=lines.next(), if applies.len()<16=>match next{
+                Some(Ok(line))=>{
+                    let msg:Value=serde_json::from_str(&line).unwrap_or(Value::Null);
+                    if msg["t"]=="get_config" {
+                        reply(&mut write,request(&app,msg)).await?;
+                    } else if msg["t"]=="action" && msg["action"]=="usb_apply" {
+                        // The request ID lets this peer query the config while re-enumeration runs.
+                        let app=app.clone();applies.spawn_blocking(move||request(&app,msg));
+                    }else{
+                        let app=app.clone();
+                        let out=tokio::task::spawn_blocking(move||request(&app,msg)).await.map_err(io::Error::other)?;
+                        reply(&mut write,out).await?;
+                    }
+                },
                 Some(Err(_))=>reply(&mut write,json!({"t":"result","ok":false,"error":"bad_message"})).await?,
                 None=>return Ok(())
             },

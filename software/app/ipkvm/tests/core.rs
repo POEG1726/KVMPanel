@@ -70,7 +70,7 @@ async fn health_config_permissions_and_usb() {
         .await,
         json!({"error":"endpoints_full","detail":{"in_missing":1,"out_missing":0}})
     );
-    assert_eq!(s.app.config(), original);
+    assert_eq!(*s.app.config(), original);
     assert_eq!(
         check(
             &s,

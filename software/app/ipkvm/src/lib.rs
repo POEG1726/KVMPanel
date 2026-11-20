@@ -22,7 +22,7 @@ use std::{
     io::{self, Write},
     ops::Deref,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
     time::Instant,
 };
 use tokio::sync::broadcast;
@@ -142,12 +142,12 @@ pub struct Inner {
     pub sim: bool,
     pub data_dir: PathBuf,
     pub started: Instant,
-    pub config_updates: broadcast::Sender<Value>,
+    pub config_updates: broadcast::Sender<Arc<Value>>,
     pub events: broadcast::Sender<String>,
     pub socket_closes: tokio::sync::watch::Sender<u16>,
     pub hw: Arc<dyn hardware::Hardware>,
     auth: Mutex<auth::Auth>,
-    cfg: Mutex<config::ConfigState>,
+    cfg: config::ConfigState,
 }
 impl App {
     pub fn new(data_dir: &Path, sim: bool) -> io::Result<Self> {
@@ -165,7 +165,7 @@ impl App {
             socket_closes: tokio::sync::watch::channel(0).0,
             hw,
             auth: Mutex::new(auth::Auth::open(data_dir)?),
-            cfg: Mutex::new(config::ConfigState::open(data_dir)?),
+            cfg: config::ConfigState::open(data_dir)?,
         })))
     }
     pub fn media_status(&self) -> Value {

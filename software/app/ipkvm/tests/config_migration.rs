@@ -6,7 +6,7 @@ use std::fs;
 #[tokio::test]
 async fn old_files_boot_with_valid_values_and_section_defaults() {
     let clean = Server::new().await;
-    let defaults = clean.app.config();
+    let defaults = (*clean.app.config()).clone();
     for (old, expected_brightness) in [
         (json!({"panel":{"brightness":36},"obsolete":{}}), 36),
         (json!({"panel":{"brightness":36,"removed_field":true}}), 70),
