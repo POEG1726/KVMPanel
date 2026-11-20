@@ -3,6 +3,7 @@ import cookie from '@fastify/cookie';
 import websocket from '@fastify/websocket';
 import { createState, type State } from './state.js';
 import { registerAuth } from './routes/auth.js';
+import { registerConfig } from './routes/config.js';
 
 export interface ServerOptions {
   now?: () => number;
@@ -25,6 +26,7 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
 
   app.get('/api/health', async () => ({ ok: true as const, version: state.version }));
   registerAuth(app, state);
+  registerConfig(app, state);
 
   return app;
 }

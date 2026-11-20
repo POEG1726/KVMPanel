@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { contract } from './contract.js';
+import { defaultConfig, type Config } from './configDefaults.js';
 
 export const ALL_PERMISSIONS = [
   'console', 'power', 'media', 'terminal', 'files', 'device',
@@ -43,6 +44,7 @@ export interface State {
   accounts: Map<string, Account>;
   sessions: Map<string, Session>;
   loginGuards: Map<string, LoginGuard>;
+  config: Config;
 }
 
 export function hashPassword(password: string, salt = randomBytes(16).toString('hex')): { salt: string; hash: string } {
@@ -67,5 +69,6 @@ export function createState(opts: { now?: () => number; sleep?: (ms: number) => 
     accounts: new Map([[admin.name, admin]]),
     sessions: new Map(),
     loginGuards: new Map(),
+    config: defaultConfig(),
   };
 }

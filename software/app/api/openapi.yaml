@@ -222,6 +222,70 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+  /api/config:
+    get:
+      operationId: getConfig
+      summary: Whole board configuration (shared by web and panel; only kvmd writes it)
+      responses:
+        '200':
+          description: Current configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Config' }
+        '401': *unauthenticated
+    patch:
+      operationId: patchConfig
+      summary: Partial update. Objects merge recursively; null sets a nullable field to null (it never deletes a key). Each top-level section needs its permission (panel/function_key→panel, usb→usb, video/hid→console, serial→terminal, web/device/kvm→device).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Updated configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Config' }
+        '400':
+          description: Field invalid or unknown (error=invalid_config, detail.path = JSON pointer); nothing changed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '409':
+          description: USB set exceeds the endpoint budget (error=endpoints_full, detail.in_missing/out_missing); nothing changed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/usb/budget:
+    get:
+      operationId: getUsbBudget
+      responses:
+        '200':
+          description: Endpoint usage of the configured USB set
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UsbBudget' }
+        '401': *unauthenticated
+  /api/usb/apply:
+    post:
+      operationId: applyUsb
+      summary: Rebuild the USB gadget from config.usb. The host sees a re-enumeration (keyboard/mouse drop 1–2 s); /api/ws then pushes usb_reenumerated.
+      responses:
+        '202':
+          description: Re-enumeration started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reenumerating]
+                additionalProperties: false
+                properties:
+                  reenumerating: { const: true }
+        '401': *unauthenticated
+        '403': *forbidden
 components:
   securitySchemes:
     session:
@@ -282,3 +346,113 @@ components:
       additionalProperties: false
       properties:
         user: { $ref: '#/components/schemas/User' }
+    FunctionKeyAction:
+      type: string
+      enum: [none, toggle_settings, toggle_screen, cycle_brightness, pause_kvm]
+    UsbBudget:
+      type: object
+      required: [in, out, fits, in_missing, out_missing]
+      additionalProperties: false
+      properties:
+        in: { type: integer, minimum: 0, description: IN endpoints used (hardware has 5) }
+        out: { type: integer, minimum: 0, description: OUT endpoints used (hardware has 5) }
+        fits: { type: boolean }
+        in_missing: { type: integer, minimum: 0 }
+        out_missing: { type: integer, minimum: 0 }
+    Config:
+      type: object
+      required: [panel, function_key, usb, web, video, hid, serial, device, kvm]
+      additionalProperties: false
+      properties:
+        panel:
+          type: object
+          required: [language, auto_brightness, brightness, offline_sleep_min, thresholds, hidden_metrics]
+          additionalProperties: false
+          properties:
+            language: { type: string, enum: [en, zh], default: en }
+            auto_brightness: { type: boolean, default: true }
+            brightness: { type: integer, minimum: 0, maximum: 100, default: 70 }
+            offline_sleep_min: { type: integer, minimum: 0, maximum: 120, default: 5, description: '0 = never sleep' }
+            thresholds:
+              description: Warn thresholds by metric id (values flash red above them)
+              type: object
+              additionalProperties: { type: number }
+              default: { cpu.tctl: 85, gpu.mem_junction: 95, mem.dimm_temp: 60 }
+            hidden_metrics:
+              type: array
+              items: { type: string }
+              uniqueItems: true
+              default: [sys.fan]
+        function_key:
+          type: object
+          required: [short, long]
+          additionalProperties: false
+          properties:
+            short: { allOf: [{ $ref: '#/components/schemas/FunctionKeyAction' }], default: toggle_settings }
+            long: { allOf: [{ $ref: '#/components/schemas/FunctionKeyAction' }], default: toggle_screen }
+        usb:
+          type: object
+          required: [keyboard, mouse_rel, mouse_abs, mouse_merge, storage, net, net_mode, acm, telemetry]
+          additionalProperties: false
+          properties:
+            keyboard: { type: boolean, default: true }
+            mouse_rel: { type: boolean, default: true }
+            mouse_abs: { type: boolean, default: true }
+            mouse_merge: { type: boolean, default: false }
+            storage: { type: boolean, default: true }
+            net: { type: boolean, default: false }
+            net_mode: { type: string, enum: [ncm, rndis], default: ncm }
+            acm: { type: boolean, default: false }
+            telemetry: { type: boolean, default: true }
+        web:
+          type: object
+          required: [language, workspace_open, remember_float, menubar, title]
+          additionalProperties: false
+          properties:
+            language: { type: string, enum: [auto, en, zh], default: auto, description: auto follows the browser language }
+            workspace_open: { type: string, enum: [float, tab], default: float }
+            remember_float: { type: boolean, default: true }
+            menubar: { type: string, enum: [auto_hide, pinned], default: auto_hide }
+            title: { type: string, minLength: 1, maxLength: 64, default: KVMPanel }
+        video:
+          type: object
+          required: [quality, fps_max, scale, frame_diff]
+          additionalProperties: false
+          properties:
+            quality: { type: integer, minimum: 50, maximum: 100, default: 80 }
+            fps_max: { type: integer, minimum: 1, maximum: 60, default: 30 }
+            scale: { type: string, enum: [fit, '1:1', fill], default: fit }
+            frame_diff: { type: boolean, default: true }
+        hid:
+          type: object
+          required: [keyboard_layout, mouse_mode, wheel_dir, wheel_speed, jiggler, leader_key]
+          additionalProperties: false
+          properties:
+            keyboard_layout: { type: string, minLength: 1, default: us }
+            mouse_mode: { type: string, enum: [abs, rel], default: abs }
+            wheel_dir: { type: string, enum: [normal, reverse], default: normal }
+            wheel_speed: { type: integer, minimum: 1, maximum: 10, default: 1 }
+            jiggler: { type: boolean, default: false }
+            leader_key: { type: [string, 'null'], default: null, description: KeyboardEvent.code that prefixes browser-captured shortcuts }
+        serial:
+          type: object
+          required: [device, baud]
+          additionalProperties: false
+          properties:
+            device: { type: [string, 'null'], default: null, description: 'e.g. /dev/ttyS1; null hides the serial terminal tab' }
+            baud: { type: integer, enum: [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1500000], default: 115200 }
+        device:
+          type: object
+          required: [hostname, ssh, mdns, watchdog]
+          additionalProperties: false
+          properties:
+            hostname: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$', default: kvmpanel }
+            ssh: { type: boolean, default: true }
+            mdns: { type: boolean, default: true }
+            watchdog: { type: boolean, default: false }
+        kvm:
+          type: object
+          required: [enabled]
+          additionalProperties: false
+          properties:
+            enabled: { type: boolean, default: true, description: false keeps only the dashboard }
