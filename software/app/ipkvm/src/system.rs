@@ -25,7 +25,7 @@ use std::{
     sync::{Arc, Mutex, RwLock},
     time::Duration,
 };
-pub use update::verify_update;
+pub use update::{prepare_update, verify_update};
 use uuid::Uuid;
 
 #[derive(Clone, Serialize, Deserialize)]

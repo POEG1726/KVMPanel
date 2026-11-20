@@ -94,7 +94,10 @@ async fn immutable_probe_checks_the_serving_candidate_with_or_without_web() {
             }
             fs::write(
                 apps.join("pending.json"),
-                br#"{"candidate":"release-trial","previous":null,"job":"trial"}"#,
+                serde_json::to_vec(
+                    &json!({"candidate":"release-trial","previous":null,"job":enabled.to_string()}),
+                )
+                .unwrap(),
             )
             .unwrap();
             let status = timeout(
@@ -114,7 +117,7 @@ async fn immutable_probe_checks_the_serving_candidate_with_or_without_web() {
             assert!(status.success());
             let res: serde_json::Value =
                 serde_json::from_slice(&fs::read(apps.join("last-update.json")).unwrap()).unwrap();
-            assert_eq!(res, json!({"job":"trial","healthy":true}));
+            assert_eq!(res, json!({"job":enabled.to_string(),"healthy":true}));
         }
     };
     outcome.await;
@@ -185,4 +188,51 @@ fn cleans_pretrial_release_history_on_startup() {
     );
     assert!(apps.join("release-three").exists() && apps.join("release-two").exists());
     assert!(!apps.join("release-one").exists() && !apps.join(".incoming-abandoned").exists());
+}
+
+#[test]
+fn prepare_prevents_reboot_loops_and_preserves_a_committed_result() {
+    use std::os::unix::fs::symlink;
+    let data = tempfile::tempdir().unwrap();
+    let apps = data.path().join("apps");
+    for version in ["release-old", "release-new"] {
+        fs::create_dir_all(apps.join(version)).unwrap();
+    }
+    symlink("release-new", apps.join("current")).unwrap();
+    let path = apps.join("pending.json");
+    let mut record = json!({"candidate":"release-new","previous":"release-old","job":"new"});
+    fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    kvmd::system::prepare_update(data.path()).unwrap();
+    let first = fs::read(&path).unwrap();
+    kvmd::system::prepare_update(data.path()).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), first);
+    record = serde_json::from_slice(&first).unwrap();
+    record["attempt"]["boot_id"] = json!("prior-boot");
+    fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    kvmd::system::prepare_update(data.path()).unwrap();
+    assert_eq!(
+        fs::read_link(apps.join("current")).unwrap(),
+        std::path::Path::new("release-old")
+    );
+    assert!(!path.exists());
+    let result: serde_json::Value =
+        serde_json::from_slice(&fs::read(apps.join("last-update.json")).unwrap()).unwrap();
+    assert_eq!(result, json!({"job":"new","healthy":false}));
+
+    // Boot interrupted only after a healthy outcome was already synced.
+    fs::create_dir(apps.join("release-new")).unwrap();
+    fs::remove_file(apps.join("current")).unwrap();
+    symlink("release-new", apps.join("current")).unwrap();
+    fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    fs::write(
+        apps.join("last-update.json"),
+        br#"{"job":"new","healthy":true}"#,
+    )
+    .unwrap();
+    kvmd::system::prepare_update(data.path()).unwrap();
+    assert!(!path.exists());
+    assert_eq!(
+        fs::read_link(apps.join("current")).unwrap(),
+        std::path::Path::new("release-new")
+    );
 }

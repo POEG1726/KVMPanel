@@ -26,6 +26,9 @@ start() {
 	mkdir -p /run/kvmd "$data/ssh" || return 1
 	chmod 0700 "$data/ssh" || return 1
 	if ! running; then
+		if [ -f "$data/apps/pending.json" ]; then
+			/usr/sbin/kvmd --prepare-update --data-dir "$data" 8>&- || return 1
+		fi
 		launch || [ -f "$data/apps/pending.json" ] || return 1
 	fi
 	if [ -f "$data/apps/pending.json" ]; then

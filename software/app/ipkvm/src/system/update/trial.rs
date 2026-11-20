@@ -30,6 +30,13 @@ struct Trial {
     candidate: PathBuf,
     previous: Option<PathBuf>,
     job: String,
+    #[serde(default)]
+    attempt: Option<Attempt>,
+}
+#[derive(Serialize, Deserialize)]
+struct Attempt {
+    boot_id: String,
+    uptime_ms: u64,
 }
 #[derive(Serialize, Deserialize)]
 struct Outcome {
@@ -98,6 +105,7 @@ pub(super) fn activate(apps: &Path, stage: tempfile::TempDir, job: &str) -> io::
         previous,
         candidate: name,
         job: job.to_owned(),
+        attempt: None,
     };
     let journal = apps.join(PENDING);
     if let Err(e) = atomic_write(&journal, &serde_json::to_vec(&record)?)
@@ -207,10 +215,74 @@ pub(super) fn cleanup_on_boot(data: &Path) -> io::Result<()> {
     lock.sync_all()
 }
 
-fn finish(apps: &Path, trial: &Trial, passed: bool) -> io::Result<()> {
+fn load_trial(apps: &Path) -> io::Result<Option<(Trial, Duration)>> {
+    let lock = match fs::File::open(apps) {
+        Ok(f) => f,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    lock.lock()?;
+    let journal = apps.join(PENDING);
+    let Some(mut trial) = read::<Trial>(&journal)? else {
+        return Ok(None);
+    };
+    checked_name(&trial.candidate)?;
+    if let Some(previous) = &trial.previous {
+        checked_name(previous)?;
+    }
+    // If the outcome reached disk before a power cut, its link change and
+    // cleanup already completed. Finish removing the journal idempotently.
+    if read::<Outcome>(&apps.join(RESULT))?.is_some_and(|r| r.job == trial.job) {
+        remove_file(&journal)?;
+        lock.sync_all()?;
+        return Ok(None);
+    }
+    let boot_id = fs::read_to_string("/proc/sys/kernel/random/boot_id")?;
+    let uptime = fs::read_to_string("/proc/uptime")?;
+    let seconds = uptime
+        .split_whitespace()
+        .next()
+        .and_then(|n| n.parse::<f64>().ok())
+        .ok_or_else(|| io::Error::other("invalid boot uptime"))?;
+    let now_ms = (seconds * 1000.) as u64;
+    let remaining = if let Some(attempt) = &trial.attempt {
+        if attempt.boot_id != boot_id {
+            0
+        } else {
+            60_000u64.saturating_sub(now_ms.saturating_sub(attempt.uptime_ms))
+        }
+    } else {
+        trial.attempt = Some(Attempt {
+            boot_id,
+            uptime_ms: now_ms,
+        });
+        atomic_write(&journal, &serde_json::to_vec(&trial)?)?;
+        60_000
+    };
+    Ok(Some((trial, Duration::from_millis(remaining))))
+}
+
+/// Called by init *before* exec so even a watchdog reboot during startup
+/// cannot keep granting an unverified bundle another 60 seconds.
+pub fn prepare_update(data: &Path) -> io::Result<()> {
+    let apps = data.join("apps");
+    if let Some((trial, remaining)) = load_trial(&apps)? {
+        if remaining.is_zero() || release_link(&apps, "current")?.as_ref() != Some(&trial.candidate)
+        {
+            finish(&apps, &trial, false)?;
+        }
+    }
+    Ok(())
+}
+fn finish(apps: &Path, trial: &Trial, passed: bool) -> io::Result<bool> {
     let lock = fs::File::open(apps)?;
     lock.lock()?;
     let pending = read::<Trial>(&apps.join(PENDING))?;
+    if pending.is_none() {
+        if let Some(result) = read::<Outcome>(&apps.join(RESULT))?.filter(|r| r.job == trial.job) {
+            return Ok(result.healthy);
+        }
+    }
     if !pending.is_some_and(|p| p.job == trial.job && p.candidate == trial.candidate) {
         return Err(io::Error::other("superseded update trial"));
     }
@@ -233,7 +305,8 @@ fn finish(apps: &Path, trial: &Trial, passed: bool) -> io::Result<()> {
         })?,
     )?;
     remove_file(&apps.join(PENDING))?;
-    lock.sync_all()
+    lock.sync_all()?;
+    Ok(passed)
 }
 
 async fn panel_enabled(stream: impl AsyncRead + AsyncWrite + Unpin) -> io::Result<bool> {
@@ -323,15 +396,12 @@ where
     F: Fn() -> Fut,
     Fut: Future<Output = io::Result<()>>,
 {
-    let Some(trial) = read::<Trial>(&apps.join(PENDING))? else {
+    let Some((trial, remaining)) = load_trial(apps)? else {
         return Ok(());
     };
-    checked_name(&trial.candidate)?;
-    if let Some(previous) = &trial.previous {
-        checked_name(previous)?;
-    }
-    let passed = release_link(apps, "current")?.as_ref() == Some(&trial.candidate)
-        && timeout(Duration::from_secs(60), async {
+    let passed = !remaining.is_zero()
+        && release_link(apps, "current")?.as_ref() == Some(&trial.candidate)
+        && timeout(remaining, async {
             loop {
                 if matches!(timeout(Duration::from_secs(2), check()).await, Ok(Ok(()))) {
                     break;
@@ -341,8 +411,7 @@ where
         })
         .await
         .is_ok();
-    finish(apps, &trial, passed)?;
-    if passed {
+    if finish(apps, &trial, passed)? {
         Ok(())
     } else {
         Err(io::Error::other(

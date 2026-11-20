@@ -21,7 +21,7 @@ use std::{
 };
 use tempfile::NamedTempFile;
 use tokio::io::AsyncWriteExt;
-pub use trial::verify_update;
+pub use trial::{prepare_update, verify_update};
 use uuid::Uuid;
 
 pub(super) fn recover_jobs(

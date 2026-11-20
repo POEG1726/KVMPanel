@@ -7,6 +7,8 @@ struct Args {
     sim: bool,
     #[arg(long, hide = true)]
     verify_update: bool,
+    #[arg(long, hide = true, conflicts_with = "verify_update")]
+    prepare_update: bool,
     #[arg(long)]
     listen: Option<std::net::SocketAddr>,
     #[arg(long)]
@@ -26,6 +28,9 @@ async fn main() -> io::Result<()> {
             "/data/kvmd".into()
         }
     });
+    if args.prepare_update {
+        return kvmd::system::prepare_update(&dir);
+    }
     if args.verify_update {
         return kvmd::system::verify_update(
             &dir,
