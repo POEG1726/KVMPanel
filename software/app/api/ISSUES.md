@@ -32,3 +32,11 @@ Contract change: on connect and on every `{"t":"resume"}`, `/api/stream` immedia
 | 关闭码和公共错误 | 4400 表示终端 kind 不合法，1011 表示 PTY 或串口打开失败；logo 格式不对回 415 `unsupported_type`；非法 JSON 回 400 `invalid_json` | 无 |
 | 网络 | 按 kvmd 现在的板端校验，错误回 400 `invalid_body`，并带上出错字段的路径 | 无 |
 | 升级 | 采用 kvmd 现在的格式；补充 409 `busy` 和 413 `too_large` | 无 |
+
+## 计划 5b 的 boot 鼠标端点预算
+
+按 5b 裁定，关闭绝对鼠标且启用遥测时，遥测使用独立 HID，占用一个 IN。相对鼠标保留 boot 协议。默认配置仅关闭绝对鼠标后共用 4 IN / 1 OUT。现有 mock 的 `usbBudget` 仍按相对鼠标可承载遥测计算，网页可能少算一个 IN。建议同步 mock 和 USB 组合说明。kvmd 的预算、配置校验和 gadget 脚本均按实际占用执行。
+
+## 2026-11-20 Claude：遥测只发存在的项
+
+电脑上不存在的指标（比如空的内存槽）不再以 null 出现在 `telemetry.metrics` 里，而是直接不发；`value: null` 只表示这一项存在、但这一秒没读到。kvmd 的 sim 生成器要去掉 `mem.dimm.a1`/`b1`，真机的解码器只转发上位机上报的槽位。

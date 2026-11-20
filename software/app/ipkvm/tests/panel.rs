@@ -106,7 +106,11 @@ async fn greetings_metrics_filter_threshold_and_pc_lifetime() {
         16
     );
     let by_id = |id: &str| metrics.iter().find(|m| m["id"] == id).unwrap();
-    assert!(by_id("mem.dimm.a1")["value"].is_null());
+    let dims: Vec<_> = metrics
+        .iter()
+        .filter_map(|m| m["id"].as_str()?.strip_prefix("mem.dimm."))
+        .collect();
+    assert_eq!(dims, ["a2", "b2"]);
     assert!(by_id("mem.dimm.a2")["value"].is_number());
     assert_eq!(by_id("ssd.0.temp")["label"], "SSD 2T");
     let temp = by_id("cpu.tctl");
@@ -287,4 +291,23 @@ async fn each_committed_patch_reaches_panel_in_order() {
             brightness
         );
     }
+}
+
+#[tokio::test]
+async fn a_lagging_panel_can_query_config_and_still_receives_restart() {
+    let s = Server::new().await;
+    let mut panel = Panel::new(&s).await;
+    panel.next(|v| v["t"] == "status").await;
+    for _ in 0..512 {
+        s.app.emit("status_changed");
+    }
+    assert_eq!(
+        panel.request(json!({"t":"get_config","id":51})).await["data"]["panel"]["brightness"],
+        70
+    );
+    s.app.emit("kvm_restarting");
+    for _ in 0..512 {
+        s.app.emit("status_changed");
+    }
+    panel.next(|v| v["t"] == "kvm_restarting").await;
 }

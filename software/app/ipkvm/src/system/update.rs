@@ -1,3 +1,4 @@
+mod trial;
 use super::{bad_body, missing, VERSION};
 use crate::{validate, ApiError, App, JsonBody};
 use axum::{
@@ -14,13 +15,32 @@ use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::{self, Seek},
-    os::unix::fs::{symlink, PermissionsExt},
+    os::unix::fs::PermissionsExt,
     path::{Component, Path, PathBuf},
     time::Duration,
 };
 use tempfile::NamedTempFile;
 use tokio::io::AsyncWriteExt;
+pub use trial::{prepare_update, verify_update};
 use uuid::Uuid;
+
+pub(super) fn recover_jobs(
+    data: &Path,
+    jobs: &mut std::collections::BTreeMap<String, Value>,
+) -> io::Result<bool> {
+    if let Err(e) = trial::cleanup_on_boot(data) {
+        eprintln!("cleaning old app bundles: {e}");
+    }
+    let mut changed = trial::settle_jobs(data, jobs)?;
+    let pending = trial::pending_job(data)?;
+    for (id, job) in jobs.iter_mut() {
+        if job["state"] == "running" && pending.as_ref() != Some(id) {
+            job["state"] = json!("failed");
+            changed = true;
+        }
+    }
+    Ok(changed)
+}
 
 pub(super) fn routes() -> Router<App> {
     Router::new()
@@ -42,7 +62,7 @@ fn versions(app: &App) -> Value {
 }
 async fn status(State(app): State<App>, h: HeaderMap) -> Result<Json<Value>, ApiError> {
     app.require(&h, "updates")?;
-    let mut full = app.system.settings.lock().unwrap().update.clone();
+    let mut full = app.system.snapshot().update.clone();
     full.as_object_mut()
         .unwrap()
         .extend(versions(&app).as_object().unwrap().clone());
@@ -62,10 +82,13 @@ async fn settings(
     {
         return Err(bad_body("/server"));
     }
-    app.system.change(|s| {
-        s.update = body.clone();
-        Ok(())
-    })?;
+    let saved = body.clone();
+    app.system
+        .change(move |s| {
+            s.update = saved;
+            Ok(())
+        })
+        .await?;
     *app.system.latest.lock().unwrap() = None;
     Ok(Json(body))
 }
@@ -83,7 +106,7 @@ fn client() -> io::Result<reqwest::Client> {
         .map_err(io::Error::other)
 }
 async fn release(app: &App) -> io::Result<(Release, reqwest::Url)> {
-    let settings = app.system.settings.lock().unwrap().update.clone();
+    let settings = app.system.snapshot().update.clone();
     let url = format!(
         "{}/{}.json",
         settings["server"].as_str().unwrap().trim_end_matches('/'),
@@ -171,14 +194,14 @@ async fn offline(
         .filter(|s| valid_digest(s))
         .ok_or_else(|| bad_body("/x-sha256"))?;
     let file = save_stream(&app.data_dir, body.into_data_stream(), sha).await?;
-    start(app, Some(file))
+    start(app, Some(file)).await
 }
 async fn apply(
     State(app): State<App>,
     h: HeaderMap,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     app.require(&h, "updates")?;
-    start(app, None)
+    start(app, None).await
 }
 async fn job(
     State(app): State<App>,
@@ -186,47 +209,82 @@ async fn job(
     Param(id): Param<String>,
 ) -> Result<Json<Value>, ApiError> {
     app.require(&h, "updates")?;
-    let state = app.system.settings.lock().unwrap();
-    Ok(Json(
-        json!({"job":state.jobs.get(&id).ok_or_else(missing)?}),
-    ))
+    let mut job = app
+        .system
+        .snapshot()
+        .jobs
+        .get(&id)
+        .cloned()
+        .ok_or_else(missing)?;
+    let data = app.data_dir.clone();
+    let outcome = tokio::task::spawn_blocking(move || trial::settled_job(&data, &id))
+        .await
+        .map_err(io::Error::other)??;
+    if let Some(done) = outcome {
+        job = done;
+    }
+    Ok(Json(json!({"job":job})))
 }
 
-fn start(app: App, file: Option<NamedTempFile>) -> Result<(StatusCode, Json<Value>), ApiError> {
+async fn start(
+    app: App,
+    file: Option<NamedTempFile>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    // If the requester disconnects while system.json is being fsynced, a
+    // successfully queued job must still get its worker.
+    tokio::spawn(queue_and_launch(app, file))
+        .await
+        .map_err(io::Error::other)?
+}
+async fn queue_and_launch(
+    app: App,
+    file: Option<NamedTempFile>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
     let id = Uuid::new_v4().to_string();
     let job = json!({"id":id,"state":"running","progress":0});
-    app.system.change(|s| {
-        if !app.sim && s.jobs.values().any(|j| j["state"] == "running") {
-            return Err(ApiError::new(409, "in_use"));
-        }
-        s.jobs.insert(id.clone(), job.clone());
-        Ok(())
-    })?;
+    let data = app.data_dir.clone();
+    let queued = job.clone();
+    let key = id.clone();
+    app.system
+        .change(move |s| {
+            trial::settle_jobs(&data, &mut s.jobs)?;
+            if trial::is_pending(&data) || s.jobs.values().any(|j| j["state"] == "running") {
+                return Err(ApiError::new(409, "busy"));
+            }
+            s.jobs.insert(key, queued);
+            Ok(())
+        })
+        .await?;
     tokio::spawn(async move {
         let result = if app.sim {
             Ok(())
         } else {
-            install(&app, file).await
+            install(&app, file, &id).await
         };
         if let Err(e) = &result {
             eprintln!("app update {id}: {e}");
         }
         let succeeded = result.is_ok();
-        let saved = app.system.change(|s| {
-            let state = s.jobs.get_mut(&id).ok_or_else(missing)?;
-            state["state"] = json!(if succeeded { "done" } else { "failed" });
-            if succeeded {
-                state["progress"] = json!(100);
-            }
-            Ok(())
-        });
-        if succeeded && !app.sim && saved.is_ok() {
+        if succeeded && !app.sim {
+            // The immutable init helper completes the job after checking the running release.
             let _ = super::device_action(&app, "restart_kvm");
+            return;
         }
+        let _ = app
+            .system
+            .change(move |s| {
+                let state = s.jobs.get_mut(&id).ok_or_else(missing)?;
+                state["state"] = json!(if succeeded { "done" } else { "failed" });
+                if succeeded {
+                    state["progress"] = json!(100);
+                }
+                Ok(())
+            })
+            .await;
     });
     Ok((StatusCode::ACCEPTED, Json(json!({"job":job}))))
 }
-async fn install(app: &App, file: Option<NamedTempFile>) -> io::Result<()> {
+async fn install(app: &App, file: Option<NamedTempFile>, id: &str) -> io::Result<()> {
     let file = match file {
         Some(f) => f,
         None => {
@@ -244,15 +302,18 @@ async fn install(app: &App, file: Option<NamedTempFile>) -> io::Result<()> {
         }
     };
     let apps = app.data_dir.join("apps");
-    tokio::task::spawn_blocking(move || activate(&apps, file))
+    let job = id.to_owned();
+    tokio::task::spawn_blocking(move || activate(&apps, file, &job))
         .await
         .map_err(io::Error::other)?
 }
 
-fn activate(apps: &Path, mut file: NamedTempFile) -> io::Result<()> {
+fn activate(apps: &Path, mut file: NamedTempFile, id: &str) -> io::Result<()> {
     fs::create_dir_all(apps)?;
+    let directory = fs::File::open(apps)?;
+    directory.lock()?;
     let stage = tempfile::Builder::new()
-        .prefix("release-")
+        .prefix(".incoming-")
         .tempdir_in(apps)?;
     file.rewind()?;
     let mut archive = tar::Archive::new(file.as_file_mut());
@@ -304,15 +365,7 @@ fn activate(apps: &Path, mut file: NamedTempFile) -> io::Result<()> {
             return Err(io::Error::other(format!("missing {required}")));
         }
     }
-    let next = apps.join(format!(".next-{}", Uuid::new_v4()));
-    symlink(stage.path().file_name().unwrap(), &next)?;
-    if let Err(e) = fs::rename(&next, apps.join("current")) {
-        let _ = fs::remove_file(next);
-        return Err(e);
-    }
-    let _ = stage.keep();
-    fs::File::open(apps)?.sync_all()?;
-    Ok(())
+    trial::activate(apps, stage, id)
 }
 
 #[cfg(test)]
@@ -336,7 +389,12 @@ mod tests {
     #[test]
     fn activates_complete_application_only() {
         let dir = tempfile::tempdir().unwrap();
-        activate(dir.path(), bundle(&["kvmd", "panel", "web/index.html"])).unwrap();
+        activate(
+            dir.path(),
+            bundle(&["kvmd", "panel", "web/index.html"]),
+            "1",
+        )
+        .unwrap();
         let link = fs::read_link(dir.path().join("current")).unwrap();
         assert_eq!(fs::read(dir.path().join("current/kvmd")).unwrap(), b"abc");
         assert_eq!(
@@ -347,8 +405,8 @@ mod tests {
                 & 0o777,
             0o755
         );
-        assert!(activate(dir.path(), bundle(&["kvmd", "etc/passwd"])).is_err());
-        assert!(activate(dir.path(), bundle(&["kvmd"])).is_err());
+        assert!(activate(dir.path(), bundle(&["kvmd", "etc/passwd"]), "2").is_err());
+        assert!(activate(dir.path(), bundle(&["kvmd"]), "2").is_err());
         assert_eq!(fs::read_link(dir.path().join("current")).unwrap(), link);
     }
 }

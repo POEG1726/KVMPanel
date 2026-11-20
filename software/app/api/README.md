@@ -134,7 +134,7 @@ Mock 的测试会对照 `openapi.yaml` 校验每一个响应。初始账号为 `
 | `hello` | 连上时第一条，带 `version` |
 | `config` | 完整配置。连上时推一次，此后每次变更都推，不管改动来自网页还是副屏 |
 | `status` | 右上角状态栏用：`eth`、`pc`、`usb_a`、`kvm.sessions`，另有 `lux`。变化时推，另外每 5 秒推一次 |
-| `telemetry` | 每秒一次：`ts` 加上 `metrics[]`，每项是 `{id,label,unit,value,min,max,warn?,group}`。`value` 为 null 表示电脑没上报这一项，比如空的内存槽。`warn` 已经合并了 `config.panel.thresholds`。`hidden_metrics` 里的项不发 |
+| `telemetry` | 每秒一次：`ts` 加上 `metrics[]`，每项是 `{id,label,unit,value,min,max,warn?,group}`。**电脑上不存在的项（比如空的内存槽）不出现在 `metrics` 里**，副屏只显示收到的项；`value` 为 null 表示这一项存在、但这一秒没读到。`warn` 已经合并了 `config.panel.thresholds`。`hidden_metrics` 里的项不发 |
 | `pc` | 上位机连接状态变化。断开期间不发 `telemetry`，副屏切到“等待电脑数据”画面 |
 | `kvm_restarting` | 网页端的 KVM 服务正在重启，副屏自身不受影响 |
 | `result` | 对请求的回复，`id` 和请求相同。如果请求那一行本身无法解析，回复里没有 `id`，错误为 `bad_message` |
@@ -156,5 +156,5 @@ Mock 的测试会对照 `openapi.yaml` 校验每一个响应。初始账号为 `
 |---|---|
 | CPU | `cpu.clock_eff`、`cpu.bclk`、`cpu.fclk`、`cpu.vcore`、`cpu.tctl`、`cpu.load`、`cpu.ppt`、`cpu.core.0`–`cpu.core.15`（0–7 属于 CCD0） |
 | GPU | `gpu.clock`、`gpu.temp`、`gpu.mem_junction`、`gpu.load`、`gpu.vram_used`、`gpu.power` |
-| 内存 | `mem.used`、`mem.dimm.a1`/`a2`/`b1`/`b2`、`mem.mclk`、`mem.uclk` |
+| 内存 | `mem.used`、`mem.dimm.<槽位>`（只发有内存的槽位，比如 `a2`、`b2`）、`mem.mclk`、`mem.uclk` |
 | 整机 | `sys.power`、`ssd.0.temp`、`ssd.1.temp`、`net.rx`、`net.tx` |

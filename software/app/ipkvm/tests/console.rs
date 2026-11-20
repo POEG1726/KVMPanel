@@ -390,3 +390,78 @@ async fn paste_obeys_layout_and_utf8_byte_limit() {
         json!({"t":"error","error":"bad_message"})
     );
 }
+
+#[tokio::test]
+async fn sustained_key_repeats_coalesce_status_and_keep_both_sockets_alive() {
+    let s = Server::new().await;
+    let c = s.login("admin", "admin").await;
+    let mut ws = open(&s, "/api/ws", &c).await;
+    let mut video = open(&s, "/api/stream", &c).await;
+    next_json(&mut ws, |v| v["t"] == "status").await;
+    jpeg(&receive(&mut video).await.into_data());
+    send(&mut video, json!({"t":"pause"})).await;
+
+    // The test uses a single-thread runtime: this synchronous burst deterministically
+    // wraps the broadcast ring before either transport or the sampler can run.
+    for _ in 0..2048 {
+        s.app.emit("status_changed");
+    }
+    let (mut writer, mut reader) = ws.split();
+    let repeats = async {
+        let key = Message::Text(
+            json!({"t":"key","code":"KeyA","down":true})
+                .to_string()
+                .into(),
+        );
+        let mut timer = tokio::time::interval(Duration::from_millis(10));
+        for _ in 0..500 {
+            timer.tick().await;
+            writer.send(key.clone()).await.unwrap();
+        }
+        writer
+            .send(Message::Text(r#"{"t":"ping"}"#.into()))
+            .await
+            .unwrap();
+    };
+    let status_count = async {
+        let mut count = 0;
+        loop {
+            let message = reader.next().await.unwrap().unwrap();
+            let Message::Text(text) = message else {
+                panic!("unexpected console frame {message:?}")
+            };
+            let event: Value = serde_json::from_str(&text).unwrap();
+            match event["t"].as_str() {
+                Some("status") => count += 1,
+                Some("pong") => return count,
+                _ => panic!("unexpected console message {event}"),
+            }
+        }
+    };
+    let (_, count) = timeout(Duration::from_secs(7), async {
+        tokio::join!(repeats, status_count)
+    })
+    .await
+    .unwrap();
+    assert!((1..=53).contains(&count), "received {count} status updates");
+    send(&mut video, json!({"t":"resume"})).await;
+    jpeg(&receive(&mut video).await.into_data());
+}
+
+#[tokio::test]
+async fn explicit_disconnect_survives_a_broadcast_overflow() {
+    let s = Server::new().await;
+    let c = s.login("admin", "admin").await;
+    for (event, expected) in [("disconnect_sessions", 4409), ("kvm_restarting", 1012)] {
+        let mut ws = open(&s, "/api/ws", &c).await;
+        let mut stream = open(&s, "/api/stream", &c).await;
+        next_json(&mut ws, |v| v["t"] == "status").await;
+        receive(&mut stream).await;
+        s.app.emit(event);
+        for _ in 0..2048 {
+            s.app.emit("status_changed");
+        }
+        assert_eq!(code(&mut ws).await, expected);
+        assert_eq!(code(&mut stream).await, expected);
+    }
+}

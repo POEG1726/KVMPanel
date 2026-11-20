@@ -506,3 +506,179 @@ async fn download_control_and_atomic_completion() {
         64 << 20
     );
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_blocked_lun_operation_does_not_stall_the_file_service() {
+    let a = Api::new().await;
+    let s = a.s.app.storage.clone();
+    let (started, waiting) = tokio::sync::oneshot::channel();
+    let (unlock, wait) = std::sync::mpsc::channel();
+    let gadget = tokio::task::spawn_blocking(move || {
+        s.with_gadget_args(true, |_| {
+            started.send(()).unwrap();
+            let _ = wait.recv_timeout(Duration::from_secs(2));
+            Ok(())
+        })
+        .unwrap()
+    });
+    waiting.await.unwrap();
+    let mount =
+        a.s.client
+            .post(format!("{}/api/media/mount", a.s.url))
+            .header("cookie", &a.cookie)
+            .json(&json!({"root":"sd","path":"/images/ubuntu-24.04.iso","mode":"cdrom"}));
+    let mount = tokio::spawn(async move { mount.send().await.unwrap() });
+    let start = std::time::Instant::now();
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    assert_eq!(a.list("sd", "/images").await.status(), 200);
+    assert!(start.elapsed() < Duration::from_millis(200));
+    assert!(!mount.is_finished());
+    unlock.send(()).unwrap();
+    gadget.await.unwrap();
+    assert_eq!(mount.await.unwrap().status(), 200);
+}
+
+#[tokio::test]
+async fn jobs_keep_running_work_and_only_the_twenty_latest_completions() {
+    let a = Api::new().await;
+    let start = |i| {
+        a.post(
+            "/api/media/download",
+            json!({"url":"http://example.test/x.iso","path":format!("/images/x{i}.iso")}),
+        )
+    };
+    let mut keep = Vec::new();
+    for i in 0..=22 {
+        let job = check(start(i).await, "startDownload", 202).await;
+        let id = job["job"]["id"].as_str().unwrap().to_owned();
+        let act = if i == 0 { "pause" } else { "cancel" };
+        check(
+            a.post(&format!("/api/media/jobs/{id}/{act}"), Value::Null)
+                .await,
+            "controlJob",
+            200,
+        )
+        .await;
+        if i == 0 || i >= 3 {
+            keep.push(id);
+        }
+    }
+    let out = check(a.get("/api/media/jobs").await, "listJobs", 200).await;
+    let ids = out["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["id"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, keep);
+}
+
+#[tokio::test]
+async fn mounting_uses_the_applied_storage_switch() {
+    let a = Api::new().await;
+    let iso = json!({"root":"sd","mode":"cdrom","path":"/images/ubuntu-24.04.iso"});
+    assert_eq!(
+        a.s.call(
+            "PATCH",
+            "/api/config",
+            &a.cookie,
+            Some(json!({"usb":{"storage":false}}))
+        )
+        .await
+        .status(),
+        200
+    );
+    check(
+        a.post("/api/media/mount", iso.clone()).await,
+        "mountMedia",
+        200,
+    )
+    .await;
+    check(
+        a.post("/api/media/eject", Value::Null).await,
+        "ejectMedia",
+        204,
+    )
+    .await;
+    assert_eq!(a.post("/api/usb/apply", Value::Null).await.status(), 202);
+    let rejected = check(a.post("/api/media/mount", iso).await, "mountMedia", 409).await;
+    assert_eq!(rejected["error"], "in_use");
+    assert_eq!(a.s.app.storage.status()["mounted"], Value::Null);
+}
+
+#[tokio::test]
+async fn switching_share_refuses_writers_in_both_directions() {
+    let a = Api::new().await;
+    let mut writer = socket_upload(
+        &a,
+        "sd",
+        "/images/unpublished",
+        "Transfer-Encoding: chunked",
+    )
+    .await;
+    writer.write_all(b"1\r\nx\r\n").await.unwrap();
+    let dir = a.s.dir.path().join("volumes/sd/images");
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !fs::read_dir(&dir).unwrap().any(|f| {
+            f.unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".kvmd-upload-")
+        }) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let res = a.post("/api/share", json!({"exported_to_host":true})).await;
+    assert_eq!(res.status(), 409);
+    assert_eq!(res.json::<Value>().await.unwrap()["error"], "share_busy");
+    writer.write_all(b"0\r\n\r\n").await.unwrap();
+    let mut reply = String::new();
+    writer.read_to_string(&mut reply).await.unwrap();
+    assert!(reply.starts_with("HTTP/1.1 201"));
+    check(
+        a.post("/api/share", json!({"exported_to_host":true})).await,
+        "setShare",
+        200,
+    )
+    .await;
+    assert_eq!(a.list("share", "/").await.status(), 200);
+    let job = check(
+        a.post(
+            "/api/media/download",
+            json!({"url":"http://example.test/disk.iso","path":"/images/downloading.iso"}),
+        )
+        .await,
+        "startDownload",
+        202,
+    )
+    .await;
+    let id = job["job"]["id"].as_str().unwrap();
+    check(
+        a.post(&format!("/api/media/jobs/{id}/pause"), Value::Null)
+            .await,
+        "controlJob",
+        200,
+    )
+    .await;
+    let res = a
+        .post("/api/share", json!({"exported_to_host":false}))
+        .await;
+    assert_eq!(res.status(), 409);
+    assert_eq!(res.json::<Value>().await.unwrap()["error"], "share_busy");
+    check(
+        a.post(&format!("/api/media/jobs/{id}/cancel"), Value::Null)
+            .await,
+        "controlJob",
+        200,
+    )
+    .await;
+    check(
+        a.post("/api/share", json!({"exported_to_host":false}))
+            .await,
+        "setShare",
+        200,
+    )
+    .await;
+}

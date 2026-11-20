@@ -58,7 +58,7 @@ for switch in "$keyboard" "$relative" "$absolute" "$merge" "$telemetry" "$storag
 	case "$switch" in 0|1) ;; *) fail "invalid switch '$switch' (use 0 or 1)" ;; esac
 done
 merged=$((relative * absolute * merge))
-standalone=$((telemetry * (1-absolute) * (1-relative)))
+standalone=$((telemetry * (1-absolute)))
 case "$network" in off) net=0 ;; ncm|rndis) net=1 ;; *) fail "invalid NETWORK" ;; esac
 inputs=$((keyboard + relative + absolute - merged + standalone + storage + 2 * (net + acm)))
 outputs=$((storage + net + acm))
@@ -157,12 +157,8 @@ if [ "$merged" = 1 ]; then
 else
 	if [ "$relative" = 1 ]; then
 		desc="$mouse_header $buttons $rel_xy $wheel c0 c0"
-		if [ "$absolute" = 0 ] && [ "$telemetry" = 1 ]; then
-			# Both reports on one interface are numbered; telemetry still uses EP0.
-			hid relative 0 0 64 "$mouse_header 85 01 $buttons $rel_xy $wheel c0 c0 $vendor_header 85 03 $vendor_output"
-		else
-			hid relative 1 2 4 "$desc"
-		fi
+		# Boot mice use unnumbered reports. Telemetry needs its own HID here.
+		hid relative 1 2 4 "$desc"
 	fi
 	if [ "$absolute" = 1 ]; then
 		desc="$mouse_header 85 02 $buttons $abs_xy $wheel c0 c0"

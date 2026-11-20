@@ -5,6 +5,10 @@ use std::{io, path::PathBuf};
 struct Args {
     #[arg(long)]
     sim: bool,
+    #[arg(long, hide = true)]
+    verify_update: bool,
+    #[arg(long, hide = true, conflicts_with = "verify_update")]
+    prepare_update: bool,
     #[arg(long)]
     listen: Option<std::net::SocketAddr>,
     #[arg(long)]
@@ -24,6 +28,16 @@ async fn main() -> io::Result<()> {
             "/data/kvmd".into()
         }
     });
+    if args.prepare_update {
+        return kvmd::system::prepare_update(&dir);
+    }
+    if args.verify_update {
+        return kvmd::system::verify_update(
+            &dir,
+            args.panel.as_deref().unwrap_or("/run/kvmd/panel.sock"),
+        )
+        .await;
+    }
     std::fs::create_dir_all(&dir)?;
     let directory_lock = std::fs::File::open(&dir)?;
     directory_lock
@@ -32,8 +46,12 @@ async fn main() -> io::Result<()> {
     let app = App::new(&dir, args.sim)?;
     let web = args.web_dir.unwrap_or_else(|| "/usr/share/kvmd/web".into());
     if !app.sim {
-        if let Err(e) = app.restore_usb() {
-            eprintln!("kvmd: cannot restore USB gadget: {e}");
+        let board = app.clone();
+        if let Err(e) = tokio::task::spawn_blocking(move || board.restore_usb())
+            .await
+            .map_err(io::Error::other)?
+        {
+            eprintln!("kvmd: cannot restore USB gadget: {e:?}");
         }
     }
     tokio::spawn(kvmd::console::jiggler(app.clone()));

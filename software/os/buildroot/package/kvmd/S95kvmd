@@ -7,11 +7,11 @@ running() {
 	test -s "$pidfile" || return 1
 	pid=$(cat "$pidfile")
 	case "$pid" in ''|*[!0-9]*) return 1 ;; esac
-	[ "$(cat "/proc/$pid/comm" 2>/dev/null)" = kvmd ]
+	[ "$(cat "/proc/$pid/comm" 2>/dev/null)" = kvmd ] &&
+		[ "$(awk '{print $3}' "/proc/$pid/stat" 2>/dev/null)" != Z ]
 }
 
 start() {
-	running && return 0
 	if [ -r /etc/default/kvmd ]; then
 		set -a
 		. /etc/default/kvmd
@@ -25,28 +25,56 @@ start() {
 	fi
 	mkdir -p /run/kvmd "$data/ssh" || return 1
 	chmod 0700 "$data/ssh" || return 1
+	if ! running; then
+		if [ -f "$data/apps/pending.json" ]; then
+			/usr/sbin/kvmd --prepare-update --data-dir "$data" 8>&- || return 1
+		fi
+		launch || [ -f "$data/apps/pending.json" ] || return 1
+	fi
+	if [ -f "$data/apps/pending.json" ]; then
+		# The verifier always runs from the rootfs, even if the new binary
+		# cannot exec. It commits or restores the symlink before returning.
+		/usr/sbin/kvmd --verify-update --data-dir "$data" 8>&- && return 0
+		[ ! -e "$data/apps/pending.json" ] || return 1
+		stop rollback || return 1
+		launch
+	fi
+}
+
+launch() {
 	binary=/usr/sbin/kvmd
 	web=/usr/share/kvmd/web
-	if [ -x "$data/apps/current/kvmd" ]; then
+	if [ -L "$data/apps/current" ]; then
 		binary="$data/apps/current/kvmd"
-	fi
-	if [ -d "$data/apps/current/web" ]; then
 		web="$data/apps/current/web"
 	fi
-	start-stop-daemon -S -b -m -p "$pidfile" -x "$binary" -- --data-dir "$data" --web-dir "$web"
+	start-stop-daemon -S -b -m -p "$pidfile" -x "$binary" -- --data-dir "$data" --web-dir "$web" 8>&-
 }
 
 stop() {
 	running || { rm -f "$pidfile"; return 0; }
 	start-stop-daemon -K -n kvmd -p "$pidfile" || return 1
 	for delay in 1 2 3 4 5; do
-		kill -0 "$pid" 2>/dev/null || break
+		running || break
 		sleep 1
 	done
-	kill -0 "$pid" 2>/dev/null && return 1
+	if running; then
+		# A hung trial may ignore TERM. Never force-kill on a manual stop.
+		[ "$1" = rollback ] || return 1
+		kill -KILL "$pid" || return 1
+		for delay in 1 2 3; do
+			running || break
+			sleep 1
+		done
+		running && return 1
+	fi
 	rm -f "$pidfile"
 }
 
+# Serialize init, manual restart and the upgrade's restart. Child services
+# must close fd 8 or they would keep this lock for their entire lifetime.
+exec 8>/run/kvmd-init.lock || exit 1
+flock -x 8 || exit 1
 case "$1" in
 	start) start ;;
 	stop) stop ;;

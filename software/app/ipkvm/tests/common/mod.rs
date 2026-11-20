@@ -12,7 +12,9 @@ pub struct Server {
 }
 impl Server {
     pub async fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        Self::from_dir(tempfile::tempdir().unwrap()).await
+    }
+    pub async fn from_dir(dir: tempfile::TempDir) -> Self {
         let app = App::new(dir.path(), true).unwrap();
         let tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = tcp.local_addr().unwrap();

@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - 画面以草图 `e2-v5.html` 为准，内容包括：
-  - E2 背景：缓慢漂移的模糊色光，加上滚动的网格；负载越高，色光越亮。
+  - E2 背景：缓慢漂移的模糊色光，负载越高，色光越亮；不画背景网格（用户后来去掉了）。
   - 半透明面板。
   - CPU 面板：16 根核心负载柱，标题行右侧有状态栏。
   - 每一行：名称 | 带边框的小曲线 | 数值。
@@ -37,7 +37,7 @@ Rust 工具链（rustup）由 Codex 装到用户目录，Slint 原型共用它�
 
 - LVGL 源码固定为 v9.x 的一个 tag，克隆到 `~/work/KVMPanel/upstream/lvgl`（不进主仓库）。按 `sources/README.md` 的格式记下版本和来源。
 - `prototypes/lvgl/`：`CMakeLists.txt`、`main.c`、`lv_conf.h`，以及 panel socket 客户端（POSIX socket、NDJSON 行解析、cJSON 或手写的最小解析）。
-- 背景实现：预先渲染好模糊色光的图片，每帧只移动位置；网格单独作为一层。
+- 背景实现：预先渲染好模糊色光的图片，每帧只移动位置。
 - 验证：`cmake --build` 编译通过；启动 mock 后运行原型，WSLg 弹出窗口，数据每秒刷新。截图存到 `prototypes/screens/lvgl.png`。
 
 ### Task 2: Slint 原型

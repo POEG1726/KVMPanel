@@ -15,9 +15,29 @@ use std::{
 };
 use tokio::process::{Child, Command};
 
+#[derive(Default)]
+pub(super) struct ActionResult {
+    generation: u64,
+    error: Option<String>,
+}
+
+impl ActionResult {
+    fn begin(&mut self) -> u64 {
+        self.generation += 1;
+        self.error = None;
+        self.generation
+    }
+
+    fn fail(&mut self, generation: u64, action: &str, reason: impl std::fmt::Display) {
+        if self.generation == generation {
+            self.error = Some(format!("{action}: {reason}"));
+        }
+    }
+}
+
 pub(super) struct Service {
     daemon: Option<Child>,
-    auth: Option<Child>,
+    auth: Option<tokio::task::JoinHandle<()>>,
     sim_installed: bool,
     sim_running: bool,
 }
@@ -185,15 +205,13 @@ pub(super) async fn get(
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
     app.require(&headers, "tailscale")?;
-    if app.sim {
+    let mut status = if app.sim {
         let s = app.system.tail.lock().await;
-        return Ok(Json(
-            json!({"installed":s.sim_installed,"running":s.sim_running}),
-        ));
-    }
-    let installed = directory(&app).join("tailscale").is_file();
-    let mut status = json!({"installed":installed,"running":false});
-    if installed {
+        json!({"installed":s.sim_installed,"running":s.sim_running})
+    } else {
+        json!({"installed":directory(&app).join("tailscale").is_file(),"running":false})
+    };
+    if !app.sim && status["installed"] == true {
         let command = cli(&app).args(["status", "--json"]).output();
         if let Ok(Ok(output)) = tokio::time::timeout(Duration::from_secs(3), command).await {
             if let Ok(data) = serde_json::from_slice::<Value>(&output.stdout) {
@@ -207,19 +225,36 @@ pub(super) async fn get(
             }
         }
     }
+    if let Some(error) = &app.system.tail_action.lock().unwrap().error {
+        status["error"] = json!(error);
+    }
     Ok(Json(status))
 }
-async fn change(app: &App, action: &str) -> io::Result<()> {
+async fn wait_cli(child: Child) -> io::Result<()> {
+    let output = child.wait_with_output().await?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let reason = String::from_utf8_lossy(&output.stderr);
+    Err(io::Error::other(format!(
+        "{} {}",
+        output.status,
+        reason.trim().chars().take(512).collect::<String>()
+    )))
+}
+
+async fn change(app: &App, action: &str, generation: u64) -> io::Result<()> {
     let mut s = app.system.tail.lock().await;
+    if let Some(previous) = s.auth.take() {
+        previous.abort();
+        let _ = previous.await;
+    }
     match action {
         "install" => {
             fetch(app).await?;
             run_daemon(app, &mut s).await?;
         }
         "uninstall" => {
-            if let Some(mut c) = s.auth.take() {
-                let _ = c.kill().await;
-            }
             if let Some(mut c) = s.daemon.take() {
                 let _ = c.kill().await;
             }
@@ -230,10 +265,22 @@ async fn change(app: &App, action: &str) -> io::Result<()> {
         }
         _ => {
             run_daemon(app, &mut s).await?;
-            if let Some(mut previous) = s.auth.take() {
-                let _ = previous.kill().await;
-            }
-            s.auth = Some(cli(app).arg(action).stdout(Stdio::null()).spawn()?);
+            let child = cli(app)
+                .arg(action)
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()?;
+            let app = app.clone();
+            let action = action.to_owned();
+            s.auth = Some(tokio::spawn(async move {
+                if let Err(error) = wait_cli(child).await {
+                    app.system
+                        .tail_action
+                        .lock()
+                        .unwrap()
+                        .fail(generation, &action, &error);
+                }
+            }));
         }
     }
     Ok(())
@@ -250,6 +297,7 @@ pub(super) async fn action(
     ) {
         return Err(ApiError::new(400, "bad_action"));
     }
+    let generation = app.system.tail_action.lock().unwrap().begin();
     if app.sim {
         let mut s = app.system.tail.lock().await;
         match act.as_str() {
@@ -258,15 +306,52 @@ pub(super) async fn action(
                 s.sim_installed = false;
                 s.sim_running = false;
             }
-            "up" | "login" => s.sim_running = s.sim_installed,
+            "up" | "login" if !s.sim_installed => {
+                app.system.tail_action.lock().unwrap().fail(
+                    generation,
+                    &act,
+                    "Tailscale is not installed",
+                );
+            }
+            "up" | "login" => s.sim_running = true,
             _ => s.sim_running = false,
         }
     } else {
         tokio::spawn(async move {
-            if let Err(e) = change(&app, &act).await {
+            if let Err(e) = change(&app, &act, generation).await {
+                app.system
+                    .tail_action
+                    .lock()
+                    .unwrap()
+                    .fail(generation, &act, &e);
                 eprintln!("tailscale {act}: {e}");
             }
         });
     }
     Ok(StatusCode::ACCEPTED)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn cli_nonzero_exit_and_text_are_reported() {
+        let child = Command::new("sh")
+            .args(["-c", "echo unable-to-connect >&2; exit 3"])
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let err = wait_cli(child).await.unwrap_err().to_string();
+        assert!(err.contains("unable-to-connect") && err.contains("3"));
+    }
+    #[test]
+    fn late_previous_failure_does_not_replace_the_latest_result() {
+        let mut state = ActionResult::default();
+        let prev = state.begin();
+        let current = state.begin();
+        state.fail(prev, "login", "canceled");
+        assert!(state.error.is_none());
+        state.fail(current, "up", "missing package");
+        assert_eq!(state.error.as_deref(), Some("up: missing package"));
+    }
 }

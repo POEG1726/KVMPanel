@@ -70,7 +70,7 @@ async fn health_config_permissions_and_usb() {
         .await,
         json!({"error":"endpoints_full","detail":{"in_missing":1,"out_missing":0}})
     );
-    assert_eq!(s.app.config(), original);
+    assert_eq!(*s.app.config(), original);
     assert_eq!(
         check(
             &s,
@@ -385,7 +385,7 @@ async fn endpoint_combinations() {
             6,
             2,
         ),
-        (json!({"mouse_abs":false,"mouse_merge":true}), 3, 1),
+        (json!({"mouse_abs":false,"mouse_merge":true}), 4, 1),
     ] {
         let mut u = base.clone();
         u.as_object_mut()

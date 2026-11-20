@@ -318,7 +318,7 @@ fn check_name(name: &str) -> Result<(), ApiError> {
 }
 async fn list(State(app): State<App>, h: HeaderMap) -> Result<Json<Value>, ApiError> {
     app.require(&h, "terminal")?;
-    let s = app.system.settings.lock().unwrap();
+    let s = app.system.snapshot();
     Ok(Json(json!(s
         .scripts
         .iter()
@@ -336,15 +336,15 @@ async fn store(
     if super::mime(&h) != "text/plain" {
         return Err(bad_body(""));
     }
-    let script = std::str::from_utf8(&body).map_err(|_| bad_body(""))?;
-    app.system.change(|s| {
-        s.scripts.insert(name.clone(), script.into());
-        Ok(())
-    })?;
-    Ok((
-        StatusCode::CREATED,
-        Json(json!({"name":name,"size":body.len()})),
-    ))
+    let script = String::from_utf8(body.to_vec()).map_err(|_| bad_body(""))?;
+    let info = json!({"name":name,"size":body.len()});
+    app.system
+        .change(move |s| {
+            s.scripts.insert(name, script);
+            Ok(())
+        })
+        .await?;
+    Ok((StatusCode::CREATED, Json(info)))
 }
 async fn remove(
     State(app): State<App>,
@@ -354,7 +354,8 @@ async fn remove(
     app.require(&h, "terminal")?;
     check_name(&name)?;
     app.system
-        .change(|s| s.scripts.remove(&name).ok_or_else(missing))?;
+        .change(move |s| s.scripts.remove(&name).ok_or_else(missing))
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 async fn run(
@@ -366,18 +367,22 @@ async fn run(
     check_name(&name)?;
     let text = app
         .system
-        .settings
-        .lock()
-        .unwrap()
+        .snapshot()
         .scripts
         .get(&name)
         .cloned()
         .ok_or_else(missing)?;
     // Read source from a file descriptor, not an interpolated command line.
-    let mut source = tempfile::tempfile_in(&app.data_dir)?;
-    writeln!(source, "exec 2>&1")?;
-    source.write_all(text.as_bytes())?;
-    source.rewind()?;
+    let dir = app.data_dir.clone();
+    let source = tokio::task::spawn_blocking(move || -> io::Result<_> {
+        let mut source = tempfile::tempfile_in(dir)?;
+        writeln!(source, "exec 2>&1")?;
+        source.write_all(text.as_bytes())?;
+        source.rewind()?;
+        Ok(source)
+    })
+    .await
+    .map_err(io::Error::other)??;
     let mut cmd = Command::new("/bin/sh");
     cmd.current_dir(&app.data_dir)
         .stdin(source)

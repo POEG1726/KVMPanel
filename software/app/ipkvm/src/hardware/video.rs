@@ -13,34 +13,69 @@ struct Mode {
     height: usize,
     fps: f64,
 }
-fn timings(s: &str) -> Option<Mode> {
-    let field = |name: &str| {
-        s.lines()
-            .find_map(|l| l.trim().strip_prefix(name))?
-            .trim()
-            .parse::<usize>()
-            .ok()
-    };
-    let width = field("Active width:")?;
-    let height = field("Active height:")?;
-    let fps = s
-        .lines()
-        .find(|s| s.contains("per second)"))?
-        .split_once('(')?
-        .1
-        .split_whitespace()
-        .next()?
-        .parse::<f64>()
-        .ok()?;
-    if !(32..=4088).contains(&width)
-        || !(32..=4096).contains(&height)
-        || width % 2 != 0
-        || height % 2 != 0
-        || !fps.is_finite()
-    {
-        return None;
+// Linux videodev2.h: v4l2_dv_timings contains a packed 128-byte union.
+// Access the BT timing fields by value so the unaligned pixel clock is safe on ARM.
+#[repr(C, packed)]
+#[derive(Default)]
+struct DvTimings {
+    kind: u32,
+    width: u32,
+    height: u32,
+    interlaced: u32,
+    polarities: u32,
+    pixelclock: u64,
+    hblank: [u32; 3],
+    vblank: [u32; 3],
+    second_field_blank: [u32; 3],
+    unused: [u32; 17],
+}
+const _: () = assert!(std::mem::size_of::<DvTimings>() == 132);
+
+impl DvTimings {
+    fn mode(self) -> io::Result<Mode> {
+        let (width, height) = (self.width as usize, self.height as usize);
+        if self.kind != 0
+            || !(32..=4088).contains(&width)
+            || !(32..=4096).contains(&height)
+            || width % 2 != 0
+            || height % 2 != 0
+            || self.pixelclock == 0
+        {
+            return Err(io::ErrorKind::InvalidData.into());
+        }
+        let blank = |fields: [u32; 3]| fields.into_iter().map(f64::from).sum::<f64>();
+        let total_w = width as f64 + blank(self.hblank);
+        let mut total_h = height as f64 + blank(self.vblank);
+        if self.interlaced != 0 {
+            total_h = (total_h + blank(self.second_field_blank)) / 2.0;
+        }
+        Ok(Mode {
+            width,
+            height,
+            fps: self.pixelclock as f64 / (total_w * total_h),
+        })
     }
-    Some(Mode { width, height, fps })
+}
+
+fn query_mode(path: &std::path::Path) -> io::Result<Mode> {
+    let file = std::fs::File::open(path)?;
+    let mut timing = DvTimings::default();
+    let query = libc::_IOR::<DvTimings>(b'V' as u32, 99);
+    // The kernel writes one v4l2_dv_timings into this live packed buffer.
+    if unsafe { libc::ioctl(file.as_raw_fd(), query, &mut timing) } < 0 {
+        let error = io::Error::last_os_error();
+        return Err(timing_error(error));
+    }
+    timing.mode()
+}
+fn timing_error(error: io::Error) -> io::Error {
+    match error.raw_os_error() {
+        // LT8619C reports no link, no sync lock, or a timing outside its capture range.
+        Some(libc::ENOLINK | libc::ENOLCK | libc::ERANGE) => {
+            io::Error::new(io::ErrorKind::NotConnected, error)
+        }
+        _ => error,
+    }
 }
 
 struct Capture {
@@ -115,41 +150,42 @@ impl Capture {
 #[derive(Default)]
 pub(super) struct Video {
     capture: Option<Capture>,
-    mode: Option<(Instant, Option<Mode>)>,
+    mode: Option<(Instant, Result<Mode, io::ErrorKind>)>,
 }
 impl Video {
     pub fn stop(&mut self) {
         self.capture = None;
     }
-    fn mode(&mut self) -> Option<Mode> {
-        if let Some((at, m)) = self.mode {
+    fn mode(&mut self) -> io::Result<Mode> {
+        if let Some((at, result)) = self.mode {
             if at.elapsed() < Duration::from_millis(500) {
-                return m;
+                return result.map_err(Into::into);
             }
         }
-        let mode = run(Command::new("v4l2-ctl").args([
-            "-d",
-            &device("KVMD_HDMI_DEVICE", "/dev/v4l-subdev0"),
-            "--query-dv-timings",
-        ]))
-        .ok()
-        .and_then(|s| timings(&String::from_utf8_lossy(&s)));
-        self.mode = Some((Instant::now(), mode));
-        if self.capture.as_ref().is_some_and(|c| Some(c.mode) != mode) {
-            self.stop()
+        let mode = query_mode(device("KVMD_HDMI_DEVICE", "/dev/v4l-subdev0").as_ref());
+        self.mode = Some((
+            Instant::now(),
+            mode.as_ref().copied().map_err(io::Error::kind),
+        ));
+        if self
+            .capture
+            .as_ref()
+            .is_some_and(|c| Some(&c.mode) != mode.as_ref().ok())
+        {
+            self.stop();
         }
         mode
     }
     pub fn hdmi(&mut self) -> Value {
         match self.mode() {
-            Some(m) => {
+            Ok(m) => {
                 json!({"signal":true,"width":m.width,"height":m.height,"fps":m.fps.round() as u32})
             }
-            None => json!({"signal":false,"width":0,"height":0,"fps":0}),
+            Err(_) => json!({"signal":false,"width":0,"height":0,"fps":0}),
         }
     }
     pub fn frame(&mut self, quality: u8) -> io::Result<Vec<u8>> {
-        let mode = self.mode().ok_or(io::ErrorKind::NotConnected)?;
+        let mode = self.mode()?;
         if self.capture.is_none() {
             self.capture = Some(Capture::start(mode)?)
         }
@@ -269,16 +305,42 @@ mod tests {
     }
     #[test]
     fn capture_timings() {
-        let sample="\tActive width: 1920\n\tActive height: 1080\n\tPixelclock: 74250000 Hz (30.00 frames per second)";
+        let timing = DvTimings {
+            width: 1920,
+            height: 1080,
+            pixelclock: 74_250_000,
+            hblank: [88, 44, 148],
+            vblank: [4, 5, 36],
+            ..Default::default()
+        };
         assert_eq!(
-            timings(sample),
-            Some(Mode {
+            timing.mode().unwrap(),
+            Mode {
                 width: 1920,
                 height: 1080,
                 fps: 30.
-            })
+            }
         );
-        assert!(timings("no signal").is_none());
+        for errno in [libc::ENOLINK, libc::ENOLCK, libc::ERANGE] {
+            assert_eq!(
+                timing_error(io::Error::from_raw_os_error(errno)).kind(),
+                io::ErrorKind::NotConnected
+            );
+        }
+        assert_eq!(
+            timing_error(io::Error::from_raw_os_error(libc::EIO)).raw_os_error(),
+            Some(libc::EIO)
+        );
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            query_mode(&dir.path().join("missing")).unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
+        let file = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+        assert_eq!(
+            query_mode(file.path()).unwrap_err().raw_os_error(),
+            Some(libc::ENOTTY)
+        );
         assert!(encode(&[0; 4], 640, 480, 80).is_err());
     }
 }

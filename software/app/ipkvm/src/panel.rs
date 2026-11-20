@@ -43,7 +43,13 @@ fn gadget_connected() -> bool {
         })
     })
 }
-fn status(app: &App, pc: bool) -> Value {
+async fn status(app: &App, pc: bool) -> io::Result<Value> {
+    let app = app.clone();
+    tokio::task::spawn_blocking(move || sample_status(&app, pc))
+        .await
+        .map_err(io::Error::other)
+}
+fn sample_status(app: &App, pc: bool) -> Value {
     let info = system::device_info(app);
     let speed = info["link_mbps"].as_u64().unwrap_or_default();
     let ip = info["ip"]
@@ -80,10 +86,31 @@ impl Host {
         if !self.online(now) {
             self.samples.clear();
         }
+        // Slot labels in vendor reports are dynamic. Bound their retained inventory
+        // independently of the fixed CPU/GPU metrics on the 512 MiB board.
+        const MAX_DIMMS: usize = 256;
+        if id.starts_with("mem.dimm.")
+            && !self.samples.contains_key(&id)
+            && self
+                .samples
+                .keys()
+                .filter(|key| key.starts_with("mem.dimm."))
+                .count()
+                >= MAX_DIMMS
+        {
+            return;
+        }
         self.samples.insert(id, value);
         self.last_seen = Some((now, ts));
     }
 
+    fn snapshot(&mut self) -> Self {
+        let captured = self.clone();
+        // Preserve the reported inventory. A missed sample in the next second
+        // is null, rather than displaying the previous measurement as fresh.
+        self.samples.values_mut().for_each(|sample| *sample = None);
+        captured
+    }
     fn online(&self, now: Instant) -> bool {
         self.last_seen
             .is_some_and(|(last, _)| now.saturating_duration_since(last) < Duration::from_secs(3))
@@ -150,7 +177,7 @@ async fn sampler(app: App, tx: broadcast::Sender<Value>, pc: watch::Sender<bool>
             if app.sim && app.console.sim_pc_connected.load(Ordering::Relaxed) {
                 host.last_seen = Some((now, ts));
             }
-            host.clone()
+            host.snapshot()
         };
         let connected = if app.sim {
             app.console.sim_pc_connected.load(Ordering::Relaxed)
@@ -162,7 +189,9 @@ async fn sampler(app: App, tx: broadcast::Sender<Value>, pc: watch::Sender<bool>
             pc.send_replace(connected);
             let _=tx.send(json!({"t":"pc","connected":connected,"last_seen_ts":host.last_seen.map(|(_,ts)|ts)}));
         }
-        let state = status(&app, connected);
+        let Ok(state) = status(&app, connected).await else {
+            return;
+        };
         let panel = &app.config()["panel"];
         if !app.sim {
             if connected {
@@ -175,8 +204,14 @@ async fn sampler(app: App, tx: broadcast::Sender<Value>, pc: watch::Sender<bool>
                 state["lux"].as_f64(),
                 offline_since.map(|start| now.duration_since(start)),
             );
-            if previous_brightness != Some(level) && app.hw.brightness(level).is_ok() {
-                previous_brightness = Some(level);
+            if previous_brightness != Some(level) {
+                let hw = app.hw.clone();
+                if matches!(
+                    tokio::task::spawn_blocking(move || hw.brightness(level)).await,
+                    Ok(Ok(()))
+                ) {
+                    previous_brightness = Some(level);
+                }
             }
         }
         if state != last_status
@@ -201,8 +236,7 @@ async fn reply(writer: &mut (impl AsyncWrite + Unpin), msg: Value) -> io::Result
     writer.write_all(&line).await
 }
 
-fn request(app: &App, line: &str) -> Value {
-    let m: Value = serde_json::from_str(line).unwrap_or(Value::Null);
+fn request(app: &App, m: Value) -> Value {
     let mut out = json!({"t":"result","ok":false});
     if m["id"]
         .as_f64()
@@ -215,8 +249,10 @@ fn request(app: &App, line: &str) -> Value {
         return out;
     }
     let result: Result<Option<Value>, ApiError> = match m["t"].as_str() {
-        Some("get_config") => Ok(Some(app.config())),
-        Some("patch_config") => app.patch_config(&m["patch"], None).map(Some),
+        Some("get_config") => Ok(Some((*app.config()).clone())),
+        Some("patch_config") => app
+            .patch_config(&m["patch"], None)
+            .map(|cfg| Some((*cfg).clone())),
         Some("device_info") => Ok(Some(system::device_info(app))),
         Some("action") => match m["action"].as_str().unwrap() {
             "eject_media" => app.storage.eject().map(|()| {
@@ -251,6 +287,8 @@ async fn client<T: AsyncRead + AsyncWrite + Unpin>(
     mut telemetry: broadcast::Receiver<Value>,
     pc: watch::Receiver<bool>,
 ) -> io::Result<()> {
+    let mut closes = app.socket_closes.subscribe();
+    let mut applies = tokio::task::JoinSet::new();
     let mut events = app.events.subscribe();
     let (initial_config, mut config_updates) = app.subscribe_config();
     let (read, mut write) = tokio::io::split(io);
@@ -261,29 +299,58 @@ async fn client<T: AsyncRead + AsyncWrite + Unpin>(
     )
     .await?;
     reply(&mut write, json!({"t":"config","config":initial_config})).await?;
-    let initial = status(&app, *pc.borrow());
+    let connected = *pc.borrow();
+    let initial = status(&app, connected).await?;
     reply(&mut write, initial).await?;
     loop {
         tokio::select! {
             biased;
+            changed=closes.changed()=>{
+                if changed.is_err(){return Ok(())}
+                let code=*closes.borrow_and_update();
+                if code==1012{
+                    reply(&mut write,json!({"t":"kvm_restarting"})).await?;
+                    return write.shutdown().await;
+                }
+            },
             event=events.recv()=>match event{
-                Ok(event)=>match event.as_str(){
-                    "kvm_restarting"=>{reply(&mut write,json!({"t":"kvm_restarting"})).await?;return write.shutdown().await;}
-                    "console_sessions"=>{let msg=status(&app,*pc.borrow());reply(&mut write,msg).await?;},
-                    _=>{}
+                Ok(event) if event!="console_sessions"=>{},
+                Err(broadcast::error::RecvError::Closed)=>return Ok(()),
+                other=>{
+                    if other.is_err(){events=events.resubscribe();}
+                    let connected=*pc.borrow();
+                    reply(&mut write,status(&app,connected).await?).await?;
                 }
-                Err(_)=>return Ok(()),
             },
-            update=config_updates.recv()=>match update{
-                Ok(config)=>{
-                    reply(&mut write,json!({"t":"config","config":config})).await?;
-                    let msg=status(&app,*pc.borrow());
-                    reply(&mut write,msg).await?;
-                }
-                Err(_)=>return Ok(()),
+            update=config_updates.recv()=>{
+                let config=match update{
+                    Ok(cfg)=>cfg,
+                    Err(broadcast::error::RecvError::Lagged(_))=>{
+                        let (cfg,rx)=app.subscribe_config();
+                        config_updates=rx;
+                        cfg
+                    }
+                    Err(broadcast::error::RecvError::Closed)=>return Ok(()),
+                };
+                reply(&mut write,json!({"t":"config","config":config})).await?;
+                let connected=*pc.borrow();
+                reply(&mut write,status(&app,connected).await?).await?;
             },
-            next=lines.next()=>match next{
-                Some(Ok(line))=>reply(&mut write,request(&app,&line)).await?,
+            Some(out)=applies.join_next(), if !applies.is_empty()=>reply(&mut write,out.map_err(io::Error::other)?).await?,
+            next=lines.next(), if applies.len()<16=>match next{
+                Some(Ok(line))=>{
+                    let msg:Value=serde_json::from_str(&line).unwrap_or(Value::Null);
+                    if msg["t"]=="get_config" {
+                        reply(&mut write,request(&app,msg)).await?;
+                    } else if msg["t"]=="action" && msg["action"]=="usb_apply" {
+                        // The request ID lets this peer query the config while re-enumeration runs.
+                        let app=app.clone();applies.spawn_blocking(move||request(&app,msg));
+                    }else{
+                        let app=app.clone();
+                        let out=tokio::task::spawn_blocking(move||request(&app,msg)).await.map_err(io::Error::other)?;
+                        reply(&mut write,out).await?;
+                    }
+                },
                 Some(Err(_))=>reply(&mut write,json!({"t":"result","ok":false,"error":"bad_message"})).await?,
                 None=>return Ok(())
             },
@@ -379,6 +446,33 @@ pub async fn serve(app: App, addr: &str) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn missing_metrics_are_omitted_but_reported_slots_survive_a_missing_read() {
+        let mut host = Host::default();
+        let mut report = [0; 64];
+        report[0] = 3;
+        let payload = b"mem.dimm.c1=46.5";
+        report[1..1 + payload.len()].copy_from_slice(payload);
+        let (id, value) = TextReportDecoder.decode(&report).unwrap();
+        host.ingest(id, value, Instant::now(), 1000);
+        for expected in [json!(46.5), Value::Null] {
+            let m = metrics::snapshot(0., &json!({}), Some(&host.snapshot().samples));
+            assert_eq!(m.len(), 1);
+            assert_eq!(m[0]["id"], "mem.dimm.c1");
+            assert_eq!(m[0]["value"], expected);
+        }
+    }
+    #[test]
+    fn repeated_new_slot_names_cannot_grow_the_inventory_indefinitely() {
+        let mut host = Host::default();
+        let now = Instant::now();
+        for i in 0..300 {
+            host.ingest(format!("mem.dimm.slot_{i}"), Some(40.), now, 1);
+        }
+        host.ingest("cpu.tctl".into(), Some(60.), now, 1);
+        assert_eq!(host.samples.len(), 257);
+        assert_eq!(host.samples["cpu.tctl"], Some(60.));
+    }
     #[test]
     fn host_gaps_clear_old_metrics_before_reconnect() {
         let now = Instant::now();
