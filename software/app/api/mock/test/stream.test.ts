@@ -49,6 +49,23 @@ describe('/api/stream', () => {
   });
 });
 
+describe('/api/stream resume', () => {
+  it('pushes a frame immediately on resume', async () => {
+    app = await buildServer();
+    const cookie = await login(app);
+    await app.inject({ method: 'PATCH', url: '/api/config', headers: { cookie }, payload: { video: { fps_max: 1 } } });
+    const ws = await app.injectWS('/api/stream', { headers: { cookie } });
+    const got = frames(ws);
+    ws.send(JSON.stringify({ t: 'pause' }));
+    await wait(1200);
+    const before = got.length;
+    ws.send(JSON.stringify({ t: 'resume' }));
+    await wait(150);
+    expect(got.length).toBe(before + 1);
+    ws.terminate();
+  });
+});
+
 describe('snapshot and EDID', () => {
   it('returns a JPEG snapshot, or 503 no_signal without HDMI', async () => {
     app = await buildServer();
