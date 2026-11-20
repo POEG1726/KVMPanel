@@ -22,13 +22,21 @@ use std::{
     io::{self, Write},
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::UNIX_EPOCH,
 };
 use tokio_util::io::ReaderStream;
 use volume::{error, fd_path, Leaf, Target, Volume, TEMP_PREFIX};
 
 type Reply = Result<Response, ApiError>;
+
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, ApiError> + Send + 'static,
+) -> Result<T, ApiError> {
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(io::Error::other)?
+}
 const ROOTS: [&str; 3] = ["sd", "share", "system"];
 
 struct Mount {
@@ -49,6 +57,8 @@ pub struct Storage {
     volumes: HashMap<String, Volume>,
     lun: Box<dyn lun::Lun>,
     state: Mutex<Runtime>,
+    // Serialize gadget changes with operations on its LUNs.
+    lun_gate: Mutex<()>,
     sim: bool,
     share_image: PathBuf,
 }
@@ -121,6 +131,7 @@ impl Storage {
                 ..Default::default()
             }),
             sim,
+            lun_gate: Mutex::new(()),
         })
     }
 
@@ -129,15 +140,18 @@ impl Storage {
         enable_storage: bool,
         apply: impl FnOnce(Vec<(OsString, OsString)>) -> io::Result<()>,
     ) -> io::Result<()> {
+        let _gate = self.lun_gate.lock().unwrap();
         let state = self.state.lock().unwrap();
         if !enable_storage && (state.exported || state.mount.is_some()) {
             return Err(io::Error::from_raw_os_error(libc::EBUSY));
         }
-        apply(self.lun.args(
+        let args = self.lun.args(
             state.mount.as_ref(),
             &self.volumes["sd"].base,
             state.exported,
-        ))
+        );
+        drop(state);
+        apply(args)
     }
 
     pub fn status(&self) -> Value {
@@ -151,6 +165,7 @@ impl Storage {
     }
 
     pub fn eject(&self) -> Result<(), ApiError> {
+        let _gate = self.lun_gate.lock().unwrap();
         let mut state = self.state.lock().unwrap();
         if let Some(m) = &state.mount {
             self.lun.bind(None, &m.mode, true)?;
@@ -253,20 +268,23 @@ fn write_target(app: &App, h: &HeaderMap, op: &str, b: &Value) -> Result<Target,
 
 async fn capacity(State(app): State<App>, h: HeaderMap) -> Reply {
     app.require(&h, "files")?;
-    let mut volumes = Vec::new();
-    for root in ROOTS {
-        let vol = &app.storage.volumes[root];
-        match vol.capacity() {
-            Ok((total, free)) => {
-                volumes.push(json!({"root":root,"total":total,"free":free,"mounted":true}))
+    blocking(move || {
+        let mut volumes = Vec::new();
+        for root in ROOTS {
+            let vol = &app.storage.volumes[root];
+            match vol.capacity() {
+                Ok((total, free)) => {
+                    volumes.push(json!({"root":root,"total":total,"free":free,"mounted":true}))
+                }
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                    volumes.push(json!({"root":root,"total":0,"free":0,"mounted":false}))
+                }
+                Err(e) => return Err(error(e)),
             }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                volumes.push(json!({"root":root,"total":0,"free":0,"mounted":false}))
-            }
-            Err(e) => return Err(error(e)),
         }
-    }
-    Ok(ok(json!(volumes)))
+        Ok(ok(json!(volumes)))
+    })
+    .await
 }
 
 fn entry(name: &str, md: &Metadata, mounted: bool) -> Value {
@@ -285,69 +303,117 @@ fn entry(name: &str, md: &Metadata, mounted: bool) -> Value {
 
 async fn list(State(app): State<App>, h: HeaderMap, q: Params) -> Reply {
     let t = query_target(&app, &h, &q)?;
-    let s = &app.storage;
-    let dir = s.volumes[&t.root].open(&t.path, libc::O_DIRECTORY, t.root == "system")?;
-    let state = s.state.lock().unwrap();
-    let mount = state
-        .mount
-        .as_ref()
-        .map(|m| s.volumes["sd"].base.join(&m.path));
-    let mut entries = Vec::new();
-    for item in fs::read_dir(fd_path(&dir)).map_err(error)? {
-        let item = item.map_err(error)?;
-        let name = item.file_name().to_string_lossy().into_owned();
-        if name.starts_with(TEMP_PREFIX) {
-            continue;
+    blocking(move || {
+        let s = &app.storage;
+        let dir = s.volumes[&t.root].open(&t.path, libc::O_DIRECTORY, t.root == "system")?;
+        let state = s.state.lock().unwrap();
+        let mount = state
+            .mount
+            .as_ref()
+            .map(|m| s.volumes["sd"].base.join(&m.path));
+        drop(state);
+        let mut entries = Vec::new();
+        for item in fs::read_dir(fd_path(&dir)).map_err(error)? {
+            let item = item.map_err(error)?;
+            let name = item.file_name().to_string_lossy().into_owned();
+            if name.starts_with(TEMP_PREFIX) {
+                continue;
+            }
+            let md = fs::symlink_metadata(item.path()).map_err(error)?;
+            if !md.is_dir() && !md.is_file() {
+                continue;
+            }
+            entries.push(entry(
+                &name,
+                &md,
+                mount.as_ref() == Some(&s.path(&t).join(name.as_str())),
+            ));
         }
-        let md = fs::symlink_metadata(item.path()).map_err(error)?;
-        if !md.is_dir() && !md.is_file() {
-            continue;
-        }
-        entries.push(entry(
-            &name,
-            &md,
-            mount.as_ref() == Some(&s.path(&t).join(name.as_str())),
-        ));
-    }
-    entries.sort_by(|a, b| {
-        vstr(a, "type")
-            .cmp(vstr(b, "type"))
-            .then(vstr(a, "name").cmp(vstr(b, "name")))
-    });
-    Ok(ok(json!({"entries":entries})))
+        entries.sort_by(|a, b| {
+            vstr(a, "type")
+                .cmp(vstr(b, "type"))
+                .then(vstr(a, "name").cmp(vstr(b, "name")))
+        });
+        Ok(ok(json!({"entries":entries})))
+    })
+    .await
 }
 
 async fn download(State(app): State<App>, h: HeaderMap, q: Params) -> Reply {
     let t = query_target(&app, &h, &q)?;
-    let file = app.storage.volumes[&t.root].open(&t.path, libc::O_RDONLY, t.root == "system")?;
-    let md = file.metadata().map_err(error)?;
-    if !md.is_file() {
-        return Err(ApiError::new(404, "not_found"));
-    }
-    let name = t.path.file_name().unwrap().as_encoded_bytes();
-    let encoded: String = name
-        .iter()
-        .map(|b| {
-            if b.is_ascii_alphanumeric() || b"-._~".contains(b) {
-                char::from(*b).to_string()
-            } else {
-                format!("%{b:02X}")
-            }
+    blocking(move || {
+        let file =
+            app.storage.volumes[&t.root].open(&t.path, libc::O_RDONLY, t.root == "system")?;
+        let md = file.metadata().map_err(error)?;
+        if !md.is_file() {
+            return Err(ApiError::new(404, "not_found"));
+        }
+        let name = t.path.file_name().unwrap().as_encoded_bytes();
+        let encoded: String = name
+            .iter()
+            .map(|b| {
+                if b.is_ascii_alphanumeric() || b"-._~".contains(b) {
+                    char::from(*b).to_string()
+                } else {
+                    format!("%{b:02X}")
+                }
+            })
+            .collect();
+        let body = Body::from_stream(ReaderStream::new(tokio::fs::File::from_std(file)));
+        Ok((
+            [
+                (header::CONTENT_TYPE, "application/octet-stream".into()),
+                (
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename*=UTF-8''{encoded}"),
+                ),
+                (header::CONTENT_LENGTH, md.len().to_string()),
+            ],
+            body,
+        )
+            .into_response())
+    })
+    .await
+}
+
+// An async request may be canceled between any two chunks. Keep the staging
+// file and its reservation on the blocking pool, including abort cleanup.
+struct AsyncTransfer(Option<Arc<Mutex<Transfer>>>);
+impl AsyncTransfer {
+    async fn begin(
+        app: App,
+        target: Target,
+        size: u64,
+        create_only: bool,
+    ) -> Result<Self, ApiError> {
+        blocking(move || {
+            Ok(Self(Some(Arc::new(Mutex::new(Transfer::begin(
+                &app,
+                target,
+                size,
+                create_only,
+            )?)))))
         })
-        .collect();
-    let body = Body::from_stream(ReaderStream::new(tokio::fs::File::from_std(file)));
-    Ok((
-        [
-            (header::CONTENT_TYPE, "application/octet-stream".into()),
-            (
-                header::CONTENT_DISPOSITION,
-                format!("attachment; filename*=UTF-8''{encoded}"),
-            ),
-            (header::CONTENT_LENGTH, md.len().to_string()),
-        ],
-        body,
-    )
-        .into_response())
+        .await
+    }
+    fn writer(&self) -> Arc<Mutex<Transfer>> {
+        self.0.as_ref().unwrap().clone()
+    }
+    async fn write(&self, chunk: axum::body::Bytes) -> Result<(), ApiError> {
+        let writer = self.writer();
+        blocking(move || writer.lock().unwrap().write(&chunk)).await
+    }
+    async fn finish(mut self, checksum: Option<String>) -> Result<Value, ApiError> {
+        let writer = self.0.take().unwrap();
+        blocking(move || writer.lock().unwrap().finish(checksum.as_deref(), false)).await
+    }
+}
+impl Drop for AsyncTransfer {
+    fn drop(&mut self) {
+        if let Some(writer) = self.0.take() {
+            tokio::task::spawn_blocking(move || drop(writer));
+        }
+    }
 }
 
 struct Transfer {
@@ -484,104 +550,124 @@ async fn upload(State(app): State<App>, h: HeaderMap, q: Params, body: Body) -> 
         .get(header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok()?.parse().ok())
         .unwrap_or(0);
-    let checksum = h.get("x-sha256").and_then(|v| v.to_str().ok());
-    let mut tx = Transfer::begin(&app, t, declared, false)?;
+    let checksum = h
+        .get("x-sha256")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let tx = AsyncTransfer::begin(app, t, declared, false).await?;
     let mut stream = body.into_data_stream();
     while let Some(chunk) = stream.next().await {
-        tx.write(&chunk.map_err(|_| ApiError::new(400, "invalid_body"))?)?;
+        tx.write(chunk.map_err(|_| ApiError::new(400, "invalid_body"))?)
+            .await?;
     }
-    let e = tx.finish(checksum, false)?;
+    let e = tx.finish(checksum).await?;
     Ok(created(e))
 }
 
 async fn mkdir(State(app): State<App>, h: HeaderMap, JsonBody(b): JsonBody) -> Reply {
     let t = write_target(&app, &h, "makeDir", &b)?;
-    let s = &app.storage;
-    let state = s.state.lock().unwrap();
-    let leaf = s.volumes[&t.root].parent(&t)?;
-    s.ensure_writable(
-        &state,
-        &fs::canonicalize(fd_path(&leaf.dir))
-            .map_err(error)?
-            .join(&leaf.name),
-    )?;
-    fs::create_dir(leaf.path()).map_err(error)?;
-    Ok(created(entry(
-        &leaf.name.to_string_lossy(),
-        &fs::metadata(leaf.path()).map_err(error)?,
-        false,
-    )))
-}
-
-async fn rename(State(app): State<App>, h: HeaderMap, JsonBody(b): JsonBody) -> Reply {
-    let t = write_target(&app, &h, "renamePath", &b)?;
-    let to = Target::new(&t.root, vstr(&b, "to"))?;
-    let s = &app.storage;
-    let state = s.state.lock().unwrap();
-    if to.path.starts_with(&t.path) {
-        return Err(ApiError::new(400, "bad_path"));
-    }
-    let vol = &s.volumes[&t.root];
-    let src = vol.parent(&t)?;
-    let dst = vol.parent(&to)?;
-    for leaf in [&src, &dst] {
+    blocking(move || {
+        let s = &app.storage;
+        let state = s.state.lock().unwrap();
+        let leaf = s.volumes[&t.root].parent(&t)?;
         s.ensure_writable(
             &state,
             &fs::canonicalize(fd_path(&leaf.dir))
                 .map_err(error)?
                 .join(&leaf.name),
         )?;
-    }
-    rename_new(&src.path(), &dst.path())?;
-    Ok(StatusCode::NO_CONTENT.into_response())
+        fs::create_dir(leaf.path()).map_err(error)?;
+        Ok(created(entry(
+            &leaf.name.to_string_lossy(),
+            &fs::metadata(leaf.path()).map_err(error)?,
+            false,
+        )))
+    })
+    .await
+}
+
+async fn rename(State(app): State<App>, h: HeaderMap, JsonBody(b): JsonBody) -> Reply {
+    let t = write_target(&app, &h, "renamePath", &b)?;
+    let to = Target::new(&t.root, vstr(&b, "to"))?;
+    blocking(move || {
+        let s = &app.storage;
+        let state = s.state.lock().unwrap();
+        if to.path.starts_with(&t.path) {
+            return Err(ApiError::new(400, "bad_path"));
+        }
+        let vol = &s.volumes[&t.root];
+        let src = vol.parent(&t)?;
+        let dst = vol.parent(&to)?;
+        for leaf in [&src, &dst] {
+            s.ensure_writable(
+                &state,
+                &fs::canonicalize(fd_path(&leaf.dir))
+                    .map_err(error)?
+                    .join(&leaf.name),
+            )?;
+        }
+        rename_new(&src.path(), &dst.path())?;
+        Ok(StatusCode::NO_CONTENT.into_response())
+    })
+    .await
 }
 
 async fn delete(State(app): State<App>, h: HeaderMap, JsonBody(b): JsonBody) -> Reply {
     let t = write_target(&app, &h, "deletePath", &b)?;
-    let s = &app.storage;
-    let state = s.state.lock().unwrap();
-    let leaf = s.volumes[&t.root].parent(&t)?;
-    s.ensure_writable(
-        &state,
-        &fs::canonicalize(fd_path(&leaf.dir))
-            .map_err(error)?
-            .join(&leaf.name),
-    )?;
-    let md = fs::symlink_metadata(leaf.path()).map_err(error)?;
-    if md.is_dir() {
-        fs::remove_dir_all(leaf.path())
-    } else {
-        fs::remove_file(leaf.path())
-    }
-    .map_err(error)?;
-    Ok(StatusCode::NO_CONTENT.into_response())
+    blocking(move || {
+        let s = &app.storage;
+        let state = s.state.lock().unwrap();
+        let leaf = s.volumes[&t.root].parent(&t)?;
+        s.ensure_writable(
+            &state,
+            &fs::canonicalize(fd_path(&leaf.dir))
+                .map_err(error)?
+                .join(&leaf.name),
+        )?;
+        let md = fs::symlink_metadata(leaf.path()).map_err(error)?;
+        if md.is_dir() {
+            fs::remove_dir_all(leaf.path())
+        } else {
+            fs::remove_file(leaf.path())
+        }
+        .map_err(error)?;
+        Ok(StatusCode::NO_CONTENT.into_response())
+    })
+    .await
 }
 
 async fn share(State(app): State<App>, h: HeaderMap) -> Reply {
     app.require(&h, "files")?;
-    Ok(ok(
-        json!({"exported_to_host":app.storage.state.lock().unwrap().exported}),
-    ))
+    blocking(move || {
+        Ok(ok(
+            json!({"exported_to_host":app.storage.state.lock().unwrap().exported}),
+        ))
+    })
+    .await
 }
 
 async fn set_share(State(app): State<App>, h: HeaderMap, JsonBody(b): JsonBody) -> Reply {
     app.require(&h, "media")?;
     validate("setShare", &b)?;
-    let s = &app.storage;
-    let mut state = s.state.lock().unwrap();
-    let export = b["exported_to_host"] == true;
-    if export != state.exported {
-        if state
-            .pending
-            .iter()
-            .any(|p| p.starts_with(&s.volumes["share"].base))
-        {
-            return Err(ApiError::new(409, "share_busy"));
+    blocking(move || {
+        let s = &app.storage;
+        let _gate = s.lun_gate.lock().unwrap();
+        let mut state = s.state.lock().unwrap();
+        let export = b["exported_to_host"] == true;
+        if export != state.exported {
+            if state
+                .pending
+                .iter()
+                .any(|p| p.starts_with(&s.volumes["share"].base))
+            {
+                return Err(ApiError::new(409, "share_busy"));
+            }
+            s.lun.share(export)?;
+            state.exported = export;
         }
-        s.lun.share(export)?;
-        state.exported = export;
-    }
-    Ok(ok(json!({"exported_to_host":export})))
+        Ok(ok(json!({"exported_to_host":export})))
+    })
+    .await
 }
 
 fn media_state(rt: &Runtime) -> Value {
@@ -595,49 +681,56 @@ fn media_state(rt: &Runtime) -> Value {
 
 async fn media(State(app): State<App>, h: HeaderMap) -> Reply {
     app.require(&h, "media")?;
-    Ok(ok(media_state(&app.storage.state.lock().unwrap())))
+    blocking(move || Ok(ok(media_state(&app.storage.state.lock().unwrap())))).await
 }
 
 async fn mount(State(app): State<App>, h: HeaderMap, JsonBody(b): JsonBody) -> Reply {
     app.require(&h, "media")?;
     validate("mountMedia", &b)?;
     let t = Target::new("sd", vstr(&b, "path"))?;
-    let mode = vstr(&b, "mode");
-    let s = &app.storage;
-    let mut state = s.state.lock().unwrap();
-    if state.mount.is_some() {
-        return Err(ApiError::new(409, "already_mounted"));
-    }
-    let vol = &s.volumes["sd"];
-    s.ensure_writable(&state, &s.path(&t))?;
-    let f = vol.open(&t.path, libc::O_RDONLY, false)?;
-    if !f.metadata().map_err(error)?.is_file() {
-        return Err(ApiError::new(404, "not_found"));
-    }
-    let ext = t
-        .path
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or_default();
-    if !(ext.eq_ignore_ascii_case("iso") || mode == "disk" && ext.eq_ignore_ascii_case("img")) {
-        return Err(ApiError::new(422, "bad_image"));
-    }
-    let readonly = mode == "cdrom" || b["readonly"].as_bool().unwrap_or(true);
-    s.lun.bind(Some(&fd_path(&f)), mode, readonly)?;
-    state.mount = Some(Mount {
-        path: t.path,
-        mode: mode.into(),
-        readonly,
-    });
-    let out = media_state(&state);
-    drop(state);
-    app.emit("status_changed");
-    Ok(ok(out))
+    blocking(move || {
+        let mode = vstr(&b, "mode");
+        let s = &app.storage;
+        let _gate = s.lun_gate.lock().unwrap();
+        let mut state = s.state.lock().unwrap();
+        if state.mount.is_some() {
+            return Err(ApiError::new(409, "already_mounted"));
+        }
+        let vol = &s.volumes["sd"];
+        s.ensure_writable(&state, &s.path(&t))?;
+        let f = vol.open(&t.path, libc::O_RDONLY, false)?;
+        if !f.metadata().map_err(error)?.is_file() {
+            return Err(ApiError::new(404, "not_found"));
+        }
+        let ext = t
+            .path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        if !(ext.eq_ignore_ascii_case("iso") || mode == "disk" && ext.eq_ignore_ascii_case("img")) {
+            return Err(ApiError::new(422, "bad_image"));
+        }
+        let readonly = mode == "cdrom" || b["readonly"].as_bool().unwrap_or(true);
+        s.lun.bind(Some(&fd_path(&f)), mode, readonly)?;
+        state.mount = Some(Mount {
+            path: t.path,
+            mode: mode.into(),
+            readonly,
+        });
+        let out = media_state(&state);
+        drop(state);
+        app.emit("status_changed");
+        Ok(ok(out))
+    })
+    .await
 }
 
 async fn eject(State(app): State<App>, h: HeaderMap) -> Reply {
     app.require(&h, "media")?;
-    app.storage.eject()?;
-    app.emit("status_changed");
-    Ok(StatusCode::NO_CONTENT.into_response())
+    blocking(move || {
+        app.storage.eject()?;
+        app.emit("status_changed");
+        Ok(StatusCode::NO_CONTENT.into_response())
+    })
+    .await
 }

@@ -1,4 +1,5 @@
 use super::*;
+use axum::body::Bytes;
 use reqwest::{Client, Url};
 use std::time::Duration;
 use tokio::sync::watch;
@@ -22,10 +23,13 @@ impl Job {
 
 pub(super) async fn list(State(app): State<App>, h: HeaderMap) -> Reply {
     app.require(&h, "media")?;
-    let state = app.storage.state.lock().unwrap();
-    Ok(ok(
-        json!({"jobs":state.jobs.iter().map(Job::json).collect::<Vec<_>>()}),
-    ))
+    blocking(move || {
+        let state = app.storage.state.lock().unwrap();
+        Ok(ok(
+            json!({"jobs":state.jobs.iter().map(Job::json).collect::<Vec<_>>()}),
+        ))
+    })
+    .await
 }
 
 pub(super) async fn control(
@@ -34,7 +38,8 @@ pub(super) async fn control(
     RoutePath((id, action)): RoutePath<(String, String)>,
 ) -> Reply {
     app.require(&h, "media")?;
-    let (reply, mut stopped) = {
+    let cancel = action == "cancel";
+    let (reply, mut stopped) = blocking(move || {
         let state = app.storage.state.lock().unwrap();
         let job = state
             .jobs
@@ -49,9 +54,10 @@ pub(super) async fn control(
             _ => return Err(ApiError::new(404, "not_found")),
         };
         job.state.send_replace(next);
-        (job.json(), job.stopped.clone())
-    };
-    if action == "cancel" {
+        Ok((job.json(), job.stopped.clone()))
+    })
+    .await?;
+    if cancel {
         let _ = stopped.wait_for(|v| *v).await;
     }
     Ok(ok(reply))
@@ -66,7 +72,7 @@ pub(super) async fn start(State(app): State<App>, h: HeaderMap, JsonBody(b): Jso
         .ok_or_else(|| ApiError::new(400, "bad_url"))?;
     let t = Target::new("sd", vstr(&b, "path"))?;
     let display = t.displayed();
-    let tx = Transfer::begin(&app, t, 0, true)?;
+    let tx = AsyncTransfer::begin(app.clone(), t, 0, true).await?;
     let id = Uuid::new_v4().to_string();
     let (state, rx) = watch::channel("running");
     let (done, stopped) = watch::channel(false);
@@ -80,7 +86,12 @@ pub(super) async fn start(State(app): State<App>, h: HeaderMap, JsonBody(b): Jso
         total: if app.storage.sim { 64 << 20 } else { 0 },
     };
     let reply = job.json();
-    app.storage.state.lock().unwrap().jobs.push(job);
+    let s = app.storage.clone();
+    blocking(move || {
+        s.state.lock().unwrap().jobs.push(job);
+        Ok(())
+    })
+    .await?;
     let checksum = b["sha256"].as_str().map(str::to_owned);
     tokio::spawn(async move {
         let mut worker = Worker {
@@ -90,21 +101,27 @@ pub(super) async fn start(State(app): State<App>, h: HeaderMap, JsonBody(b): Jso
             rx,
         };
         let result = worker.download(url, checksum).await;
-        if result.is_err() {
+        tokio::task::spawn_blocking(move || {
+            // Release the target reservation and remove the staging file before
+            // acknowledging cancellation, so a retry can reuse the same path.
+            drop(worker.tx.0.take());
             let mut state = worker.storage.state.lock().unwrap();
-            let j = state.jobs.iter_mut().find(|j| j.id == worker.id).unwrap();
-            if *j.state.borrow() != "canceled" {
-                j.state.send_replace("failed");
+            if result.is_err() {
+                let job = state.jobs.iter_mut().find(|j| j.id == worker.id).unwrap();
+                if *job.state.borrow() != "canceled" {
+                    job.state.send_replace("failed");
+                }
             }
-        }
-        drop(worker);
-        done.send_replace(true);
+            done.send_replace(true);
+        })
+        .await
+        .expect("download cleanup");
     });
     Ok((StatusCode::ACCEPTED, Json(json!({"job":reply}))).into_response())
 }
 
 struct Worker {
-    tx: Transfer,
+    tx: AsyncTransfer,
     id: String,
     storage: std::sync::Arc<Storage>,
     rx: watch::Receiver<&'static str>,
@@ -135,10 +152,10 @@ impl Worker {
         if self.storage.sim {
             // Deterministic offline image as in the mock. Work in bounded blocks
             // so simulation also exercises checksums, cancellation and free space.
-            let block = vec![0; 256 * 1024];
+            let block = Bytes::from(vec![0; 256 * 1024]);
             for _ in 0..256 {
                 active(&mut self.rx, tokio::time::sleep(Duration::from_millis(8))).await?;
-                self.append(&block).await?;
+                self.append(block.clone()).await?;
             }
         } else {
             let client = Client::builder()
@@ -151,41 +168,63 @@ impl Worker {
                 .error_for_status()
                 .map_err(|_| ())?;
             let length = res.content_length().unwrap_or(0);
-            {
-                let mut state = self.storage.state.lock().unwrap();
-                state
-                    .jobs
-                    .iter_mut()
-                    .find(|j| j.id == self.id)
-                    .unwrap()
-                    .total = length;
-            }
-            if length > self.storage.volumes["sd"].capacity().map_err(|_| ())?.1 {
-                return Err(());
-            }
+            let storage = self.storage.clone();
+            let id = self.id.clone();
+            blocking(move || {
+                let free = storage.volumes["sd"].capacity().map_err(error)?.1;
+                let mut state = storage.state.lock().unwrap();
+                state.jobs.iter_mut().find(|j| j.id == id).unwrap().total = length;
+                if length > free {
+                    return Err(ApiError::new(507, "no_space"));
+                }
+                Ok(())
+            })
+            .await
+            .map_err(|_| ())?;
             while let Some(bytes) = active(&mut self.rx, res.chunk()).await?.map_err(|_| ())? {
-                self.append(&bytes).await?;
+                self.append(bytes).await?;
             }
         }
-        loop {
-            active(&mut self.rx, std::future::ready(())).await?;
-            let mut state = self.storage.state.lock().unwrap();
-            let job = state.jobs.iter_mut().find(|j| j.id == self.id).unwrap();
-            if *job.state.borrow() == "running" {
-                self.tx.finish(checksum.as_deref(), true).map_err(|_| ())?;
-                job.state.send_replace("done");
-                return Ok(());
-            }
-        }
+        self.perform(move |tx, job| {
+            tx.finish(checksum.as_deref(), true)?;
+            job.state.send_replace("done");
+            Ok(())
+        })
+        .await
     }
-    async fn append(&mut self, data: &[u8]) -> Result<(), ()> {
+
+    async fn append(&mut self, data: Bytes) -> Result<(), ()> {
+        self.perform(move |tx, job| {
+            tx.write_locked(&data)?;
+            job.received += data.len() as u64;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn perform(
+        &mut self,
+        f: impl Fn(&mut Transfer, &mut Job) -> Result<(), ApiError> + Send + Sync + 'static,
+    ) -> Result<(), ()> {
+        let f = Arc::new(f);
         loop {
             active(&mut self.rx, std::future::ready(())).await?;
-            let mut state = self.storage.state.lock().unwrap();
-            let job = state.jobs.iter_mut().find(|j| j.id == self.id).unwrap();
-            if *job.state.borrow() == "running" {
-                self.tx.write_locked(data).map_err(|_| ())?;
-                job.received += data.len() as u64;
+            let writer = self.tx.writer();
+            let storage = self.storage.clone();
+            let id = self.id.clone();
+            let f = f.clone();
+            let ran = blocking(move || {
+                let mut state = storage.state.lock().unwrap();
+                let job = state.jobs.iter_mut().find(|j| j.id == id).unwrap();
+                if *job.state.borrow() != "running" {
+                    return Ok(false);
+                }
+                f(&mut writer.lock().unwrap(), job)?;
+                Ok(true)
+            })
+            .await
+            .map_err(|_| ())?;
+            if ran {
                 return Ok(());
             }
         }

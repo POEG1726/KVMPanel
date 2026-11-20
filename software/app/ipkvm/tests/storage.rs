@@ -506,3 +506,34 @@ async fn download_control_and_atomic_completion() {
         64 << 20
     );
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_blocked_lun_operation_does_not_stall_the_file_service() {
+    let a = Api::new().await;
+    let s = a.s.app.storage.clone();
+    let (started, waiting) = tokio::sync::oneshot::channel();
+    let (unlock, wait) = std::sync::mpsc::channel();
+    let gadget = tokio::task::spawn_blocking(move || {
+        s.with_gadget_args(true, |_| {
+            started.send(()).unwrap();
+            let _ = wait.recv_timeout(Duration::from_secs(2));
+            Ok(())
+        })
+        .unwrap()
+    });
+    waiting.await.unwrap();
+    let mount =
+        a.s.client
+            .post(format!("{}/api/media/mount", a.s.url))
+            .header("cookie", &a.cookie)
+            .json(&json!({"root":"sd","path":"/images/ubuntu-24.04.iso","mode":"cdrom"}));
+    let mount = tokio::spawn(async move { mount.send().await.unwrap() });
+    let start = std::time::Instant::now();
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    assert_eq!(a.list("sd", "/images").await.status(), 200);
+    assert!(start.elapsed() < Duration::from_millis(200));
+    assert!(!mount.is_finished());
+    unlock.send(()).unwrap();
+    gadget.await.unwrap();
+    assert_eq!(mount.await.unwrap().status(), 200);
+}
