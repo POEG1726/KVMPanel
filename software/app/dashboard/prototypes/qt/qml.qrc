@@ -1,0 +1,11 @@
+<RCC>
+    <qresource prefix="/">
+        <file>Dashboard.qml</file>
+        <file>Backdrop.qml</file>
+        <file>Tile.qml</file>
+        <file>MetricRow.qml</file>
+        <file>Bar.qml</file>
+        <file>Chip.qml</file>
+        <file>T.qml</file>
+    </qresource>
+</RCC>
