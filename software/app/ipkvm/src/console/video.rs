@@ -1,4 +1,5 @@
 use super::*;
+use futures_util::{Sink, SinkExt};
 
 use std::time::Instant;
 
@@ -93,6 +94,22 @@ pub(super) async fn stream(
     ws.on_upgrade(move |sock| stream_socket(sock, app, h, events, closes))
 }
 
+async fn send_frame<S: Sink<Message> + Unpin>(socket: &mut S, frame: Bytes) -> bool {
+    match tokio::time::timeout(Duration::from_secs(3), socket.send(Message::Binary(frame))).await {
+        Ok(result) => result.is_ok(),
+        Err(_) => {
+            let close = Message::Close(Some(CloseFrame {
+                code: 1011,
+                reason: "video send timed out".into(),
+            }));
+            // Attempt the close handshake even if the previous frame is still flushing.
+            // A peer that never reads must not keep a capture subscription forever.
+            let _ = tokio::time::timeout(Duration::from_secs(1), socket.send(close)).await;
+            false
+        }
+    }
+}
+
 async fn stream_socket(
     mut socket: WebSocket,
     app: App,
@@ -143,9 +160,31 @@ async fn stream_socket(
                 let frame=frames.borrow_and_update().clone();
                 let Some(frame)=frame else {last=None;continue};
                 if paused || (app.config()["video"]["frame_diff"]==true && last.as_ref()==Some(&frame)){continue;}
-                if !matches!(tokio::time::timeout(Duration::from_secs(3),socket.send(Message::Binary(frame.clone()))).await,Ok(Ok(()))) {return;}
+                if !send_frame(&mut socket,frame.clone()).await{return;}
                 last=Some(frame);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_video_send_closes_with_1011() {
+        let sent = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let sink = futures_util::sink::unfold(sent.clone(), |log, msg| async move {
+            if matches!(msg, Message::Binary(_)) {
+                tokio::time::sleep(Duration::from_millis(3100)).await;
+            }
+            log.lock().unwrap().push(msg);
+            Ok::<_, io::Error>(log)
+        });
+        futures_util::pin_mut!(sink);
+        assert!(!send_frame(&mut sink, Bytes::from_static(b"frame")).await);
+        let log = sent.lock().unwrap();
+        assert!(
+            matches!(log.as_slice(),[Message::Binary(_),Message::Close(Some(close))] if close.code==1011)
+        );
     }
 }
