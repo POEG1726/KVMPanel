@@ -5,7 +5,7 @@ import { api, unwrap } from '../../api/client';
 import { useEventsContext } from '../../api/EventsProvider';
 import { useUi } from '../../state/ui';
 import { Button, ConfirmDialog, Switch, toast } from '../../ui';
-import { ErrorLine, useRun } from './hooks';
+import { ErrorLine, useConfig, useRun } from './hooks';
 import s from './menus.module.css';
 
 const IMAGES_KEY = ['media', 'images'] as const;
@@ -71,6 +71,7 @@ export function MediaMenu() {
   const qc = useQueryClient();
   const { status } = useEventsContext();
   const { error, run } = useRun();
+  const mode = useConfig()?.web.workspace_open;
   const openWorkspace = useUi((u) => u.openWorkspace);
   const [ejecting, setEjecting] = useState(false);
   const [url, setUrl] = useState('');
@@ -175,7 +176,7 @@ export function MediaMenu() {
       </ul>
 
       <div className={s.row}>
-        <Button onClick={openWorkspace}>{t('media.upload')}</Button>
+        <Button onClick={() => openWorkspace(mode)}>{t('media.upload')}</Button>
       </div>
 
       <div className={s.form}>

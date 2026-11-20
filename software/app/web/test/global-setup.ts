@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { randomInt } from 'node:crypto';
 import { buildServer } from '../../api/mock/src/server';
 
 type Mock = Awaited<ReturnType<typeof buildServer>>;
@@ -8,10 +8,22 @@ let app: Mock | undefined;
 let control: Server | undefined;
 const extra = new Map<string, Mock>();
 
-async function listen(m: Mock): Promise<string> {
-  await m.listen({ host: '127.0.0.1', port: 0 });
-  return `http://127.0.0.1:${(m.server.address() as AddressInfo).port}`;
+// Some Windows ephemeral-port ranges include ports blocked by browser and Node fetch.
+async function listenOnHighPort(bind: (port: number) => Promise<unknown>): Promise<string> {
+  for (let attempt = 0; ; attempt++) {
+    const port = randomInt(20000, 60000);
+    try {
+      await bind(port);
+      return 'http://127.0.0.1:' + port;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      // Windows also reserves entire port ranges with EACCES.
+      if ((code !== 'EADDRINUSE' && code !== 'EACCES') || attempt >= 10) throw err;
+    }
+  }
 }
+
+const listen = (m: Mock) => listenOnHighPort(port => m.listen({ host: '127.0.0.1', port }));
 
 export async function setup(): Promise<void> {
   app = await buildServer();
@@ -32,10 +44,24 @@ export async function setup(): Promise<void> {
         extra.delete(url);
         res.end('{}');
       }
-    })();
+    })().catch((err: unknown) => {
+      res.statusCode = 500;
+      res.end(JSON.stringify({ error: String(err) }));
+    });
   });
-  await new Promise<void>((r) => control!.listen(0, '127.0.0.1', r));
-  process.env.MOCK_CONTROL_URL = `http://127.0.0.1:${(control.address() as AddressInfo).port}`;
+  const server = control;
+  process.env.MOCK_CONTROL_URL = await listenOnHighPort(port => new Promise<void>((resolve, reject) => {
+    const onError = (err: Error) => {
+      server.off('listening', onListen);
+      reject(err);
+    };
+    const onListen = () => {
+      server.off('error', onError);
+      resolve();
+    };
+    server.once('error', onError);
+    server.listen(port, '127.0.0.1', onListen);
+  }));
 }
 
 export async function teardown(): Promise<void> {

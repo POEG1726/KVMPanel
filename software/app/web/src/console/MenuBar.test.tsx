@@ -14,9 +14,9 @@ const t = (k: string) => i18n.t(k) as string;
 /** Sockets that never open: the bar renders from the seeded config alone. */
 const inert: SocketFactory = () => ({ readyState: 0, binaryType: '', send() {}, close() {}, onopen: null, onmessage: null, onclose: null });
 
-function mount(menubar: 'auto_hide' | 'pinned') {
+function mount(menubar: 'auto_hide' | 'pinned', workspace_open: 'tab' | 'float' = 'float') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  qc.setQueryData(CONFIG_KEY, { web: { menubar } } as Config);
+  qc.setQueryData(CONFIG_KEY, { web: { menubar, workspace_open } } as Config);
   return render(
     <QueryClientProvider client={qc}>
       <EventsProvider>
@@ -94,6 +94,16 @@ describe('MenuBar', () => {
     expect(fireEvent.keyDown(rec, { code: 'Tab', key: 'Tab' })).toBe(true);
     fireEvent.keyDown(document.body, { key: 'Escape' });
     expect(screen.queryByLabelText(t('keyboard.shortcutName'))).toBeNull();
+  });
+
+  it('opens /workspace in a browser tab and dismisses the previous menu', () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    mount('pinned', 'tab');
+    fireEvent.click(screen.getByRole('button', { name: t('menu.power') }));
+    fireEvent.click(screen.getByRole('button', { name: t('menu.workspace') }));
+    expect(open).toHaveBeenCalledWith('/workspace');
+    expect(screen.queryByRole('button', { name: t('power.reset') })).toBeNull();
+    open.mockRestore();
   });
 
   it('opens the workspace from the files/terminal button', () => {

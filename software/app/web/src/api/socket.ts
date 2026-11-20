@@ -1,6 +1,6 @@
 import { emitLoginRequired, ownPasswordChangeActive } from './authEvents';
 
-export type ClosePolicy = 'login' | 'forbidden' | 'no_serial' | 'disconnected' | 'restarting' | 'retry';
+export type ClosePolicy = 'login' | 'forbidden' | 'no_serial' | 'disconnected' | 'restarting' | 'retry' | 'device_unavailable' | 'bad_kind';
 
 /** Maps a WebSocket close code to what the UI must do (see constraints: close codes). */
 export function closePolicy(code: number): ClosePolicy {
@@ -49,7 +49,7 @@ export function configureSockets(next: SocketConfig): void {
 
 function wsUrl(path: string): string {
   const origin = config.base ?? `${location.protocol}//${location.host}`;
-  return origin.replace(/^http/, 'ws') + path;
+  return new URL(path, origin.replace(/^http/, 'ws')).href;
 }
 
 export interface SocketHandlers {
@@ -73,7 +73,7 @@ export interface SocketHandle {
 const OPEN = 1;
 const BACKOFF_CAP_S = 10;
 const STABLE_MS = 10_000;
-const NO_RECONNECT: ReadonlySet<ClosePolicy> = new Set(['login', 'forbidden', 'no_serial', 'disconnected']);
+const NO_RECONNECT: ReadonlySet<ClosePolicy> = new Set(['login', 'forbidden', 'no_serial', 'disconnected', 'device_unavailable', 'bad_kind']);
 
 /**
  * Opens a WebSocket and keeps it alive: 1, 2, 4, 8 s then 10 s backoff after 1012 or abnormal
@@ -93,15 +93,22 @@ export function connectSocket(path: string, handlers: SocketHandlers, opts: { re
     sock.binaryType = 'arraybuffer';
     ws = sock;
     sock.onopen = () => {
+      if (stopped || ws !== sock) return;
       stableTimer = setTimeout(() => (attempt = 0), STABLE_MS);
       handlers.onOpen?.();
     };
-    sock.onmessage = (e) => handlers.onMessage(e.data);
+    sock.onmessage = (e) => {
+      if (!stopped && ws === sock) handlers.onMessage(e.data);
+    };
     sock.onclose = (e) => {
       clearTimeout(stableTimer);
       if (stopped || ws !== sock) return;
       ws = null;
       let policy = closePolicy(e.code);
+      if (path.startsWith('/api/terminal?')) {
+        if (e.code === 1011) policy = 'device_unavailable';
+        if (e.code === 4400) policy = 'bad_kind';
+      }
       // Own password change: the server closed us with 4401 but re-issued our cookie, so reconnect.
       if (policy === 'login' && ownPasswordChangeActive()) policy = 'retry';
       handlers.onClosed?.(policy);

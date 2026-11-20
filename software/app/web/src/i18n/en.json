@@ -27,7 +27,16 @@
     "screen": "Remote screen"
   },
   "workspace": {
-    "title": "Workspace"
+    "title": "Workspace",
+    "terminal": "Terminal",
+    "local": "Local shell",
+    "serial": "Serial",
+    "addTerminal": "Open another local shell",
+    "closeTerminal": "Close current shell",
+    "split": "Adjust pane widths",
+    "retry": "Retry",
+    "terminalUnavailable": "The terminal is unavailable.",
+    "popupBlocked": "Allow pop-ups to open the workspace."
   },
   "error": {
     "unknown": "Something went wrong.",
@@ -61,7 +70,9 @@
     "bad_edid": "That is not a valid EDID (128 or 256 bytes of hex).",
     "unsupported_type": "Only PNG or SVG images are accepted.",
     "bad_action": "Unknown action.",
-    "no_signal": "There is no HDMI signal."
+    "no_signal": "There is no HDMI signal.",
+    "is_dir": "A folder already has that name.",
+    "no_space": "There is not enough free space."
   },
   "common": {
     "cancel": "Cancel",
@@ -541,5 +552,47 @@
     "maximize": "Maximize",
     "restore": "Restore",
     "resize": "Resize with the arrow keys"
+  },
+  "connection": {
+    "forbidden": "Console permission denied.",
+    "disconnected": "Disconnected by the administrator.",
+    "restarting": "KVM service is restarting…",
+    "retry": "Connection lost. Reconnecting…",
+    "device_unavailable": "Terminal device unavailable.",
+    "bad_kind": "Invalid terminal type.",
+    "login": "Session expired.",
+    "no_serial": "No serial device."
+  },
+  "files": {
+    "title": "Files",
+    "system": "System /",
+    "path": "Folder path",
+    "mkdir": "New folder",
+    "create": "Create",
+    "choose": "Choose files to upload",
+    "refresh": "Refresh files",
+    "name": "Name",
+    "size": "Size",
+    "modified": "Modified",
+    "actions": "Actions for {{name}}",
+    "download": "Download",
+    "rename": "Rename",
+    "mount": "Mount as CD-ROM",
+    "openTerminal": "Open in terminal",
+    "deleteMessage": "Delete “{{name}}” and all its contents?",
+    "mountMessage": "Present “{{name}}” to the connected PC as a read-only CD-ROM?",
+    "upload": "Upload",
+    "loading": "Loading files…",
+    "empty": "This folder is empty.",
+    "drop": "Drop files here to upload",
+    "queued": "Queued",
+    "hashing": "Calculating SHA-256…",
+    "sending": "Uploading {{progress}}%",
+    "cancelled": "Cancelled",
+    "failed": "Upload failed",
+    "transferError": "Could not upload “{{name}}”.",
+    "retry": "Retry",
+    "count_one": "{{count}} item",
+    "count_other": "{{count}} items"
   }
 }

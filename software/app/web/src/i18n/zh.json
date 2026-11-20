@@ -24,7 +24,16 @@
     "screen": "远程画面"
   },
   "workspace": {
-    "title": "工作区"
+    "title": "工作区",
+    "terminal": "终端",
+    "local": "本机终端",
+    "serial": "串口",
+    "addTerminal": "新建本机终端",
+    "closeTerminal": "关闭当前终端",
+    "split": "调整窗格宽度",
+    "retry": "重试",
+    "terminalUnavailable": "终端暂不可用。",
+    "popupBlocked": "请允许弹出窗口以打开工作台。"
   },
   "error": {
     "unknown": "出错了。",
@@ -58,7 +67,9 @@
     "bad_edid": "EDID 无效（需要 128 或 256 字节的十六进制）。",
     "unsupported_type": "只接受 PNG 或 SVG 图片。",
     "bad_action": "未知的操作。",
-    "no_signal": "没有 HDMI 信号。"
+    "no_signal": "没有 HDMI 信号。",
+    "is_dir": "已有同名文件夹。",
+    "no_space": "剩余空间不足。"
   },
   "common": {
     "cancel": "取消",
@@ -538,5 +549,46 @@
     "maximize": "最大化",
     "restore": "还原",
     "resize": "使用方向键调整大小"
+  },
+  "connection": {
+    "forbidden": "没有访问权限。",
+    "disconnected": "已被管理员断开。",
+    "restarting": "KVM 服务重启中…",
+    "retry": "连接已断开，正在重新连接…",
+    "device_unavailable": "终端设备不可用。",
+    "bad_kind": "终端类型无效。",
+    "login": "会话已失效。",
+    "no_serial": "没有串口设备。"
+  },
+  "files": {
+    "title": "文件",
+    "system": "系统 /",
+    "path": "目录路径",
+    "mkdir": "新建文件夹",
+    "create": "创建",
+    "choose": "选择要上传的文件",
+    "refresh": "刷新文件列表",
+    "name": "名称",
+    "size": "大小",
+    "modified": "修改时间",
+    "actions": "操作：{{name}}",
+    "download": "下载",
+    "rename": "重命名",
+    "mount": "挂载为光驱",
+    "openTerminal": "在终端中打开",
+    "deleteMessage": "删除“{{name}}”及其全部内容？",
+    "mountMessage": "将“{{name}}”作为只读光驱挂载到被控电脑？",
+    "upload": "上传",
+    "loading": "正在读取文件…",
+    "empty": "此文件夹为空。",
+    "drop": "拖文件到此处上传",
+    "queued": "等待上传",
+    "hashing": "正在计算 SHA-256…",
+    "sending": "正在上传 {{progress}}%",
+    "cancelled": "已取消",
+    "failed": "上传失败",
+    "transferError": "无法上传“{{name}}”。",
+    "retry": "重试",
+    "count_other": "{{count}} 项"
   }
 }

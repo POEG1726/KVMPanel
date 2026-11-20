@@ -40,3 +40,7 @@ Contract change: on connect and on every `{"t":"resume"}`, `/api/stream` immedia
 ## 2026-11-20 Claude：遥测只发存在的项
 
 电脑上不存在的指标（比如空的内存槽）不再以 null 出现在 `telemetry.metrics` 里，而是直接不发；`value: null` 只表示这一项存在、但这一秒没读到。kvmd 的 sim 生成器要去掉 `mem.dimm.a1`/`b1`，真机的解码器只转发上位机上报的槽位。
+
+## 2026-11-20 网页工作台在终端中打开目录
+
+`GET /api/storage` 的 Volume 只有逻辑 root、容量和挂载状态。文件 API 的路径相对于该 root，但本机终端的 `cd` 需要实际绝对路径。网页按板上的默认映射使用 `/mnt/sd`、`/mnt/share` 和 `/`。kvmd 自定义根目录及 sim 使用其他目录时，这个快捷操作无法定位实际目录。建议由 Volume 返回当前 shell 中可用的绝对目录，或约定统一的终端路径映射。

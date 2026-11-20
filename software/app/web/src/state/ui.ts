@@ -16,11 +16,12 @@ function loadCursor(): CursorStyle {
 }
 
 interface UiState {
-  /** True while any floating window is open (later tasks replace this with the window list). */
+  /** True while either the workspace or settings is floating above the console. */
   floatingOpen: boolean;
   setFloatingOpen(open: boolean): void;
-  /** Opens the files/terminal workspace. Stub until the workspace window exists (Task 8). */
-  openWorkspace(): void;
+  workspaceOpen: boolean;
+  openWorkspace(mode?: 'float' | 'tab'): void;
+  closeWorkspace(): void;
   /** The settings window and the page it shows. */
   settingsOpen: boolean;
   settingsPage: SettingsPageId;
@@ -35,11 +36,16 @@ interface UiState {
 export const useUi = create<UiState>((set) => ({
   floatingOpen: false,
   setFloatingOpen: (open) => set({ floatingOpen: open }),
-  openWorkspace: () => set({ floatingOpen: true }),
+  workspaceOpen: false,
+  openWorkspace: (mode) => {
+    if (mode === 'tab') window.open('/workspace');
+    else set({ workspaceOpen: true, floatingOpen: true });
+  },
+  closeWorkspace: () => set((st) => ({ workspaceOpen: false, floatingOpen: st.settingsOpen })),
   settingsOpen: false,
   settingsPage: 'general',
   openSettings: (page) => set((st) => ({ floatingOpen: true, settingsOpen: true, settingsPage: page ?? st.settingsPage })),
-  closeSettings: () => set({ settingsOpen: false, floatingOpen: false }),
+  closeSettings: () => set((st) => ({ settingsOpen: false, floatingOpen: st.workspaceOpen })),
   cursor: loadCursor(),
   setCursor: (cursor) => {
     try {
@@ -52,8 +58,7 @@ export const useUi = create<UiState>((set) => ({
 }));
 
 export const closeAllFloating = (): void => {
-  useUi.getState().setFloatingOpen(false);
-  useUi.getState().closeSettings();
+  useUi.setState({ workspaceOpen: false, settingsOpen: false, floatingOpen: false });
 };
 
 /** CSS `cursor` value for each local cursor style. */

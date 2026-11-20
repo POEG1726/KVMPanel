@@ -96,7 +96,8 @@ const ALIGN_RIGHT = new Set<MenuId>(['power', 'wol']);
 export function MenuBar() {
   const { t } = useTranslation();
   const { status } = useEventsContext();
-  const autoHide = useConfig()?.web.menubar === 'auto_hide';
+  const web = useConfig()?.web;
+  const autoHide = web?.menubar === 'auto_hide';
   const openWorkspace = useUi((u) => u.openWorkspace);
   const openSettings = useUi((u) => u.openSettings);
 
@@ -203,7 +204,7 @@ export function MenuBar() {
         </span>
         <span className={s.sep} />
         {BEFORE_WORKSPACE.map(menuButton)}
-        <button type="button" className={s.btn} onClick={openWorkspace}>
+        <button type="button" className={s.btn} onClick={() => { setOpen(null); openWorkspace(web?.workspace_open); }}>
           {ICONS.workspace}
           {t('menu.workspace')}
         </button>
@@ -216,7 +217,7 @@ export function MenuBar() {
           <span className={locks?.scroll ? s.lockOn : undefined}>SCR</span>
         </span>
         <span className={s.sep} />
-        <button type="button" className={s.btn} onClick={() => openSettings()}>
+        <button type="button" className={s.btn} onClick={() => { setOpen(null); openSettings(); }}>
           {ICONS.settings}
           {t('menu.settings')}
         </button>

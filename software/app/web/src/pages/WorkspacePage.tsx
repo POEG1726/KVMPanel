@@ -1,7 +1,8 @@
-import { useTranslation } from 'react-i18next';
+import { lazy, Suspense } from 'react';
+import { ToastHost } from '../ui';
 
-/** Placeholder for the workspace route. */
+export const Workspace = lazy(() => import('../workspace/Workspace'));
+
 export function WorkspacePage() {
-  const { t } = useTranslation();
-  return <h1>{t('workspace.title')}</h1>;
+  return <><Suspense fallback={null}><Workspace mode="tab" /></Suspense><ToastHost /></>;
 }
