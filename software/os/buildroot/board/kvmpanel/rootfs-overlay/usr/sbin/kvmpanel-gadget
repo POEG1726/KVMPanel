@@ -58,7 +58,7 @@ for switch in "$keyboard" "$relative" "$absolute" "$merge" "$telemetry" "$storag
 	case "$switch" in 0|1) ;; *) fail "invalid switch '$switch' (use 0 or 1)" ;; esac
 done
 merged=$((relative * absolute * merge))
-standalone=$((telemetry * (1-relative) * (1-absolute)))
+standalone=$((telemetry * (1-absolute)))
 case "$network" in off) net=0 ;; ncm|rndis) net=1 ;; *) fail "invalid NETWORK" ;; esac
 inputs=$((keyboard + relative + absolute - merged + standalone + storage + 2 * (net + acm)))
 outputs=$((storage + net + acm))
@@ -154,12 +154,7 @@ if [ "$merged" = 1 ]; then
 else
 	if [ "$relative" = 1 ]; then
 		desc="$mouse_header $buttons $rel_xy $wheel c0 c0"
-		length=4
-		if [ "$absolute" = 0 ] && [ "$telemetry" = 1 ]; then
-			desc="$desc $vendor_header $vendor_output"
-			length=63
-		fi
-		hid relative 1 2 "$length" "$desc"
+		hid relative 1 2 4 "$desc"
 	fi
 	if [ "$absolute" = 1 ]; then
 		desc="$mouse_header $buttons $abs_xy $wheel c0 c0"

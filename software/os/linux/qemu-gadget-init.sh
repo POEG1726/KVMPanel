@@ -33,6 +33,10 @@ find_device() {
 	done
 	return 1
 }
+stop_gadget() {
+	kvmpanel-gadget stop
+	wait_for test ! -e "$usb"
+}
 wait_for find_device
 wait_for configured
 # Match this gadget, its bound drivers, subordinate hidraw devices and SCSI LUNs.
@@ -84,33 +88,53 @@ wait_for check_luns
 echo "PASS CD-ROM, disk and shared LUN read from host"
 
 # hidraw write falls back to EP0 SET_REPORT when there is no interrupt OUT.
-minor=$(cat "$g/functions/hid.absolute/dev")
-report=/tmp/report
-{ printf '\003KVM'; dd if=/dev/zero bs=60 count=1 2>/dev/null; } > "$report"
-dd if="$report" of="$telemetry" bs=64 count=1 2>/dev/null
-dd if="/dev/hidg${minor##*:}" of=/tmp/received bs=64 count=1 2>/dev/null
-cmp "$report" /tmp/received
+check_telemetry() {
+	minor=$(cat "$g/functions/hid.$1/dev")
+	report=/tmp/report
+	{ printf '\003KVM'; dd if=/dev/zero bs=60 count=1 2>/dev/null; } > "$report"
+	dd if="$report" of="$telemetry" bs=64 count=1 2>/dev/null
+	dd if="/dev/hidg${minor##*:}" of=/tmp/received bs=64 count=1 2>/dev/null
+	cmp "$report" /tmp/received
+}
+check_telemetry absolute
 echo "PASS host vendor HID output report received over EP0"
 
 if NETWORK=ncm kvmpanel-gadget start; then exit 1; fi
 [ "$(cat "$g/UDC")" = "$UDC" ]
-kvmpanel-gadget stop
+stop_gadget
 [ ! -e "$g" ]
 echo "PASS budget rejection and teardown"
 
 # Exercise the optional functions within USB0's budget, including fresh binds.
 unset CDROM_IMAGE DISK_IMAGE SHARE_IMAGE
+ABS_MOUSE=0 kvmpanel-gadget start
+wait_for configured
+wait_for find_device
+wait_for check_interfaces
+[ -L "$g/configs/c.1/hid.relative" ]
+[ -L "$g/configs/c.1/hid.telemetry" ]
+check_telemetry telemetry
+echo "PASS ABS_MOUSE=0: separate boot mouse and EP0 telemetry, 4 IN / 1 OUT"
+stop_gadget
+
+KEYBOARD=0 REL_MOUSE=0 ABS_MOUSE=0 STORAGE=0 TELEMETRY=0 ACM=1 kvmpanel-gadget start
+wait_for configured
+wait_for find_device
+[ "$(cat "$usb/bNumInterfaces")" -eq 2 ]
+stop_gadget
+echo "PASS ACM-only control and data interfaces"
+
 for mode in ncm rndis; do
 	NETWORK=$mode MERGE_MICE=1 kvmpanel-gadget start
 	wait_for configured
 	[ -e "$g/configs/c.1/$mode.usb0" ]
 	[ "$(cat "$g/UDC")" = "$UDC" ]
-	kvmpanel-gadget stop
+	stop_gadget
 done
 REL_MOUSE=0 ABS_MOUSE=0 ACM=1 kvmpanel-gadget start
 wait_for configured
 [ -d "$g/functions/acm.console" ]
 [ -d "$g/functions/hid.telemetry" ]
-kvmpanel-gadget stop
+stop_gadget
 echo "PASS merged mice, NCM, RNDIS, ACM and standalone telemetry bind"
 echo "PASS KVMPanel gadget smoke"
