@@ -20,7 +20,8 @@
     "mismatch": "两次输入的密码不一致。"
   },
   "console": {
-    "title": "控制台"
+    "title": "控制台",
+    "screen": "远程画面"
   },
   "workspace": {
     "title": "工作区"

@@ -12,6 +12,7 @@ import { browserFetch, changePasswordAs, loginAs, startMock } from '../../test/m
 
 let mock: Awaited<ReturnType<typeof startMock>>;
 let jar: ReturnType<typeof browserFetch>;
+/** /api/ws plus /api/stream. */
 let connections = 0;
 
 const countingFactory: SocketFactory = (url) => {
@@ -123,7 +124,7 @@ describe('session expiry', () => {
     jar.setCookie(cookieA);
     mount('/');
     expect(await screen.findByRole('heading', { name: t('console.title') })).toBeInTheDocument();
-    await waitFor(() => expect(connections).toBe(1));
+    await waitFor(() => expect(connections).toBe(2));
     useUi.setState({ floatingOpen: true });
 
     await changePasswordAs(mock.url, cookieB, 'secret1', 'secret2');
@@ -131,7 +132,7 @@ describe('session expiry', () => {
     await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/login'));
     expect(useUi.getState().floatingOpen).toBe(false);
     await new Promise((r) => setTimeout(r, 5000));
-    expect(connections).toBe(1);
+    expect(connections).toBe(2);
     expect(screen.getByTestId('where')).toHaveTextContent('/login');
   });
 

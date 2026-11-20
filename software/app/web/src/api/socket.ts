@@ -124,7 +124,12 @@ export function connectSocket(path: string, handlers: SocketHandlers, opts: { re
       stopped = true;
       clearTimeout(retryTimer);
       clearTimeout(stableTimer);
-      ws?.close();
+      if (ws) {
+        const sock = ws;
+        // Closing a still-connecting socket makes Node's `ws` throw asynchronously; wait for it to open.
+        if (sock.readyState === 0) sock.onopen = () => sock.close();
+        else sock.close();
+      }
       ws = null;
     },
   };
