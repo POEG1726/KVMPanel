@@ -83,7 +83,8 @@ impl App {
     }
     pub fn apply_usb(&self) -> Result<(), ApiError> {
         let mut cfg = self.cfg.lock().unwrap();
-        self.hw.apply_usb(&cfg.value["usb"], &[])?;
+        self.storage
+            .with_gadget_args(|args| self.hw.apply_usb(&cfg.value["usb"], &args))?;
         cfg.applied = cfg.value["usb"].clone();
         self.emit("usb_reenumerated");
         Ok(())

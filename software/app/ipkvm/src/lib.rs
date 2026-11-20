@@ -3,6 +3,7 @@ mod config;
 pub mod console;
 pub mod hardware;
 mod schema;
+pub mod storage;
 use axum::{
     extract::{FromRequest, Request, State},
     http::{HeaderMap, StatusCode},
@@ -107,6 +108,7 @@ impl Deref for App {
     }
 }
 pub struct Inner {
+    pub storage: Arc<storage::Storage>,
     pub console: console::Console,
     pub sim: bool,
     pub data_dir: PathBuf,
@@ -121,6 +123,7 @@ impl App {
         fs::create_dir_all(data_dir)?;
         let hw = hardware::open(sim)?;
         Ok(Self(Arc::new(Inner {
+            storage: Arc::new(storage::Storage::new(data_dir, sim)?),
             console: console::Console::new(data_dir)?,
             sim,
             data_dir: data_dir.to_owned(),
@@ -132,7 +135,7 @@ impl App {
         })))
     }
     pub fn media_status(&self) -> Value {
-        json!({"mounted":null,"mode":null})
+        self.storage.status()
     }
     pub fn emit(&self, event: &str) {
         let _ = self.events.send(event.to_owned());
@@ -154,6 +157,7 @@ pub fn router(app: App, web: &Path) -> Router {
             "/api/health",
             get(|| async { Json(json!({"ok":true,"version":env!("CARGO_PKG_VERSION")})) }),
         )
+        .merge(storage::routes())
         .merge(console::routes())
         .merge(auth::routes())
         .merge(config::routes())
