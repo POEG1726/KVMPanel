@@ -1,6 +1,6 @@
 # Linux 适配
 
-锁定基线见 `manifests/sources.lock.json`。完整源码在本地 mirror 和 WSL 工作目录。
+当前用 Linux 6.18.64。完整源码的位置见根目录 `sources/README.md`。
 
 - `dts/`：板级 DTS/DTSI；当前待创建，需对照最新网表。
 - `configs/`：内核配置/片段；当前没有本板验证后的 defconfig。

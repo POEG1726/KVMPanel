@@ -1,6 +1,6 @@
 # T113-i / Linux 6.18 适配检查
 
-日期：2026-11-20。检查基线：v6.18 与 v6.18.64，后者提交 `fd7cfd39c88596fec816639ad83cbf3e9d316372`。
+日期：2026-11-20。检查基线：v6.18 与 v6.18.64。
 
 这是静态源码检查。没有编译验证、实板启动或性能测试；T113-S 的支持不能直接当作 T113-i 全功能验证。
 
@@ -29,12 +29,9 @@
 4. 编码优先评估标准 V4L2 路线。社区作者报告 T113 JPEG 测试成功不等于当前 T113-i + 6.18 已验证。
 5. STC、面板电源等板级特有功能保持独立小模块，不整体搬入厂商显示/VIN 框架。
 
-## 证据
+## 参考
 
-- `provenance/research-20261120/source_audit.json`：文件位置、检查模式、版本和解释。
-- `hardware/reference/board-components-20261120.json`：当前 PCB 器件清单，只证明器件属性。
 - https://github.com/gregkh/linux/tree/v6.18.64
-- https://github.com/u-boot/u-boot/blob/v2025.10/arch/arm/cpu/armv7/sunxi/psci.c （前次审查的启动参考版本；本项目下载 v2026.10，后续需重新核对）
 - https://github.com/DongshanPI/T113i_DevKitF_Tina5SDK
 - https://github.com/rockchip-linux/kernel/blob/develop-6.1/drivers/media/i2c/lt8619c.c
 - https://forum.armbian.com/topic/26551-video-encoder-using-mainline-kernel/
