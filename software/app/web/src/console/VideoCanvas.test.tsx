@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
+import { StrictMode, type ReactNode } from 'react';
 import { EventsProvider } from '../api/EventsProvider';
 import { configureSockets, type SocketFactory, type WebSocketLike } from '../api/socket';
 import { loginCookie, mockUrl, wsFactory } from '../../test/mock';
@@ -118,6 +118,19 @@ describe('VideoCanvas', () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage } as never);
     vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 64, height: 48, close() {} })));
     render(wrap(<VideoCanvas scale="fit" />));
+    await waitFor(() => expect(drawImage).toHaveBeenCalled(), { timeout: 5000 });
+  });
+
+  it('still draws under StrictMode (effects run mount, cleanup, mount)', async () => {
+    vi.unstubAllGlobals();
+    const cookie = await loginCookie();
+    const real = wsFactory(cookie);
+    const fake = fakeFactory().create;
+    configureSockets({ base: mockUrl(), create: (url) => (url.endsWith('/api/stream') ? real(url) : fake(url)) });
+    const drawImage = vi.fn();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage } as never);
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 64, height: 48, close() {} })));
+    render(<StrictMode>{wrap(<VideoCanvas scale="fit" />)}</StrictMode>);
     await waitFor(() => expect(drawImage).toHaveBeenCalled(), { timeout: 5000 });
   });
 

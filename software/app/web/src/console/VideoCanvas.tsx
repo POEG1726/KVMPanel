@@ -106,16 +106,19 @@ export function VideoCanvas({ scale, onPointer }: Props) {
     if (!pointerRaf.current) pointerRaf.current = requestAnimationFrame(flushPointer);
   };
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    alive.current = true; // StrictMode runs mount, cleanup, mount
+    return () => {
       alive.current = false;
       pending.current = null;
       cancelAnimationFrame(raf.current);
       cancelAnimationFrame(pointerRaf.current);
       latest.current?.close?.();
-    },
-    [],
-  );
+      latest.current = null;
+      raf.current = 0;
+      pointerRaf.current = 0;
+    };
+  }, []);
 
   // React registers wheel listeners as passive, so preventDefault needs a native one.
   useEffect(() => {
