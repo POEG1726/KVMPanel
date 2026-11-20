@@ -16,13 +16,13 @@ Signed-off-by: Codex <noreply@openai.com>
  arch/riscv/boot/dts/allwinner/sunxi-d1s-t113.dtsi  |   31 +
  drivers/media/i2c/Kconfig                          |   15 +
  drivers/media/i2c/Makefile                         |    1 +
- drivers/media/i2c/lt8619c.c                        |  588 ++++++++
+ drivers/media/i2c/lt8619c.c                        |  600 +++++++++
  drivers/media/platform/sunxi/Kconfig               |    1 +
  drivers/media/platform/sunxi/Makefile              |    1 +
  drivers/media/platform/sunxi/sun20i-csi/Kconfig    |   17 +
  drivers/media/platform/sunxi/sun20i-csi/Makefile   |    4 +
  .../media/platform/sunxi/sun20i-csi/sun20i_csi.c   | 1405 ++++++++++++++++++++
- 10 files changed, 2065 insertions(+)
+ 10 files changed, 2077 insertions(+)
 
 diff --git a/MAINTAINERS b/MAINTAINERS
 index 6e65aa4e9..96bac9dd2 100644
@@ -133,10 +133,10 @@ index 57cdd8dc9..fc399e035 100644
  obj-$(CONFIG_VIDEO_MAX9271_LIB) += max9271.o
 diff --git a/drivers/media/i2c/lt8619c.c b/drivers/media/i2c/lt8619c.c
 new file mode 100644
-index 000000000..7101074de
+index 000000000..ae5795ccb
 --- /dev/null
 +++ b/drivers/media/i2c/lt8619c.c
-@@ -0,0 +1,588 @@
+@@ -0,0 +1,600 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * lt8619c.c - Lontium HDMI receiver, eight-bit SDR BT.656 output
@@ -165,7 +165,9 @@ index 000000000..7101074de
 +#define LT_HPD			0x8006
 +#define LT_HPD_ENABLE		BIT(3)
 +#define LT_RX_SYNC		0x8013
++#define LT_RX_HSYNC_STABLE	BIT(0)
 +#define LT_TMDS_LOCK		0x8043
++#define LT_TMDS_CLK_STABLE	BIT(7)
 +#define LT_TMDS_RATE		0x8044
 +#define LT_EDID_MODE		0x808e
 +#define LT_EDID_ADDRESS		0x808f
@@ -326,12 +328,12 @@ index 000000000..7101074de
 +	ret = regmap_read(lt->map, LT_TMDS_LOCK, &val);
 +	if (ret)
 +		return ret;
-+	if (!(val & BIT(7)))
++	if (!(val & LT_TMDS_CLK_STABLE))
 +		return -ENOLINK;
 +	ret = regmap_read(lt->map, LT_RX_SYNC, &val);
 +	if (ret)
 +		return ret;
-+	if (!(val & BIT(0)))
++	if (!(val & LT_RX_HSYNC_STABLE))
 +		return -ENOLCK;
 +	ret = regmap_bulk_read(lt->map, LT_RX_TIMING, raw, sizeof(raw));
 +	if (ret)
@@ -545,6 +547,7 @@ index 000000000..7101074de
 +	};
 +	struct lt8619c *lt = to_lt(sd);
 +	struct v4l2_dv_timings signal;
++	unsigned int val;
 +	int ret;
 +
 +	guard(mutex)(&lt->lock);
@@ -552,6 +555,15 @@ index 000000000..7101074de
 +	if (ret)
 +		return ret;
 +	ret = regmap_multi_reg_write(lt->map, reset_rx, ARRAY_SIZE(reset_rx));
++	if (ret)
++		return ret;
++	/* After RX reset, TMDS clock detection precedes stable line timing. */
++	ret = regmap_read_poll_timeout(lt->map, LT_TMDS_LOCK, val,
++				       val & LT_TMDS_CLK_STABLE, 10000, 1000000);
++	if (ret)
++		return ret;
++	ret = regmap_read_poll_timeout(lt->map, LT_RX_SYNC, val,
++				       val & LT_RX_HSYNC_STABLE, 10000, 1000000);
 +	if (ret)
 +		return ret;
 +	ret = lt8619c_detect(lt, &signal);
