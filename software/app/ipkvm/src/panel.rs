@@ -43,7 +43,13 @@ fn gadget_connected() -> bool {
         })
     })
 }
-fn status(app: &App, pc: bool) -> Value {
+async fn status(app: &App, pc: bool) -> io::Result<Value> {
+    let app = app.clone();
+    tokio::task::spawn_blocking(move || sample_status(&app, pc))
+        .await
+        .map_err(io::Error::other)
+}
+fn sample_status(app: &App, pc: bool) -> Value {
     let info = system::device_info(app);
     let speed = info["link_mbps"].as_u64().unwrap_or_default();
     let ip = info["ip"]
@@ -162,7 +168,9 @@ async fn sampler(app: App, tx: broadcast::Sender<Value>, pc: watch::Sender<bool>
             pc.send_replace(connected);
             let _=tx.send(json!({"t":"pc","connected":connected,"last_seen_ts":host.last_seen.map(|(_,ts)|ts)}));
         }
-        let state = status(&app, connected);
+        let Ok(state) = status(&app, connected).await else {
+            return;
+        };
         let panel = &app.config()["panel"];
         if !app.sim {
             if connected {
@@ -175,8 +183,14 @@ async fn sampler(app: App, tx: broadcast::Sender<Value>, pc: watch::Sender<bool>
                 state["lux"].as_f64(),
                 offline_since.map(|start| now.duration_since(start)),
             );
-            if previous_brightness != Some(level) && app.hw.brightness(level).is_ok() {
-                previous_brightness = Some(level);
+            if previous_brightness != Some(level) {
+                let hw = app.hw.clone();
+                if matches!(
+                    tokio::task::spawn_blocking(move || hw.brightness(level)).await,
+                    Ok(Ok(()))
+                ) {
+                    previous_brightness = Some(level);
+                }
             }
         }
         if state != last_status
@@ -252,6 +266,7 @@ async fn client<T: AsyncRead + AsyncWrite + Unpin>(
     mut telemetry: broadcast::Receiver<Value>,
     pc: watch::Receiver<bool>,
 ) -> io::Result<()> {
+    let mut closes = app.socket_closes.subscribe();
     let mut applies = tokio::task::JoinSet::new();
     let mut events = app.events.subscribe();
     let (initial_config, mut config_updates) = app.subscribe_config();
@@ -263,26 +278,42 @@ async fn client<T: AsyncRead + AsyncWrite + Unpin>(
     )
     .await?;
     reply(&mut write, json!({"t":"config","config":initial_config})).await?;
-    let initial = status(&app, *pc.borrow());
+    let connected = *pc.borrow();
+    let initial = status(&app, connected).await?;
     reply(&mut write, initial).await?;
     loop {
         tokio::select! {
             biased;
-            event=events.recv()=>match event{
-                Ok(event)=>match event.as_str(){
-                    "kvm_restarting"=>{reply(&mut write,json!({"t":"kvm_restarting"})).await?;return write.shutdown().await;}
-                    "console_sessions"=>{let msg=status(&app,*pc.borrow());reply(&mut write,msg).await?;},
-                    _=>{}
+            changed=closes.changed()=>{
+                if changed.is_err(){return Ok(())}
+                let code=*closes.borrow_and_update();
+                if code==1012{
+                    reply(&mut write,json!({"t":"kvm_restarting"})).await?;
+                    return write.shutdown().await;
                 }
-                Err(_)=>return Ok(()),
             },
-            update=config_updates.recv()=>match update{
-                Ok(config)=>{
-                    reply(&mut write,json!({"t":"config","config":config})).await?;
-                    let msg=status(&app,*pc.borrow());
-                    reply(&mut write,msg).await?;
+            event=events.recv()=>match event{
+                Ok(event) if event!="console_sessions"=>{},
+                Err(broadcast::error::RecvError::Closed)=>return Ok(()),
+                other=>{
+                    if other.is_err(){events=events.resubscribe();}
+                    let connected=*pc.borrow();
+                    reply(&mut write,status(&app,connected).await?).await?;
                 }
-                Err(_)=>return Ok(()),
+            },
+            update=config_updates.recv()=>{
+                let config=match update{
+                    Ok(cfg)=>cfg,
+                    Err(broadcast::error::RecvError::Lagged(_))=>{
+                        let (cfg,rx)=app.subscribe_config();
+                        config_updates=rx;
+                        cfg
+                    }
+                    Err(broadcast::error::RecvError::Closed)=>return Ok(()),
+                };
+                reply(&mut write,json!({"t":"config","config":config})).await?;
+                let connected=*pc.borrow();
+                reply(&mut write,status(&app,connected).await?).await?;
             },
             Some(out)=applies.join_next(), if !applies.is_empty()=>reply(&mut write,out.map_err(io::Error::other)?).await?,
             next=lines.next(), if applies.len()<16=>match next{

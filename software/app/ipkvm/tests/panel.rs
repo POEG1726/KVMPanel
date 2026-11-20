@@ -288,3 +288,22 @@ async fn each_committed_patch_reaches_panel_in_order() {
         );
     }
 }
+
+#[tokio::test]
+async fn a_lagging_panel_can_query_config_and_still_receives_restart() {
+    let s = Server::new().await;
+    let mut panel = Panel::new(&s).await;
+    panel.next(|v| v["t"] == "status").await;
+    for _ in 0..512 {
+        s.app.emit("status_changed");
+    }
+    assert_eq!(
+        panel.request(json!({"t":"get_config","id":51})).await["data"]["panel"]["brightness"],
+        70
+    );
+    s.app.emit("kvm_restarting");
+    for _ in 0..512 {
+        s.app.emit("status_changed");
+    }
+    panel.next(|v| v["t"] == "kvm_restarting").await;
+}

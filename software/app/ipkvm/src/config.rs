@@ -232,7 +232,12 @@ async fn budget(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>, ApiEr
 async fn applied(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>, ApiError> {
     a.require(&h, "")?;
     let mut actual = a.cfg.applied.read().unwrap().clone();
-    if !a.hw.usb_bound().map_err(ApiError::device)? {
+    let hw = a.hw.clone();
+    let bound = tokio::task::spawn_blocking(move || hw.usb_bound())
+        .await
+        .map_err(io::Error::other)?
+        .map_err(ApiError::device)?;
+    if !bound {
         for key in [
             "keyboard",
             "mouse_rel",
