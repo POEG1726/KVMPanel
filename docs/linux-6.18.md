@@ -38,7 +38,7 @@
 
 板上运行 `kvmpanel-gadget --help` 查看组合与镜像参数。默认键盘、相对鼠标、绝对鼠标各一个 HID，存储使用一个 bulk 功能。LUN0 是只读光驱，LUN1 是虚拟 U 盘，LUN2 是共享盘。介质路径可留空，两个磁盘槽默认只读。启用写入前应先卸载同一镜像的本地文件系统。
 
-每个绝对鼠标 Input 报告都是 7 字节，首字节为 report ID `0x02`，后接 6 字节鼠标数据；单独或合并鼠标、开关遥测时均相同。每个厂商遥测 Output 报告都是 64 字节，首字节为 `0x03`，后接 63 字节数据。启用绝对鼠标时两者共用接口。只启用相对鼠标和遥测时，两种报告共用相对鼠标接口，鼠标的 report ID 为 0x01。两种鼠标都关闭时，遥测才独占一个 IN。默认组合仍使用独立的无编号 boot 相对鼠标。HID 的 `no_out_endpoint=1` 使主机的 SET_REPORT 走 EP0。QEMU host 读到三个独立 LUN 的标记，并从 hidraw 到 /dev/hidgN 逐字节比对了默认的 64 字节报告。NCM、RNDIS、ACM 的合法组合已解绑重建并配置成功。
+每个绝对鼠标 Input 报告都是 7 字节，首字节为 report ID `0x02`，后接 6 字节鼠标数据；单独或合并鼠标、开关遥测时均相同。每个厂商遥测 Output 报告都是 64 字节，首字节为 `0x03`，后接 63 字节数据。启用绝对鼠标时两者共用接口。关闭绝对鼠标且启用遥测时，遥测独占一个 IN，相对鼠标保持无编号的 boot 报告（subclass 1、protocol 2）。默认组合仍使用独立的无编号 boot 相对鼠标。HID 的 `no_out_endpoint=1` 使主机的 SET_REPORT 走 EP0。QEMU host 读到三个独立 LUN 的标记，并从 hidraw 到 /dev/hidgN 逐字节比对了默认的 64 字节报告。NCM、RNDIS、ACM 的合法组合已解绑重建并配置成功。
 
 T113-i 手册 USB2.0 OTG 一节给出 EP1–EP5 各一个 IN、一个 OUT，FIFO 共 8 KiB + 64 B。默认组合实测用 4 IN / 1 OUT。6.18.64 的 sunxi MUSB 五端点表按每方向 512 B 单缓冲配置。脚本在绑定前计算预算，dummy_hcd 无法测出 T113-i 的端点上限或 FIFO 行为。MUSB、冷启动 BIOS、Windows hidapi 和实际多 LUN 主机兼容性待实板验证。
 

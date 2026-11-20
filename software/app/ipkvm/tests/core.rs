@@ -385,7 +385,7 @@ async fn endpoint_combinations() {
             6,
             2,
         ),
-        (json!({"mouse_abs":false,"mouse_merge":true}), 3, 1),
+        (json!({"mouse_abs":false,"mouse_merge":true}), 4, 1),
     ] {
         let mut u = base.clone();
         u.as_object_mut()

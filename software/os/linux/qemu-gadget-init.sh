@@ -126,16 +126,29 @@ check_absolute_input
 echo "PASS absolute mouse Input report ID 0x02 with and without telemetry"
 stop_gadget
 
-expected_interfaces=2:1:3:1
 ABS_MOUSE=0 kvmpanel-gadget start
 wait_for configured
 wait_for find_device
 wait_for check_interfaces
 [ -L "$g/configs/c.1/hid.relative" ]
-[ ! -e "$g/configs/c.1/hid.telemetry" ]
-check_telemetry relative
-unset expected_interfaces
-echo "PASS relative mouse and EP0 telemetry share one IN, 3 IN / 1 OUT"
+[ -L "$g/configs/c.1/hid.telemetry" ]
+check_telemetry telemetry
+boot_mouse=
+for intf in "$usb":*; do
+	if [ "$(cat "$intf/bInterfaceSubClass")/$(cat "$intf/bInterfaceProtocol")" = 01/02 ]; then
+		set -- "$intf"/*/hidraw/hidraw*
+		boot_mouse=/dev/${1##*/}
+	fi
+done
+[ -c "$boot_mouse" ]
+minor=$(cat "$g/functions/hid.relative/dev")
+printf '\001\003\004\000' > /tmp/relative-sent
+exec 8<"$boot_mouse"
+cat /tmp/relative-sent > "/dev/hidg${minor##*:}"
+dd bs=4 count=1 of=/tmp/relative-received <&8 2>/dev/null
+exec 8<&-
+cmp /tmp/relative-sent /tmp/relative-received
+echo "PASS relative boot mouse (01/02) and separate EP0 telemetry, 4 IN / 1 OUT"
 stop_gadget
 
 KEYBOARD=0 REL_MOUSE=0 ABS_MOUSE=0 STORAGE=0 TELEMETRY=0 ACM=1 kvmpanel-gadget start

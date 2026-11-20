@@ -84,7 +84,7 @@ pub fn usb_budget(u: &Value) -> Value {
     let input = on("keyboard") as usize
         + rel as usize
         + (abs && !(rel && on("mouse_merge"))) as usize
-        + (on("telemetry") && !rel && !abs) as usize
+        + (on("telemetry") && !abs) as usize
         + on("storage") as usize
         + 2 * dual;
     let output = on("storage") as usize + dual;
