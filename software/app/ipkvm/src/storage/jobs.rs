@@ -1,7 +1,8 @@
 use super::*;
 use axum::body::Bytes;
 use reqwest::{Client, Url};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+const FINISHED_LIMIT: usize = 20;
 use tokio::sync::watch;
 use uuid::Uuid;
 
@@ -13,6 +14,7 @@ pub(super) struct Job {
     stopped: watch::Receiver<bool>,
     received: u64,
     total: u64,
+    finished: Option<Instant>,
 }
 
 impl Job {
@@ -83,6 +85,7 @@ pub(super) async fn start(State(app): State<App>, h: HeaderMap, JsonBody(b): Jso
         state,
         stopped,
         received: 0,
+        finished: None,
         total: if app.storage.sim { 64 << 20 } else { 0 },
     };
     let reply = job.json();
@@ -106,11 +109,21 @@ pub(super) async fn start(State(app): State<App>, h: HeaderMap, JsonBody(b): Jso
             // acknowledging cancellation, so a retry can reuse the same path.
             drop(worker.tx.0.take());
             let mut state = worker.storage.state.lock().unwrap();
-            if result.is_err() {
-                let job = state.jobs.iter_mut().find(|j| j.id == worker.id).unwrap();
-                if *job.state.borrow() != "canceled" {
-                    job.state.send_replace("failed");
-                }
+            let job = state.jobs.iter_mut().find(|j| j.id == worker.id).unwrap();
+            if result.is_err() && *job.state.borrow() != "canceled" {
+                job.state.send_replace("failed");
+            }
+            job.finished = Some(Instant::now());
+            if state.jobs.iter().filter(|j| j.finished.is_some()).count() > FINISHED_LIMIT {
+                let oldest = state
+                    .jobs
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, j)| j.finished.map(|at| (at, i)))
+                    .min()
+                    .unwrap()
+                    .1;
+                state.jobs.remove(oldest);
             }
             done.send_replace(true);
         })
@@ -147,6 +160,13 @@ async fn active<F: std::future::Future>(
     }
 }
 
+fn download_client() -> reqwest::Result<Client> {
+    Client::builder()
+        .connect_timeout(Duration::from_secs(20))
+        .read_timeout(Duration::from_secs(60))
+        .build()
+}
+
 impl Worker {
     async fn download(&mut self, url: Url, checksum: Option<String>) -> Result<(), ()> {
         if self.storage.sim {
@@ -158,10 +178,7 @@ impl Worker {
                 self.append(block.clone()).await?;
             }
         } else {
-            let client = Client::builder()
-                .connect_timeout(Duration::from_secs(20))
-                .build()
-                .map_err(|_| ())?;
+            let client = download_client().map_err(|_| ())?;
             let mut res = active(&mut self.rx, client.get(url).send())
                 .await?
                 .map_err(|_| ())?
@@ -228,5 +245,36 @@ impl Worker {
                 return Ok(());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    #[tokio::test]
+    async fn idle_response_times_out_after_sixty_seconds() {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/image", l.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            let (mut sock, _) = l.accept().await.unwrap();
+            let mut bytes = [0u8; 1024];
+            sock.read(&mut bytes).await.unwrap();
+            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\na")
+                .await
+                .unwrap();
+            std::future::pending::<()>().await;
+        });
+        let mut res = download_client().unwrap().get(url).send().await.unwrap();
+        assert_eq!(res.chunk().await.unwrap().unwrap().as_ref(), b"a");
+        tokio::time::pause();
+        let mut next = Box::pin(res.chunk());
+        // Start the per-read timer, then leave the remote socket stalled.
+        assert!(futures_util::poll!(next.as_mut()).is_pending());
+        tokio::time::advance(Duration::from_secs(59)).await;
+        assert!(futures_util::poll!(next.as_mut()).is_pending());
+        tokio::time::advance(Duration::from_secs(2)).await;
+        assert!(next.await.unwrap_err().is_timeout());
+        task.abort();
     }
 }

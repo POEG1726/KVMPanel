@@ -537,3 +537,38 @@ async fn a_blocked_lun_operation_does_not_stall_the_file_service() {
     gadget.await.unwrap();
     assert_eq!(mount.await.unwrap().status(), 200);
 }
+
+#[tokio::test]
+async fn jobs_keep_running_work_and_only_the_twenty_latest_completions() {
+    let a = Api::new().await;
+    let start = |i| {
+        a.post(
+            "/api/media/download",
+            json!({"url":"http://example.test/x.iso","path":format!("/images/x{i}.iso")}),
+        )
+    };
+    let mut keep = Vec::new();
+    for i in 0..=22 {
+        let job = check(start(i).await, "startDownload", 202).await;
+        let id = job["job"]["id"].as_str().unwrap().to_owned();
+        let act = if i == 0 { "pause" } else { "cancel" };
+        check(
+            a.post(&format!("/api/media/jobs/{id}/{act}"), Value::Null)
+                .await,
+            "controlJob",
+            200,
+        )
+        .await;
+        if i == 0 || i >= 3 {
+            keep.push(id);
+        }
+    }
+    let out = check(a.get("/api/media/jobs").await, "listJobs", 200).await;
+    let ids = out["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["id"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, keep);
+}
