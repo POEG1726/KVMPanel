@@ -6,6 +6,7 @@ use std::{
 };
 
 pub trait Hardware: Send + Sync {
+    fn stop_video(&self) {}
     fn apply_usb(&self, usb: &Value, media: &[(OsString, OsString)]) -> io::Result<()>;
     fn frame(&self, quality: u8) -> io::Result<Vec<u8>>;
     fn hid(&self, msg: &Value) -> io::Result<()>;
