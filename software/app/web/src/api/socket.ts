@@ -1,4 +1,4 @@
-import { emitLoginRequired } from './authEvents';
+import { emitLoginRequired, ownPasswordChangeActive } from './authEvents';
 
 export type ClosePolicy = 'login' | 'forbidden' | 'no_serial' | 'disconnected' | 'restarting' | 'retry';
 
@@ -101,7 +101,9 @@ export function connectSocket(path: string, handlers: SocketHandlers, opts: { re
       clearTimeout(stableTimer);
       if (stopped || ws !== sock) return;
       ws = null;
-      const policy = closePolicy(e.code);
+      let policy = closePolicy(e.code);
+      // Own password change: the server closed us with 4401 but re-issued our cookie, so reconnect.
+      if (policy === 'login' && ownPasswordChangeActive()) policy = 'retry';
       handlers.onClosed?.(policy);
       if (policy === 'login') emitLoginRequired();
       if (!reconnect || NO_RECONNECT.has(policy)) {

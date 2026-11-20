@@ -216,7 +216,7 @@ export function MenuBar() {
           <span className={locks?.scroll ? s.lockOn : undefined}>SCR</span>
         </span>
         <span className={s.sep} />
-        <button type="button" className={s.btn} onClick={openSettings}>
+        <button type="button" className={s.btn} onClick={() => openSettings()}>
           {ICONS.settings}
           {t('menu.settings')}
         </button>

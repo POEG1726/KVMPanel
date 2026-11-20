@@ -60,8 +60,11 @@ export async function unwrap<T>(result: PromiseLike<ApiResult<T>>): Promise<T> {
 
 export const errorKey = (e: ApiError): string => `error.${e.code}`;
 
-type DeepPartial<T> = T extends object ? { [K in keyof T]?: DeepPartial<T[K]> } : T;
+export type DeepPartial<T> = T extends object ? { [K in keyof T]?: DeepPartial<T[K]> } : T;
 export type Config = components['schemas']['Config'];
+
+/** In `panel.thresholds`, a null value deletes the key. The generated type only allows numbers, so the delete marker is cast once here. */
+export const THRESHOLD_DELETE = null as unknown as number;
 
 /** PATCH /api/config. The contract leaves the body untyped; this is the one place it is cast. */
 export async function patchConfig(patch: DeepPartial<Config>): Promise<Config> {

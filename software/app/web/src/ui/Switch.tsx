@@ -5,8 +5,21 @@ interface Props {
   onChange(next: boolean): void;
   label: string;
   disabled?: boolean;
+  /** Greyed out but still clickable, so the caller can explain why it cannot be turned on. */
+  unavailable?: boolean;
 }
 
-export function Switch({ checked, onChange, label, disabled }: Props) {
-  return <button type="button" role="switch" aria-checked={checked} aria-label={label} disabled={disabled} className={s.switch} onClick={() => onChange(!checked)} />;
+export function Switch({ checked, onChange, label, disabled, unavailable }: Props) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      aria-disabled={unavailable || undefined}
+      disabled={disabled}
+      className={`${s.switch} ${unavailable ? s.switchOff : ''}`}
+      onClick={() => onChange(!checked)}
+    />
+  );
 }

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { SettingsPageId } from '../settings/registry';
 
 export type CursorStyle = 'hide' | 'default' | 'cross' | 'dot';
 const CURSOR_KEY = 'kvm.cursor';
@@ -20,8 +21,12 @@ interface UiState {
   setFloatingOpen(open: boolean): void;
   /** Opens the files/terminal workspace. Stub until the workspace window exists (Task 8). */
   openWorkspace(): void;
-  /** Opens the settings window. Stub until the settings window exists. */
-  openSettings(): void;
+  /** The settings window and the page it shows. */
+  settingsOpen: boolean;
+  settingsPage: SettingsPageId;
+  /** Opens the settings window, optionally on a given page. */
+  openSettings(page?: SettingsPageId): void;
+  closeSettings(): void;
   /** Local cursor over the remote screen; a per-browser preference. */
   cursor: CursorStyle;
   setCursor(c: CursorStyle): void;
@@ -31,7 +36,10 @@ export const useUi = create<UiState>((set) => ({
   floatingOpen: false,
   setFloatingOpen: (open) => set({ floatingOpen: open }),
   openWorkspace: () => set({ floatingOpen: true }),
-  openSettings: () => set({ floatingOpen: true }),
+  settingsOpen: false,
+  settingsPage: 'general',
+  openSettings: (page) => set((st) => ({ floatingOpen: true, settingsOpen: true, settingsPage: page ?? st.settingsPage })),
+  closeSettings: () => set({ settingsOpen: false }),
   cursor: loadCursor(),
   setCursor: (cursor) => {
     try {
@@ -43,7 +51,10 @@ export const useUi = create<UiState>((set) => ({
   },
 }));
 
-export const closeAllFloating = (): void => useUi.getState().setFloatingOpen(false);
+export const closeAllFloating = (): void => {
+  useUi.getState().setFloatingOpen(false);
+  useUi.getState().closeSettings();
+};
 
 /** CSS `cursor` value for each local cursor style. */
 export const CURSOR_CSS: Record<CursorStyle, string> = {

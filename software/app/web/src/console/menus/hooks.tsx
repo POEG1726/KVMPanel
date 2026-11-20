@@ -1,14 +1,18 @@
 import { useCallback, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { api, ApiError, errorKey, patchConfig, unwrap, type Config } from '../../api/client';
+import type { TFunction } from 'i18next';
+import { api, ApiError, errorKey, patchConfig, unwrap, type Config, type DeepPartial } from '../../api/client';
 import { CONFIG_KEY } from '../../session/useSession';
 import s from './menus.module.css';
 
-type DeepPartial<T> = T extends object ? { [K in keyof T]?: DeepPartial<T[K]> } : T;
-
 export function useConfig(): Config | undefined {
   return useQuery({ queryKey: CONFIG_KEY, queryFn: () => unwrap(api.GET('/api/config')), staleTime: Infinity }).data;
+}
+
+/** Translates a failure: the error code's message (with the contract's `detail` as parameters), else a generic one. */
+export function errorText(t: TFunction, e: unknown): string {
+  return e instanceof ApiError ? t(errorKey(e), { defaultValue: t('error.unknown'), ...e.detail }) : t('error.unknown');
 }
 
 /** Runs async actions and keeps the translated message of the last failure for an inline alert. */
@@ -21,7 +25,7 @@ export function useRun() {
       try {
         return await fn();
       } catch (e) {
-        setError(e instanceof ApiError ? t(errorKey(e), t('error.unknown')) : t('error.unknown'));
+        setError(errorText(t, e));
         return undefined;
       }
     },

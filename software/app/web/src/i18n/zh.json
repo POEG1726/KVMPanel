@@ -46,14 +46,28 @@
     "in_use": "该镜像正在挂载。",
     "share_busy": "共享盘已挂给电脑。",
     "conflict": "已经存在。",
-    "unmappable": "有字符无法用当前键盘布局输入，整段文本都没有发送。"
+    "unmappable": "有字符无法用当前键盘布局输入，整段文本都没有发送。",
+    "invalid_config": "这项设置的值无效。",
+    "endpoints_full": "USB 端点已满：IN 还差 {{in_missing}} 个，OUT 还差 {{out_missing}} 个，先关掉其他功能。",
+    "device_unavailable": "设备硬件暂时不可用。",
+    "cannot_delete_self": "不能删除自己的账号。",
+    "no_key": "请先生成密钥。",
+    "busy": "另一个安装正在进行。",
+    "too_large": "文件太大。",
+    "checksum_mismatch": "校验值和文件不一致。",
+    "bad_edid": "EDID 无效（需要 128 或 256 字节的十六进制）。",
+    "unsupported_type": "只接受 PNG 或 SVG 图片。",
+    "bad_action": "未知的操作。",
+    "no_signal": "没有 HDMI 信号。"
   },
   "common": {
     "cancel": "取消",
     "send": "发送",
     "delete": "删除",
     "back": "返回",
-    "close": "关闭"
+    "close": "关闭",
+    "yes": "是",
+    "no": "否"
   },
   "menu": {
     "video": "画面",
@@ -191,5 +205,327 @@
     "wakeNamed": "唤醒 {{name}}",
     "deleteNamed": "删除 {{name}}",
     "sent": "已向 {{name}} 发送唤醒包。"
+  },
+  "settings": {
+    "group": {
+      "kvm": "KVM",
+      "system": "系统"
+    },
+    "page": {
+      "general": "通用",
+      "input": "键盘与鼠标",
+      "video": "画面",
+      "media": "镜像与共享",
+      "panel": "副屏",
+      "usb": "USB 功能",
+      "function_key": "Function 键",
+      "storage": "存储",
+      "network": "网络",
+      "tailscale": "Tailscale",
+      "accounts": "账号与权限",
+      "mcp": "MCP",
+      "update": "更新",
+      "device": "设备",
+      "about": "关于"
+    },
+    "general": {
+      "language": "语言",
+      "languageAuto": "跟随浏览器",
+      "workspaceOpen": "文件 / 终端的打开方式",
+      "workspaceFloat": "页内浮窗",
+      "workspaceTab": "新标签页",
+      "rememberFloat": "记住浮窗的位置和大小",
+      "menubar": "菜单栏",
+      "menubarAutoHide": "自动隐藏",
+      "menubarPinned": "始终显示",
+      "title": "页面标题",
+      "logo": "Logo",
+      "logoHint": "PNG 或 SVG，不超过 256 KiB",
+      "logoSaved": "Logo 已保存。"
+    },
+    "input": {
+      "keyboard": "键盘",
+      "leader": "Leader 键",
+      "leaderHint": "用来前缀浏览器会拦截的快捷键",
+      "leaderNone": "无",
+      "mouse": "鼠标",
+      "serial": "串口终端",
+      "serialDevice": "串口设备",
+      "serialDeviceHint": "留空则隐藏串口终端",
+      "baud": "波特率"
+    },
+    "video": {
+      "edid": "EDID",
+      "edidPreset": "当前 EDID",
+      "edidHint": "电脑在 HDMI 输入上看到的显示器信息",
+      "preset1080p": "1080p30（板级默认）",
+      "presetCustom": "自定义",
+      "edidHex": "EDID（十六进制）",
+      "edidApply": "应用 EDID",
+      "edidReset": "恢复板级默认",
+      "edidApplyTitle": "应用这份 EDID？",
+      "edidResetTitle": "恢复板子的默认 EDID？",
+      "edidConfirmMessage": "电脑会看到显示器被拔掉再插上，分辨率可能随之改变。"
+    },
+    "media": {
+      "share": "文件共享盘",
+      "mounted": "已挂载的镜像",
+      "nothing": "没有挂载镜像"
+    },
+    "panel": {
+      "display": "显示",
+      "autoBrightness": "自动亮度",
+      "brightness": "亮度",
+      "offlineSleep": "电脑离线后息屏",
+      "offlineSleepHint": "收不到电脑数据超过这个时间后息屏",
+      "never": "从不",
+      "minutes": "{{n}} 分钟",
+      "thresholds": "告警阈值",
+      "thresholdsHint": "超过阈值的数值会变红。键可以是指标 id（如 gpu.temp），也可以是前缀（如 mem.dimm.*）；精确的 id 优先于前缀。",
+      "thresholdKey": "指标 id 或前缀",
+      "thresholdNew": "阈值",
+      "thresholdAdd": "添加",
+      "thresholdValue": "{{key}} 的阈值",
+      "thresholdDelete": "删除阈值 {{key}}",
+      "hidden": "隐藏的指标",
+      "hiddenHint": "勾选的指标不在副屏上显示。",
+      "group": {
+        "cpu": "CPU",
+        "gpu": "GPU",
+        "mem": "内存",
+        "sys": "整机"
+      }
+    },
+    "usb": {
+      "feature": {
+        "keyboard": "键盘",
+        "mouse_rel": "相对鼠标",
+        "mouse_abs": "绝对鼠标",
+        "mouse_merge": "合并两个鼠标",
+        "storage": "大容量存储",
+        "net": "虚拟网卡",
+        "acm": "USB 串口（ACM）",
+        "telemetry": "上位机数据"
+      },
+      "featureHint": {
+        "keyboard": "boot 协议，BIOS 里能用",
+        "mouse_rel": "BIOS 里能用",
+        "mouse_abs": "",
+        "mouse_merge": "高级：合并后绝对鼠标不再占端点，个别 BIOS 不认",
+        "storage": "光驱、虚拟 U 盘、文件共享",
+        "net": "NCM 或 RNDIS",
+        "acm": "",
+        "telemetry": "开着任意鼠标时不占端点；两个鼠标都关时占 1 个 IN"
+      },
+      "netMode": "网卡模式",
+      "apply": "应用",
+      "revert": "撤销",
+      "pending": "改动还没有应用。",
+      "applyTitle": "应用 USB 改动？",
+      "applyMessage": "USB 设备会重建：电脑上的键盘和鼠标会断开 1 到 2 秒。",
+      "applying": "USB 正在重新枚举。"
+    },
+    "functionKey": {
+      "short": "短按",
+      "long": "长按",
+      "action": {
+        "none": "无动作",
+        "toggle_settings": "进入 / 退出设置",
+        "toggle_screen": "开关屏幕",
+        "cycle_brightness": "切换亮度档位",
+        "pause_kvm": "暂停 KVM 远程"
+      }
+    },
+    "storage": {
+      "root": {
+        "sd": "SD 卡",
+        "share": "共享盘",
+        "system": "系统"
+      },
+      "usage": "剩余 {{free}}，共 {{total}}",
+      "notMounted": "未挂载"
+    },
+    "network": {
+      "address": "地址",
+      "mode": "IP 方式",
+      "static": "静态",
+      "ip": "IP 地址",
+      "mask": "子网掩码",
+      "gateway": "网关",
+      "dnsMode": "DNS",
+      "manual": "手动",
+      "dnsServers": "DNS 服务器（逗号分隔，最多 4 个）",
+      "web": "网页访问",
+      "bind": "监听地址",
+      "httpPort": "HTTP 端口",
+      "https": "HTTPS",
+      "httpsPort": "HTTPS 端口",
+      "cert": "证书路径",
+      "key": "私钥路径",
+      "save": "保存",
+      "saved": "网络设置已保存。"
+    },
+    "tailscale": {
+      "installed": "已安装",
+      "running": "运行中",
+      "ip": "Tailscale IP",
+      "loginUrl": "登录链接",
+      "loginHint": "打开它来授权这台设备",
+      "failed": "上一次操作失败",
+      "install": "安装",
+      "uninstall": "卸载",
+      "up": "连接",
+      "down": "断开",
+      "login": "登录",
+      "logout": "退出登录"
+    },
+    "accounts": {
+      "ownPassword": "修改我的密码",
+      "passwordChanged": "密码已修改。",
+      "users": "账号",
+      "name": "名称",
+      "role": "角色",
+      "roleAdmin": "管理员",
+      "roleUser": "普通用户",
+      "permissions": "权限",
+      "allPermissions": "全部权限",
+      "viewOnly": "只读",
+      "disabled": "停用",
+      "password": "密码",
+      "newPassword": "新密码",
+      "resetPassword": "重置",
+      "deleteNamed": "删除 {{name}}",
+      "deleteTitle": "删除 {{name}}？",
+      "deleteMessage": "账号和它的会话都会被删除，无法恢复。",
+      "add": "添加账号",
+      "newName": "新账号名称",
+      "newUserPassword": "新账号密码",
+      "newRole": "新账号角色",
+      "create": "创建",
+      "perm": {
+        "console": "控制台",
+        "power": "电源",
+        "media": "镜像",
+        "terminal": "终端",
+        "files": "文件",
+        "device": "设备",
+        "network": "网络",
+        "updates": "更新",
+        "mcp": "MCP",
+        "tailscale": "Tailscale",
+        "panel": "副屏",
+        "usb": "USB"
+      }
+    },
+    "mcp": {
+      "enabled": "启用 MCP",
+      "enabledHint": "MCP 客户端可以凭密钥截图和发送键鼠输入",
+      "key": "API 密钥",
+      "keyHint": "末四位 {{hint}}",
+      "noKey": "还没有密钥",
+      "showOnce": "请现在复制这个密钥，它只显示这一次。",
+      "copy": "复制",
+      "copied": "密钥已复制。",
+      "copyFailed": "无法复制密钥。",
+      "hide": "隐藏",
+      "regenerate": "生成新密钥",
+      "regenerateTitle": "生成新密钥？",
+      "regenerateMessage": "旧密钥会立刻失效。",
+      "revoke": "吊销密钥",
+      "revokeTitle": "吊销密钥？",
+      "revokeMessage": "MCP 会被关闭，直到生成新的密钥。"
+    },
+    "update": {
+      "current": "当前版本",
+      "latest": "最新版本",
+      "unknown": "未知",
+      "channel": "频道",
+      "stable": "稳定版",
+      "preview": "预览版",
+      "server": "更新服务器",
+      "check": "检查更新",
+      "install": "安装最新版",
+      "installTitle": "安装更新？",
+      "installMessage": "更新完成后 KVM 服务会重启，已打开的会话会断开。",
+      "offline": "离线更新",
+      "offlineFile": "更新包（.tar）",
+      "offlineHint": "不超过 256 MiB，会校验 SHA-256",
+      "progress": "安装进度",
+      "installed": "更新已安装。",
+      "state": {
+        "running": "安装中",
+        "done": "完成",
+        "failed": "失败"
+      }
+    },
+    "device": {
+      "info": "板子",
+      "version": "软件版本",
+      "kernel": "内核",
+      "uptime": "运行时间",
+      "uptimeValue": "{{hours}} 小时 {{minutes}} 分",
+      "ip": "IP 地址",
+      "mac": "MAC 地址",
+      "link": "链路速率",
+      "noLink": "没有接网线",
+      "temp": "SoC 温度",
+      "memory": "内存",
+      "data": "数据存储",
+      "lux": "环境光",
+      "settings": "设置",
+      "hostname": "主机名",
+      "watchdog": "看门狗",
+      "actions": "维护",
+      "action": {
+        "reset_hid": "重置 USB 键鼠",
+        "disconnect_sessions": "断开所有会话",
+        "restart_kvm": "重启 KVM 服务",
+        "reboot": "重启 KVMPanel",
+        "shutdown": "关机 KVMPanel"
+      },
+      "sent": {
+        "reset_hid": "USB 键鼠已重置。",
+        "disconnect_sessions": "所有会话已断开。",
+        "restart_kvm": "KVM 服务正在重启。",
+        "reboot": "KVMPanel 正在重启。",
+        "shutdown": "KVMPanel 正在关机。"
+      },
+      "confirm": {
+        "reset_hid": {
+          "title": "重置 USB 键鼠？",
+          "message": "电脑会短暂失去键盘和鼠标。"
+        },
+        "disconnect_sessions": {
+          "title": "断开所有会话？",
+          "message": "所有远程连接都会断开，包括你自己。"
+        },
+        "restart_kvm": {
+          "title": "重启 KVM 服务？",
+          "message": "网页控制台会有几秒钟不可用，副屏不受影响。"
+        },
+        "reboot": {
+          "title": "重启 KVMPanel？",
+          "message": "板子会重启，不影响电脑。"
+        },
+        "shutdown": {
+          "title": "关机 KVMPanel？",
+          "message": "板子会断电，需要手动重新开机，不影响电脑。"
+        },
+        "kvm_off": {
+          "title": "关闭 KVM 服务？",
+          "message": "所有远程连接都会断开，网页也不再响应。只能在副屏上重新打开。"
+        }
+      },
+      "kvmSwitch": "KVM 服务",
+      "kvmEnabled": "远程 KVM 已开启",
+      "kvmHint": "关闭后只剩副屏，只能从副屏重新打开。",
+      "kvmDisable": "关闭 KVM"
+    },
+    "about": {
+      "name": "产品",
+      "version": "版本",
+      "licenses": "许可证",
+      "open": "打开"
+    }
   }
 }

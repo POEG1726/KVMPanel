@@ -1,0 +1,309 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, useLocation } from 'react-router-dom';
+import WebSocket from 'ws';
+import i18n from '../i18n';
+import { App } from '../App';
+import { configureApi } from '../api/client';
+import { configureSockets, type SocketFactory } from '../api/socket';
+import { useUi } from '../state/ui';
+import { browserFetch, changePasswordAs, loginAs, startMock } from '../../test/mock';
+import { SettingsWindow } from './SettingsWindow';
+import type { SettingsPageId } from './registry';
+
+let mock: Awaited<ReturnType<typeof startMock>>;
+let jar: ReturnType<typeof browserFetch>;
+/** Every HTTP request the app made: `METHOD /path` plus the parsed JSON body. */
+let requests: { key: string; body: unknown }[];
+let connections = 0;
+
+const t = (k: string, o: Record<string, unknown> = {}) => i18n.t(k, o) as string;
+
+const factory: SocketFactory = (url) => {
+  connections += 1;
+  const ws = new WebSocket(url, { headers: { cookie: jar.cookie() } });
+  ws.on('error', () => undefined);
+  return ws as never;
+};
+
+function client() {
+  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
+}
+
+function mount(page: SettingsPageId) {
+  return render(
+    <QueryClientProvider client={client()}>
+      <SettingsWindow page={page} />
+    </QueryClientProvider>,
+  );
+}
+
+const patches = () => requests.filter((r) => r.key === 'PATCH /api/config').map((r) => r.body);
+
+async function setup(cookieLogin: () => Promise<string> = () => loginAs(mock.url, 'admin', 'admin')) {
+  jar = browserFetch(mock.url, await cookieLogin());
+}
+
+beforeEach(async () => {
+  mock = await startMock();
+  requests = [];
+  connections = 0;
+  await setup();
+  configureApi({
+    fetch: async (input, init) => {
+      const req = new Request(input, init);
+      const text = await req.clone().text();
+      requests.push({ key: `${req.method} ${new URL(req.url).pathname}`, body: text && text.startsWith('{') ? JSON.parse(text) : undefined });
+      return jar.fetch(req);
+    },
+  });
+  configureSockets({ base: mock.url, create: factory });
+  await i18n.changeLanguage('en');
+});
+
+afterEach(async () => {
+  vi.useRealTimers();
+  cleanup();
+  configureApi({});
+  configureSockets({});
+  useUi.setState({ floatingOpen: false, settingsOpen: false });
+  await mock.close();
+});
+
+describe('SettingsWindow', () => {
+  it('lists the KVM group then the system group, in the documented order', async () => {
+    mount('general');
+    await screen.findByRole('navigation');
+    const nav = screen.getByRole('navigation');
+    const names = within(nav).getAllByRole('button').map((b) => b.textContent);
+    expect(names).toEqual(
+      ['general', 'input', 'video', 'media', 'panel', 'usb', 'function_key', 'storage', 'network', 'tailscale', 'accounts', 'mcp', 'update', 'device', 'about'].map((id) => t(`settings.page.${id}`)),
+    );
+    expect(within(nav).getByText(t('settings.group.kvm'))).toBeInTheDocument();
+    expect(within(nav).getByText(t('settings.group.system'))).toBeInTheDocument();
+  });
+
+  it('opens from the menu bar state and closes on Escape', async () => {
+    const onClose = vi.fn();
+    render(
+      <QueryClientProvider client={client()}>
+        <SettingsWindow onClose={onClose} />
+      </QueryClientProvider>,
+    );
+    fireEvent.keyDown(await screen.findByRole('dialog'), { key: 'Escape' });
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('applies the language at once after saving it', async () => {
+    mount('general');
+    fireEvent.change(await screen.findByLabelText(t('settings.general.language')), { target: { value: 'zh' } });
+    await waitFor(() => expect(i18n.language).toBe('zh'));
+    expect(patches()).toContainEqual({ web: { language: 'zh' } });
+  });
+
+  it('rolls an optimistic change back and toasts when the server refuses it', async () => {
+    mount('general');
+    const title = await screen.findByLabelText(t('settings.general.title'));
+    // 65 characters is over the contract's maxLength of 64.
+    fireEvent.change(title, { target: { value: 'x'.repeat(65) } });
+    fireEvent.blur(title);
+    await waitFor(() => expect(patches()).toHaveLength(1));
+    await waitFor(() => expect(screen.getByLabelText(t('settings.general.title'))).toHaveValue('KVMPanel'));
+  });
+});
+
+describe('USB functions page', () => {
+  const sw = (name: string) => screen.findByRole('switch', { name: t(`settings.usb.feature.${name}`) });
+
+  it('shows an endpoints_full tip under the budget bar for a switch that does not fit, and hides it after 2.5 s', async () => {
+    mount('usb');
+    const net = await sw('net');
+    await waitFor(() => expect(screen.getByRole('img', { name: 'IN 4/5' })).toBeInTheDocument());
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
+    fireEvent.click(net);
+    const tip = screen.getByTestId('usb-tip');
+    expect(tip).toHaveTextContent(t('error.endpoints_full', { in_missing: 1, out_missing: 0 }));
+    expect(net).toHaveAttribute('aria-checked', 'false');
+    // The tip sits inside the budget bars' container, directly below them, not in a dialog.
+    expect(tip.parentElement).toContainElement(screen.getByRole('img', { name: 'OUT 1/5' }));
+    expect(screen.getAllByRole('dialog')).toHaveLength(1); // only the settings window itself, no modal for the tip
+
+    act(() => void vi.advanceTimersByTime(2400));
+    expect(screen.getByTestId('usb-tip')).toBeInTheDocument();
+    act(() => void vi.advanceTimersByTime(100));
+    expect(screen.queryByTestId('usb-tip')).not.toBeInTheDocument();
+    expect(patches()).toHaveLength(0);
+  });
+
+  it('enables Apply only while a change is pending, and Revert patches the applied set back', async () => {
+    mount('usb');
+    const apply = await screen.findByRole('button', { name: t('settings.usb.apply') });
+    const revert = screen.getByRole('button', { name: t('settings.usb.revert') });
+    await waitFor(() => expect(requests.some((r) => r.key === 'GET /api/usb/applied')).toBe(true));
+    expect(apply).toBeDisabled();
+
+    const abs = await sw('mouse_abs');
+    fireEvent.click(abs);
+    await waitFor(() => expect(apply).toBeEnabled());
+    expect(abs).toHaveAttribute('aria-checked', 'false');
+
+    fireEvent.click(revert);
+    await waitFor(() => expect(apply).toBeDisabled());
+    expect(abs).toHaveAttribute('aria-checked', 'true');
+    expect(patches()).toContainEqual({ usb: expect.objectContaining({ mouse_abs: true, keyboard: true, storage: true }) });
+  });
+
+  it('asks before applying, then applies and disables Apply again', async () => {
+    mount('usb');
+    fireEvent.click(await sw('mouse_abs'));
+    const apply = screen.getByRole('button', { name: t('settings.usb.apply') });
+    await waitFor(() => expect(apply).toBeEnabled());
+
+    fireEvent.click(apply);
+    const dialog = await screen.findByRole('dialog', { name: t('settings.usb.applyTitle') });
+    fireEvent.click(within(dialog).getByRole('button', { name: t('common.cancel') }));
+    expect(requests.some((r) => r.key === 'POST /api/usb/apply')).toBe(false);
+
+    fireEvent.click(apply);
+    fireEvent.click(within(await screen.findByRole('dialog', { name: t('settings.usb.applyTitle') })).getByRole('button', { name: t('settings.usb.apply') }));
+    await waitFor(() => expect(requests.some((r) => r.key === 'POST /api/usb/apply')).toBe(true));
+    await waitFor(() => expect(apply).toBeDisabled());
+  });
+});
+
+describe('Panel page', () => {
+  it('deletes a threshold by PATCHing null', async () => {
+    mount('panel');
+    fireEvent.change(await screen.findByLabelText(t('settings.panel.thresholdKey')), { target: { value: 'gpu.temp' } });
+    fireEvent.change(screen.getByLabelText(t('settings.panel.thresholdNew')), { target: { value: '80' } });
+    fireEvent.click(screen.getByRole('button', { name: t('settings.panel.thresholdAdd') }));
+    const remove = await screen.findByRole('button', { name: t('settings.panel.thresholdDelete', { key: 'gpu.temp' }) });
+    expect(patches()).toContainEqual({ panel: { thresholds: { 'gpu.temp': 80 } } });
+
+    fireEvent.click(remove);
+    await waitFor(() => expect(screen.queryByRole('button', { name: t('settings.panel.thresholdDelete', { key: 'gpu.temp' }) })).not.toBeInTheDocument());
+    expect(patches()).toContainEqual({ panel: { thresholds: { 'gpu.temp': null } } });
+    // The prefix pattern is a normal row too.
+    expect(screen.getByRole('button', { name: t('settings.panel.thresholdDelete', { key: 'mem.dimm.*' }) })).toBeInTheDocument();
+  });
+
+  it('hides a metric by sending the whole hidden list', async () => {
+    mount('panel');
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'gpu.temp' }));
+    await waitFor(() => expect(patches()).toContainEqual({ panel: { hidden_metrics: ['gpu.temp'] } }));
+  });
+});
+
+describe('Network page', () => {
+  it('shows invalid_body for a static address without an IP and stays on the page', async () => {
+    mount('network');
+    fireEvent.change(await screen.findByLabelText(t('settings.network.mode')), { target: { value: 'static' } });
+    fireEvent.click(screen.getByRole('button', { name: t('settings.network.save') }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(t('error.invalid_body'));
+    expect(screen.getByRole('heading', { name: t('settings.page.network') })).toBeInTheDocument();
+    expect(screen.getByLabelText(t('settings.network.mode'))).toHaveValue('static');
+  });
+});
+
+describe('MCP page', () => {
+  it('shows the full key once after regenerating; a fresh mount only has the hint', async () => {
+    mount('mcp');
+    fireEvent.click(await screen.findByRole('button', { name: t('settings.mcp.regenerate') }));
+    const key = (await screen.findByTestId('mcp-key')).textContent!;
+    expect(key.length).toBeGreaterThanOrEqual(32);
+    expect(screen.getByRole('button', { name: t('settings.mcp.copy') })).toBeInTheDocument();
+
+    cleanup();
+    mount('mcp');
+    await screen.findByText(t('settings.mcp.keyHint', { hint: key.slice(-4) }));
+    expect(screen.queryByTestId('mcp-key')).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(key);
+  });
+});
+
+describe('Device page', () => {
+  it('asks before every action: cancel sends nothing, confirm sends it', async () => {
+    mount('device');
+    const restart = await screen.findByRole('button', { name: t('settings.device.action.restart_kvm') });
+    fireEvent.click(restart);
+    const title = t('settings.device.confirm.restart_kvm.title');
+    fireEvent.click(within(await screen.findByRole('dialog', { name: title })).getByRole('button', { name: t('common.cancel') }));
+    expect(requests.some((r) => r.key === 'POST /api/device/action')).toBe(false);
+
+    fireEvent.click(restart);
+    fireEvent.click(within(await screen.findByRole('dialog', { name: title })).getByRole('button', { name: t('settings.device.action.restart_kvm') }));
+    await waitFor(() => expect(requests).toContainEqual({ key: 'POST /api/device/action', body: { action: 'restart_kvm' } }));
+  });
+
+  it('warns that only the panel can turn the KVM service on again before switching it off', async () => {
+    mount('device');
+    fireEvent.click(await screen.findByRole('button', { name: t('settings.device.kvmDisable') }));
+    const dialog = await screen.findByRole('dialog', { name: t('settings.device.confirm.kvm_off.title') });
+    expect(dialog).toHaveTextContent(t('settings.device.confirm.kvm_off.message'));
+    expect(patches()).toHaveLength(0);
+    fireEvent.click(within(dialog).getByRole('button', { name: t('common.cancel') }));
+    expect(patches()).toHaveLength(0);
+  });
+});
+
+describe('Accounts page', () => {
+  it('creates an account with chosen permissions and disables it', async () => {
+    mount('accounts');
+    fireEvent.change(await screen.findByLabelText(t('settings.accounts.newName')), { target: { value: 'viewer' } });
+    fireEvent.change(screen.getByLabelText(t('settings.accounts.newUserPassword')), { target: { value: 'secret1' } });
+    fireEvent.click(screen.getByRole('button', { name: t('settings.accounts.create') }));
+    const disable = await screen.findByRole('switch', { name: `viewer: ${t('settings.accounts.disabled')}` });
+    expect(requests).toContainEqual({ key: 'POST /api/users', body: { name: 'viewer', password: 'secret1', role: 'user', permissions: ['console'], view_only: false } });
+
+    fireEvent.click(disable);
+    await waitFor(() => expect(screen.getByRole('switch', { name: `viewer: ${t('settings.accounts.disabled')}` })).toHaveAttribute('aria-checked', 'true'));
+  });
+});
+
+describe('own password change', () => {
+  function Where() {
+    return <div data-testid="where">{useLocation().pathname}</div>;
+  }
+
+  it('reconnects the sockets after the 4401 instead of leaving for /login', async () => {
+    const cookie = await loginAs(mock.url, 'admin', 'admin');
+    const next = await changePasswordAs(mock.url, cookie, 'admin', 'secret1');
+    jar = browserFetch(mock.url, next);
+    render(
+      <QueryClientProvider client={client()}>
+        <MemoryRouter initialEntries={['/']}>
+          <App />
+          <Where />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await screen.findByRole('toolbar');
+    await waitFor(() => expect(connections).toBeGreaterThanOrEqual(2));
+    const before = connections;
+
+    act(() => useUi.getState().openSettings('accounts'));
+    fireEvent.change(await screen.findByLabelText(t('changePassword.old')), { target: { value: 'secret1' } });
+    fireEvent.change(screen.getByLabelText(t('changePassword.new')), { target: { value: 'secret2' } });
+    fireEvent.change(screen.getByLabelText(t('changePassword.confirm')), { target: { value: 'secret2' } });
+    fireEvent.click(screen.getByRole('button', { name: t('changePassword.submit') }));
+
+    await waitFor(() => expect(requests.some((r) => r.key === 'POST /api/users/me/password')).toBe(true));
+    // Both sockets (events, stream) come back with the re-issued cookie.
+    await waitFor(() => expect(connections).toBeGreaterThanOrEqual(before + 2), { timeout: 6000 });
+    expect(screen.getByTestId('where')).toHaveTextContent('/');
+    expect(screen.getByRole('toolbar')).toBeInTheDocument();
+  });
+
+  it('a wrong current password shows the error and does not suppress a later real logout', async () => {
+    mount('accounts');
+    fireEvent.change(await screen.findByLabelText(t('changePassword.old')), { target: { value: 'nope' } });
+    fireEvent.change(screen.getByLabelText(t('changePassword.new')), { target: { value: 'secret2' } });
+    fireEvent.change(screen.getByLabelText(t('changePassword.confirm')), { target: { value: 'secret2' } });
+    fireEvent.click(screen.getByRole('button', { name: t('changePassword.submit') }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(t('error.wrong_password'));
+    const { ownPasswordChangeActive } = await import('../api/authEvents');
+    expect(ownPasswordChangeActive()).toBe(false);
+  });
+});

@@ -49,14 +49,28 @@
     "in_use": "That image is mounted.",
     "share_busy": "The share is exported to the PC.",
     "conflict": "That already exists.",
-    "unmappable": "Some characters cannot be typed with the selected keyboard layout; nothing was sent."
+    "unmappable": "Some characters cannot be typed with the selected keyboard layout; nothing was sent.",
+    "invalid_config": "That setting is not valid.",
+    "endpoints_full": "USB endpoints are full: IN short by {{in_missing}}, OUT short by {{out_missing}}. Turn something else off first.",
+    "device_unavailable": "The device hardware is not available right now.",
+    "cannot_delete_self": "You cannot delete your own account.",
+    "no_key": "Generate a key first.",
+    "busy": "Another installation is running.",
+    "too_large": "That file is too large.",
+    "checksum_mismatch": "The checksum does not match the file.",
+    "bad_edid": "That is not a valid EDID (128 or 256 bytes of hex).",
+    "unsupported_type": "Only PNG or SVG images are accepted.",
+    "bad_action": "Unknown action.",
+    "no_signal": "There is no HDMI signal."
   },
   "common": {
     "cancel": "Cancel",
     "send": "Send",
     "delete": "Delete",
     "back": "Back",
-    "close": "Close"
+    "close": "Close",
+    "yes": "Yes",
+    "no": "No"
   },
   "menu": {
     "video": "Video",
@@ -194,5 +208,327 @@
     "wakeNamed": "Wake {{name}}",
     "deleteNamed": "Delete {{name}}",
     "sent": "Magic packet sent to {{name}}."
+  },
+  "settings": {
+    "group": {
+      "kvm": "KVM",
+      "system": "SYSTEM"
+    },
+    "page": {
+      "general": "General",
+      "input": "Keyboard & mouse",
+      "video": "Video",
+      "media": "Images & share",
+      "panel": "Panel",
+      "usb": "USB functions",
+      "function_key": "Function key",
+      "storage": "Storage",
+      "network": "Network",
+      "tailscale": "Tailscale",
+      "accounts": "Accounts & access",
+      "mcp": "MCP",
+      "update": "Updates",
+      "device": "Device",
+      "about": "About"
+    },
+    "general": {
+      "language": "Language",
+      "languageAuto": "Follow the browser",
+      "workspaceOpen": "Open Files / Terminal in",
+      "workspaceFloat": "Floating window",
+      "workspaceTab": "New tab",
+      "rememberFloat": "Remember window position and size",
+      "menubar": "Menu bar",
+      "menubarAutoHide": "Auto-hide",
+      "menubarPinned": "Always visible",
+      "title": "Page title",
+      "logo": "Logo",
+      "logoHint": "PNG or SVG, up to 256 KiB",
+      "logoSaved": "Logo saved."
+    },
+    "input": {
+      "keyboard": "Keyboard",
+      "leader": "Leader key",
+      "leaderHint": "Prefix for shortcuts the browser would otherwise capture",
+      "leaderNone": "None",
+      "mouse": "Mouse",
+      "serial": "Serial terminal",
+      "serialDevice": "Serial device",
+      "serialDeviceHint": "Empty hides the serial terminal",
+      "baud": "Baud rate"
+    },
+    "video": {
+      "edid": "EDID",
+      "edidPreset": "Current EDID",
+      "edidHint": "What the PC sees on the HDMI input",
+      "preset1080p": "1080p30 (board default)",
+      "presetCustom": "Custom",
+      "edidHex": "EDID (hex)",
+      "edidApply": "Apply EDID",
+      "edidReset": "Restore board default",
+      "edidApplyTitle": "Apply this EDID?",
+      "edidResetTitle": "Restore the board's EDID?",
+      "edidConfirmMessage": "The PC sees the display being unplugged and plugged in again, and may change its resolution."
+    },
+    "media": {
+      "share": "File share",
+      "mounted": "Mounted image",
+      "nothing": "No image mounted"
+    },
+    "panel": {
+      "display": "Display",
+      "autoBrightness": "Auto brightness",
+      "brightness": "Brightness",
+      "offlineSleep": "Screen off when the PC is offline",
+      "offlineSleepHint": "After this long without data from the PC",
+      "never": "Never",
+      "minutes": "{{n}} min",
+      "thresholds": "Warning thresholds",
+      "thresholdsHint": "A value turns red above its threshold. Use a metric id such as gpu.temp, or a prefix such as mem.dimm.*; an exact id wins over a prefix.",
+      "thresholdKey": "Metric id or prefix",
+      "thresholdNew": "Threshold value",
+      "thresholdAdd": "Add",
+      "thresholdValue": "Threshold for {{key}}",
+      "thresholdDelete": "Delete threshold {{key}}",
+      "hidden": "Hidden metrics",
+      "hiddenHint": "Ticked metrics are not shown on the panel.",
+      "group": {
+        "cpu": "CPU",
+        "gpu": "GPU",
+        "mem": "Memory",
+        "sys": "System"
+      }
+    },
+    "usb": {
+      "feature": {
+        "keyboard": "Keyboard",
+        "mouse_rel": "Relative mouse",
+        "mouse_abs": "Absolute mouse",
+        "mouse_merge": "Merge the two mice",
+        "storage": "Mass storage",
+        "net": "Virtual network card",
+        "acm": "USB serial (ACM)",
+        "telemetry": "PC data"
+      },
+      "featureHint": {
+        "keyboard": "Boot protocol; works in the BIOS",
+        "mouse_rel": "Works in the BIOS",
+        "mouse_abs": "",
+        "mouse_merge": "Advanced: the absolute mouse then needs no endpoint; a few BIOSes do not accept it",
+        "storage": "CD-ROM, virtual disk and file share",
+        "net": "NCM or RNDIS",
+        "acm": "",
+        "telemetry": "Free while a mouse is on; takes one IN when both mice are off"
+      },
+      "netMode": "Network card mode",
+      "apply": "Apply",
+      "revert": "Revert",
+      "pending": "Changes are not applied yet.",
+      "applyTitle": "Apply the USB changes?",
+      "applyMessage": "The USB device is rebuilt: the PC's keyboard and mouse drop out for 1 to 2 seconds.",
+      "applying": "USB is re-enumerating."
+    },
+    "functionKey": {
+      "short": "Short press",
+      "long": "Long press",
+      "action": {
+        "none": "Nothing",
+        "toggle_settings": "Open / close settings",
+        "toggle_screen": "Screen on / off",
+        "cycle_brightness": "Cycle brightness",
+        "pause_kvm": "Pause remote KVM"
+      }
+    },
+    "storage": {
+      "root": {
+        "sd": "SD card",
+        "share": "Share disk",
+        "system": "System"
+      },
+      "usage": "{{free}} free of {{total}}",
+      "notMounted": "Not mounted"
+    },
+    "network": {
+      "address": "Address",
+      "mode": "IP mode",
+      "static": "Static",
+      "ip": "IP address",
+      "mask": "Subnet mask",
+      "gateway": "Gateway",
+      "dnsMode": "DNS",
+      "manual": "Manual",
+      "dnsServers": "DNS servers (comma separated, up to 4)",
+      "web": "Web access",
+      "bind": "Listen address",
+      "httpPort": "HTTP port",
+      "https": "HTTPS",
+      "httpsPort": "HTTPS port",
+      "cert": "Certificate path",
+      "key": "Private key path",
+      "save": "Save",
+      "saved": "Network settings saved."
+    },
+    "tailscale": {
+      "installed": "Installed",
+      "running": "Running",
+      "ip": "Tailscale IP",
+      "loginUrl": "Sign-in link",
+      "loginHint": "Open it to authorise this device",
+      "failed": "The last action failed",
+      "install": "Install",
+      "uninstall": "Uninstall",
+      "up": "Connect",
+      "down": "Disconnect",
+      "login": "Sign in",
+      "logout": "Sign out"
+    },
+    "accounts": {
+      "ownPassword": "Change my password",
+      "passwordChanged": "Password changed.",
+      "users": "Accounts",
+      "name": "Name",
+      "role": "Role",
+      "roleAdmin": "Administrator",
+      "roleUser": "User",
+      "permissions": "Permissions",
+      "allPermissions": "All permissions",
+      "viewOnly": "View only",
+      "disabled": "Disabled",
+      "password": "Password",
+      "newPassword": "New password",
+      "resetPassword": "Reset",
+      "deleteNamed": "Delete {{name}}",
+      "deleteTitle": "Delete {{name}}?",
+      "deleteMessage": "The account and its sessions are removed. This cannot be undone.",
+      "add": "Add account",
+      "newName": "New account name",
+      "newUserPassword": "New account password",
+      "newRole": "New account role",
+      "create": "Create",
+      "perm": {
+        "console": "Console",
+        "power": "Power",
+        "media": "Media",
+        "terminal": "Terminal",
+        "files": "Files",
+        "device": "Device",
+        "network": "Network",
+        "updates": "Updates",
+        "mcp": "MCP",
+        "tailscale": "Tailscale",
+        "panel": "Panel",
+        "usb": "USB"
+      }
+    },
+    "mcp": {
+      "enabled": "Enable MCP",
+      "enabledHint": "Lets MCP clients take screenshots and send input with the key",
+      "key": "API key",
+      "keyHint": "Ends with {{hint}}",
+      "noKey": "No key yet",
+      "showOnce": "Copy this key now. It is shown only once.",
+      "copy": "Copy",
+      "copied": "Key copied.",
+      "copyFailed": "Could not copy the key.",
+      "hide": "Hide",
+      "regenerate": "Generate new key",
+      "regenerateTitle": "Generate a new key?",
+      "regenerateMessage": "The old key stops working at once.",
+      "revoke": "Revoke key",
+      "revokeTitle": "Revoke the key?",
+      "revokeMessage": "MCP is switched off until a new key is generated."
+    },
+    "update": {
+      "current": "Current version",
+      "latest": "Latest version",
+      "unknown": "Unknown",
+      "channel": "Channel",
+      "stable": "Stable",
+      "preview": "Preview",
+      "server": "Update server",
+      "check": "Check for updates",
+      "install": "Install latest",
+      "installTitle": "Install the update?",
+      "installMessage": "The KVM service restarts when the update is done, and open sessions are disconnected.",
+      "offline": "Offline update",
+      "offlineFile": "Update package (.tar)",
+      "offlineHint": "Up to 256 MiB; its SHA-256 is checked",
+      "progress": "Installation",
+      "installed": "Update installed.",
+      "state": {
+        "running": "Installing",
+        "done": "Done",
+        "failed": "Failed"
+      }
+    },
+    "device": {
+      "info": "Board",
+      "version": "Software version",
+      "kernel": "Kernel",
+      "uptime": "Uptime",
+      "uptimeValue": "{{hours}} h {{minutes}} min",
+      "ip": "IP address",
+      "mac": "MAC address",
+      "link": "Link speed",
+      "noLink": "No cable",
+      "temp": "SoC temperature",
+      "memory": "Memory",
+      "data": "Data storage",
+      "lux": "Ambient light",
+      "settings": "Settings",
+      "hostname": "Hostname",
+      "watchdog": "Watchdog",
+      "actions": "Maintenance",
+      "action": {
+        "reset_hid": "Reset USB keyboard and mouse",
+        "disconnect_sessions": "Disconnect all sessions",
+        "restart_kvm": "Restart KVM service",
+        "reboot": "Restart KVMPanel",
+        "shutdown": "Shut down KVMPanel"
+      },
+      "sent": {
+        "reset_hid": "USB keyboard and mouse reset.",
+        "disconnect_sessions": "All sessions disconnected.",
+        "restart_kvm": "KVM service restarting.",
+        "reboot": "KVMPanel is restarting.",
+        "shutdown": "KVMPanel is shutting down."
+      },
+      "confirm": {
+        "reset_hid": {
+          "title": "Reset the USB keyboard and mouse?",
+          "message": "The PC loses its keyboard and mouse for a moment."
+        },
+        "disconnect_sessions": {
+          "title": "Disconnect all sessions?",
+          "message": "Everyone connected remotely is disconnected, including you."
+        },
+        "restart_kvm": {
+          "title": "Restart the KVM service?",
+          "message": "The web console is unavailable for a few seconds. The panel keeps running."
+        },
+        "reboot": {
+          "title": "Restart KVMPanel?",
+          "message": "The board restarts. The PC is not affected."
+        },
+        "shutdown": {
+          "title": "Shut down KVMPanel?",
+          "message": "The board powers off and has to be switched on again by hand. The PC is not affected."
+        },
+        "kvm_off": {
+          "title": "Turn the KVM service off?",
+          "message": "All remote connections close and the web page stops responding. Only the panel can turn it on again."
+        }
+      },
+      "kvmSwitch": "KVM service",
+      "kvmEnabled": "Remote KVM is on",
+      "kvmHint": "Turning it off keeps only the panel; it can only be turned on again from the panel.",
+      "kvmDisable": "Turn off KVM"
+    },
+    "about": {
+      "name": "Product",
+      "version": "Version",
+      "licenses": "Licenses",
+      "open": "Open"
+    }
   }
 }
