@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from './Button';
 import s from './ui.module.css';
@@ -18,8 +19,18 @@ export function ConfirmDialog({ title, message, confirmLabel, danger, onConfirm,
   const id = useId();
   const cancel = useRef<HTMLButtonElement>(null);
   useEffect(() => cancel.current?.focus(), []);
-  return (
-    <div className={s.mask} onKeyDown={(e) => e.key === 'Escape' && onCancel()}>
+  // Portalled to <body>: ancestors with transform/backdrop-filter would otherwise clip position: fixed.
+  // data-keep-open tells the menu bar that clicks in here are not outside clicks.
+  return createPortal(
+    <div
+      className={s.mask}
+      data-keep-open
+      onKeyDown={(e) => {
+        if (e.key !== 'Escape') return;
+        e.preventDefault();
+        onCancel();
+      }}
+    >
       <div role="dialog" aria-modal="true" aria-labelledby={id} className={s.dialog}>
         <h2 id={id}>{title}</h2>
         <p>{message}</p>
@@ -32,6 +43,7 @@ export function ConfirmDialog({ title, message, confirmLabel, danger, onConfirm,
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

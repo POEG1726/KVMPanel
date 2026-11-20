@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { absMessage, buttonsMask, keyMessage, relMessage, wheelMessage } from './input';
+import { createWheelAccumulator, absMessage, buttonsMask, keyMessage, relMessage, wheelMessage } from './input';
 
 const rect = { left: 0, top: 0, width: 1920, height: 1080 };
 
@@ -46,6 +46,15 @@ describe('input messages', () => {
       expect(wheelMessage(200, { dir: 'reverse', speed: 10 })).toEqual({ t: 'wheel', dy: -20 });
       expect(wheelMessage(1, { deltaMode: 2, speed: 10 })).toEqual({ t: 'wheel', dy: 80 });
       expect(wheelMessage(-2, { deltaMode: 2, speed: 10 })).toEqual({ t: 'wheel', dy: -127 });
+    });
+
+    it('accumulates sub-notch remainders: four 30 px deltas make one notch', () => {
+      const wheel = createWheelAccumulator();
+      expect([30, 30, 30, 30].map((d) => wheel(d))).toEqual([null, null, null, { t: 'wheel', dy: 1 }]);
+      expect(wheel(80)).toEqual({ t: 'wheel', dy: 1 }); // 20 left + 80 = 100
+      expect(wheel(150)).toEqual({ t: 'wheel', dy: 1 }); // 50 left over
+      expect(wheel(-30)).toBeNull(); // direction change drops the remainder
+      expect(wheel(-80, { dir: 'reverse', speed: 2 })).toEqual({ t: 'wheel', dy: 2 });
     });
 
     it('never produces negative zero', () => {

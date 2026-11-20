@@ -45,7 +45,8 @@
     "exists": "已存在同名文件。",
     "in_use": "该镜像正在挂载。",
     "share_busy": "共享盘已挂给电脑。",
-    "conflict": "已经存在。"
+    "conflict": "已经存在。",
+    "unmappable": "有字符无法用当前键盘布局输入，整段文本都没有发送。"
   },
   "common": {
     "cancel": "取消",
@@ -85,7 +86,7 @@
     "title": "键盘",
     "paste": "粘贴文本到电脑",
     "pasteText": "要在电脑上输入的文本",
-    "pasteCount": "{{n}} / {{max}}",
+    "pasteCount": "{{n}} / {{max}} 字节",
     "pasteSend": "输入到电脑",
     "pasteSent": "文本已发送。",
     "osk": "屏幕键盘",

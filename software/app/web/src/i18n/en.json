@@ -48,7 +48,8 @@
     "exists": "A file with that name already exists.",
     "in_use": "That image is mounted.",
     "share_busy": "The share is exported to the PC.",
-    "conflict": "That already exists."
+    "conflict": "That already exists.",
+    "unmappable": "Some characters cannot be typed with the selected keyboard layout; nothing was sent."
   },
   "common": {
     "cancel": "Cancel",
@@ -88,7 +89,7 @@
     "title": "Keyboard",
     "paste": "Paste text to PC",
     "pasteText": "Text to type on the PC",
-    "pasteCount": "{{n}} / {{max}}",
+    "pasteCount": "{{n}} / {{max}} bytes",
     "pasteSend": "Type it",
     "pasteSent": "Text sent.",
     "osk": "On-screen keyboard",

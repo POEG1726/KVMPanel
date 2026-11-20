@@ -5,7 +5,7 @@ import { api, unwrap } from '../api/client';
 import { useEventsContext } from '../api/EventsProvider';
 import type { ClientMessage } from '../api/ws-types';
 import { CONFIG_KEY } from '../session/useSession';
-import { absMessage, buttonsMask, keyMessage, relMessage, wheelMessage } from './input';
+import { absMessage, buttonsMask, createWheelAccumulator, keyMessage, relMessage } from './input';
 import { useStream } from './useStream';
 
 export type VideoScale = 'fit' | '1:1' | 'fill';
@@ -42,6 +42,7 @@ export function VideoCanvas({ scale, onPointer, cursor }: Props) {
   const pendingAbs = useRef<{ x: number; y: number } | null>(null);
   const pendingRel = useRef({ dx: 0, dy: 0 });
   const pointerRaf = useRef(0);
+  const wheel = useRef(createWheelAccumulator());
 
   const draw = useCallback(() => {
     raf.current = 0;
@@ -130,7 +131,8 @@ export function VideoCanvas({ scale, onPointer, cursor }: Props) {
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      emit(wheelMessage(e.deltaY, { deltaMode: e.deltaMode, dir: wheelDir, speed: wheelSpeed }));
+      const m = wheel.current(e.deltaY, { deltaMode: e.deltaMode, dir: wheelDir, speed: wheelSpeed });
+      if (m) emit(m);
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);

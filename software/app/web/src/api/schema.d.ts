@@ -219,7 +219,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Restore the built-in 1080p60 EDID (device permission) */
+        /** Restore the board's built-in EDID (device permission). preset '1080p' means this board default — preferred 1920×1080@30 (the capture bus cannot carry 1080p60), plus 1280×720@60 and 640×480@60. */
         post: operations["resetEdid"];
         delete?: never;
         options?: never;
@@ -733,6 +733,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** Install the latest package from the update server (channel JSON manifest → tar ≤ 256 MiB → switch apps/current). 409 busy while another install runs. */
         post: operations["applyUpdate"];
         delete?: never;
         options?: never;
@@ -1123,7 +1124,10 @@ export interface components {
         Edid: {
             /** @description 128 or 256 bytes */
             hex: string;
-            /** @enum {string} */
+            /**
+             * @description '1080p' = board default EDID (preferred 1080p30)
+             * @enum {string}
+             */
             preset: "1080p" | "custom";
         };
         PowerState: {
@@ -3587,6 +3591,8 @@ export interface operations {
                         ip?: string;
                         /** @description Present while waiting for the user to authorise the device */
                         login_url?: string;
+                        /** @description Reason the last asynchronous action failed (cleared by the next action) */
+                        error?: string;
                     };
                 };
             };
@@ -3833,6 +3839,24 @@ export interface operations {
             };
             /** @description Missing permission or role (error=forbidden) */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Another install is running (error=busy) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Package larger than 256 MiB (error=too_large) */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4087,6 +4111,15 @@ export interface operations {
             };
             /** @description error=too_large */
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not PNG or SVG (error=unsupported_type) */
+            415: {
                 headers: {
                     [name: string]: unknown;
                 };

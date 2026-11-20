@@ -37,6 +37,9 @@ export interface Wheel {
 }
 export interface Paste {
   t: "paste";
+  /**
+   * At most 64 KiB of UTF-8 bytes (checked by the server)
+   */
   text: string;
 }
 /**
@@ -113,7 +116,10 @@ export interface KvmRestarting {
 }
 export interface Error {
   t: "error";
-  error: "bad_message" | "forbidden";
+  /**
+   * unmappable: paste contains characters the configured keyboard layout cannot type; the whole message is rejected
+   */
+  error: "bad_message" | "forbidden" | "unmappable";
 }
 export interface Pong {
   t: "pong";

@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useEventsContext } from '../../api/EventsProvider';
 import type { ClientMessage } from '../../api/ws-types';
@@ -8,8 +8,10 @@ import { ScreenKeyboard } from './ScreenKeyboard';
 import { loadShortcuts, MAX_SHORTCUT_KEYS, saveShortcuts, type Shortcut } from './shortcuts';
 import s from './menus.module.css';
 
-/** The contract's `paste.text` limit. */
+/** The contract's `paste.text` limit: 64 KiB of UTF-8. */
 export const MAX_PASTE = 65536;
+/** How long to wait for the server to reject a paste (`unmappable`) before calling it sent. */
+export const PASTE_ACK_MS = 1000;
 
 const LAYOUTS = ['us', 'uk', 'de', 'fr', 'es', 'it', 'jp', 'ru'];
 const CAD = ['ControlLeft', 'AltLeft', 'Delete'];
@@ -21,13 +23,29 @@ const shortcutMessage = (keys: string[]): ClientMessage => ({ t: 'shortcut', key
 
 export function KeyboardMenu() {
   const { t } = useTranslation();
-  const { send } = useEventsContext();
+  const { send, onServerError } = useEventsContext();
   const hid = useConfig()?.hid;
   const { patch, error } = usePatchConfig();
   const [section, setSection] = useState<Section | null>(null);
   const toggle = (next: Section) => setSection((cur) => (cur === next ? null : next));
 
   const [text, setText] = useState('');
+  const bytes = useMemo(() => new TextEncoder().encode(text).length, [text]);
+  const [pasteError, setPasteError] = useState<string | null>(null);
+  const ack = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => void (ack.current && clearTimeout(ack.current)), []);
+  useEffect(
+    () =>
+      onServerError((code) => {
+        // The server answers a bad paste with an error message; that cancels the pending "sent".
+        if (ack.current) clearTimeout(ack.current);
+        ack.current = null;
+        const message = t(`error.${code}`, t('error.unknown'));
+        setPasteError(message);
+        toast(message, 'error');
+      }),
+    [onServerError, t],
+  );
   const [shortcuts, setShortcuts] = useState<Shortcut[]>(loadShortcuts);
   const [name, setName] = useState('');
   const [keys, setKeys] = useState<string[]>([]);
@@ -38,6 +56,8 @@ export function KeyboardMenu() {
   };
 
   const record = (e: KeyboardEvent<HTMLInputElement>) => {
+    // Tab keeps moving focus; every other key is recorded, and Escape must not also close the panel.
+    if (e.code === 'Tab') return;
     e.preventDefault();
     if (e.nativeEvent.repeat || !e.code) return;
     setKeys((cur) => (cur.includes(e.code) || cur.length >= MAX_SHORTCUT_KEYS ? cur : [...cur, e.code]));
@@ -60,18 +80,24 @@ export function KeyboardMenu() {
       {section === 'paste' && (
         <div className={s.form}>
           <textarea aria-label={t('keyboard.pasteText')} value={text} onChange={(e) => setText(e.target.value)} />
-          <span className={`${s.count} ${text.length > MAX_PASTE ? s.countOver : ''}`}>{t('keyboard.pasteCount', { n: text.length, max: MAX_PASTE })}</span>
+          <span className={`${s.count} ${bytes > MAX_PASTE ? s.countOver : ''}`}>{t('keyboard.pasteCount', { n: bytes, max: MAX_PASTE })}</span>
           <Button
             variant="primary"
-            disabled={text.length === 0 || text.length > MAX_PASTE}
+            disabled={bytes === 0 || bytes > MAX_PASTE}
             onClick={() => {
+              setPasteError(null);
               send({ t: 'paste', text });
-              setText('');
-              toast(t('keyboard.pasteSent'));
+              if (ack.current) clearTimeout(ack.current);
+              ack.current = setTimeout(() => {
+                ack.current = null;
+                setText('');
+                toast(t('keyboard.pasteSent'));
+              }, PASTE_ACK_MS);
             }}
           >
             {t('keyboard.pasteSend')}
           </Button>
+          <ErrorLine message={pasteError} />
         </div>
       )}
 

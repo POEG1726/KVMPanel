@@ -121,9 +121,11 @@ export function MenuBar() {
   useEffect(() => {
     if (!open) return;
     const onDown = (e: PointerEvent) => {
-      if (!root.current?.contains(e.target as Node)) setOpen(null);
+      const target = e.target as Element;
+      if (!root.current?.contains(target) && !target.closest?.('[data-keep-open]')) setOpen(null);
     };
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(null);
+    // A handler that used the key (a dialog, the shortcut recorder) has called preventDefault.
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !e.defaultPrevented && setOpen(null);
     document.addEventListener('pointerdown', onDown);
     document.addEventListener('keydown', onKey);
     return () => {

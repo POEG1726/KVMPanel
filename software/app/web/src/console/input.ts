@@ -31,9 +31,28 @@ export interface WheelOptions {
   speed?: number;
 }
 
+const toPixels = (delta: number, deltaMode: number): number => delta * (deltaMode === 1 ? PX_PER_LINE : deltaMode === 2 ? PX_PER_PAGE : 1);
+
+/**
+ * Like wheelMessage, but keeps the sub-notch remainder between events so slow trackpad scrolling still
+ * produces notches. Returns null while less than one notch has built up; a direction change drops the remainder.
+ */
+export function createWheelAccumulator(): (deltaY: number, opts?: WheelOptions) => ClientMessage | null {
+  let rest = 0;
+  return (deltaY, opts = {}) => {
+    const px = toPixels(deltaY, opts.deltaMode ?? 0);
+    if (px !== 0 && Math.sign(px) !== Math.sign(rest)) rest = 0;
+    rest += px;
+    const notches = Math.trunc(rest / PX_PER_NOTCH);
+    if (notches === 0) return null;
+    rest -= notches * PX_PER_NOTCH;
+    return wheelMessage(notches * PX_PER_NOTCH, { ...opts, deltaMode: 0 });
+  };
+}
+
 /** Wheel delta -> notches: normalise to pixels, 100 px per notch, scale by speed, clamp to +-127. */
 export function wheelMessage(deltaY: number, { deltaMode = 0, dir = 'normal', speed = 1 }: WheelOptions = {}): ClientMessage {
-  const px = deltaY * (deltaMode === 1 ? PX_PER_LINE : deltaMode === 2 ? PX_PER_PAGE : 1);
+  const px = toPixels(deltaY, deltaMode);
   const notches = Math.round(px / PX_PER_NOTCH) * speed * (dir === 'reverse' ? -1 : 1);
   // `|| 0` turns -0 into 0 so the JSON and equality checks never see a negative zero.
   return { t: 'wheel', dy: clamp127(notches) || 0 };
