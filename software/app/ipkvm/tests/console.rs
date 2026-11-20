@@ -250,6 +250,21 @@ async fn snapshot_edid_and_no_signal() {
     assert_eq!(initial["preset"], "1080p");
     assert_eq!(bytes.len(), 128);
     assert!(bytes.starts_with(&[0, 255, 255, 255, 255, 255, 255, 0]));
+    let driver = include_str!("../../../os/linux/patches/0003-2-media-capture-drivers.patch");
+    let array = driver
+        .split_once("static const u8 lt8619c_default_edid[LT_EDID_BLOCK_SIZE] = {")
+        .unwrap()
+        .1
+        .split_once("+};")
+        .unwrap()
+        .0;
+    let reference: Vec<u8> = array
+        .split(|c: char| c == ',' || c == '+' || c.is_whitespace())
+        .filter_map(|word| word.strip_prefix("0x"))
+        .map(|hex| u8::from_str_radix(hex, 16).unwrap())
+        .collect();
+    assert_eq!(bytes, reference);
+    assert_eq!(&bytes[54..56], &7425u16.to_le_bytes()); // 74.25 MHz with 2200 x 1125 totals
     assert_eq!(bytes.into_iter().fold(0, u8::wrapping_add), 0);
     assert_eq!(
         checked(
