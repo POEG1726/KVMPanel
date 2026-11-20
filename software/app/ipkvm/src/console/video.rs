@@ -35,8 +35,8 @@ impl Frame {
         }
     }
 }
-fn subscribe(app: &App) -> watch::Receiver<Frame> {
-    let mut frames = app.console.frames.lock().unwrap();
+async fn subscribe(app: &App) -> watch::Receiver<Frame> {
+    let mut frames = app.console.frames.lock().await;
     if let Some(tx) = frames.as_ref() {
         return tx.subscribe();
     }
@@ -50,10 +50,12 @@ async fn produce(app: App, tx: watch::Sender<Frame>) {
     let mut start = Instant::now();
     let (mut count, mut bytes) = (0u64, 0u64);
     loop {
-        {
-            let mut frames = app.console.frames.lock().unwrap();
+        if tx.receiver_count() == 0 {
+            let mut frames = app.console.frames.lock().await;
             if tx.receiver_count() == 0 {
-                app.hw.stop_video();
+                // Keep a new producer from acquiring the camera until the old child has exited.
+                let hw = app.hw.clone();
+                let _ = tokio::task::spawn_blocking(move || hw.stop_video()).await;
                 *frames = None;
                 *app.console.stats.lock().unwrap() = (0, 0);
                 return;
@@ -96,7 +98,7 @@ pub async fn snapshot(app: &App) -> Result<Vec<u8>, ApiError> {
     if app.sim && !app.console.sim_signal.load(Ordering::Relaxed) {
         return Err(ApiError::new(503, "no_signal"));
     }
-    let mut frames = subscribe(app);
+    let mut frames = subscribe(app).await;
     let ready = tokio::time::timeout(
         Duration::from_secs(5),
         frames.wait_for(|frame| !matches!(frame, Frame::Pending)),
@@ -146,7 +148,7 @@ async fn stream_socket(
         close(&mut socket, c).await;
         return;
     }
-    let mut frames = subscribe(&app);
+    let mut frames = subscribe(&app).await;
     // A new receiver must see the cached frame even before the next capture.
     frames.mark_changed();
     let mut last = None;

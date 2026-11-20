@@ -51,12 +51,12 @@ pub struct Console {
     power_cache: status::PowerCache,
     status_feed: status::StatusFeed,
     edid: Mutex<Vec<u8>>,
-    wol: Mutex<Vec<Value>>,
+    wol: tokio::sync::Mutex<Vec<Value>>,
     sessions: Mutex<Sessions>,
     // Order releases relative to inputs already in flight and the next controller's first key.
     hid_write: Mutex<()>,
     next_id: AtomicU64,
-    frames: Mutex<Option<watch::Sender<video::Frame>>>,
+    frames: tokio::sync::Mutex<Option<watch::Sender<video::Frame>>>,
     pub sim_signal: AtomicBool,
     pub sim_pc_connected: AtomicBool,
     pub(crate) stats: Mutex<(u64, u64)>,
@@ -73,11 +73,11 @@ impl Console {
             power_cache: Default::default(),
             status_feed: Default::default(),
             edid: Mutex::new(DEFAULT_EDID.to_vec()),
-            wol: Mutex::new(wol),
+            wol: tokio::sync::Mutex::new(wol),
             sessions: Mutex::new(Sessions::default()),
             hid_write: Mutex::new(()),
             next_id: AtomicU64::default(),
-            frames: Mutex::new(None),
+            frames: tokio::sync::Mutex::new(None),
             sim_signal: AtomicBool::new(true),
             sim_pc_connected: AtomicBool::new(true),
             stats: Mutex::new((0, 0)),
@@ -227,13 +227,13 @@ fn mac_string(bytes: &[u8; 6]) -> String {
 }
 async fn devices(State(app): State<App>, h: HeaderMap) -> Result<Json<Value>, ApiError> {
     app.require(&h, "power")?;
-    Ok(Json(json!({"devices":*app.console.wol.lock().unwrap()})))
+    Ok(Json(json!({"devices":*app.console.wol.lock().await})))
 }
 fn update_wol(
     app: &App,
     change: impl FnOnce(&mut Vec<Value>) -> Result<(), ApiError>,
 ) -> Result<(), ApiError> {
-    let mut guard = app.console.wol.lock().unwrap();
+    let mut guard = app.console.wol.blocking_lock();
     let mut copy = guard.clone();
     change(&mut copy)?;
     atomic_write(
@@ -253,13 +253,18 @@ async fn add_device(
     let mac =
         mac_string(&mac(v["mac"].as_str().unwrap()).ok_or_else(|| ApiError::new(400, "bad_mac"))?);
     let item = json!({"name":v["name"],"mac":mac});
-    update_wol(&app, |items| {
-        if items.iter().any(|d| d["mac"] == mac) {
-            return Err(ApiError::new(409, "device_exists"));
-        }
-        items.push(item.clone());
-        Ok(())
-    })?;
+    let saved = item.clone();
+    tokio::task::spawn_blocking(move || {
+        update_wol(&app, |items| {
+            if items.iter().any(|d| d["mac"] == mac) {
+                return Err(ApiError::new(409, "device_exists"));
+            }
+            items.push(saved);
+            Ok(())
+        })
+    })
+    .await
+    .map_err(io::Error::other)??;
     Ok((StatusCode::CREATED, Json(item)))
 }
 async fn delete_device(
@@ -269,14 +274,18 @@ async fn delete_device(
 ) -> Result<StatusCode, ApiError> {
     app.require(&h, "power")?;
     let mac = mac_string(&mac(&raw).ok_or_else(|| ApiError::new(404, "not_found"))?);
-    update_wol(&app, |items| {
-        let index = items
-            .iter()
-            .position(|d| d["mac"] == mac)
-            .ok_or_else(|| ApiError::new(404, "not_found"))?;
-        items.remove(index);
-        Ok(())
-    })?;
+    tokio::task::spawn_blocking(move || {
+        update_wol(&app, |items| {
+            let index = items
+                .iter()
+                .position(|d| d["mac"] == mac)
+                .ok_or_else(|| ApiError::new(404, "not_found"))?;
+            items.remove(index);
+            Ok(())
+        })
+    })
+    .await
+    .map_err(io::Error::other)??;
     Ok(StatusCode::NO_CONTENT)
 }
 async fn wake(
