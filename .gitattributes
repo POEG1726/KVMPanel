@@ -8,6 +8,7 @@
 *.dtsi text eol=lf
 *.patch text eol=lf
 *.pdf -text
+/hardware/exports/**/*.tel -text
 *.png -text
 *.epro -text
 *.epro2 -text

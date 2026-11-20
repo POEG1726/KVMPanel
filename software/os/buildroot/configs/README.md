@@ -1,3 +1,3 @@
 # 板级配置
 
-尚无 KVMPanel defconfig。完成启动链和硬件接口核对后保存最小配置；不能直接把其他开发板配置改名当作已适配配置。
+`kvmpanel_defconfig` 构建串口使用的静态 BusyBox initramfs，目标为 Cortex-A7 hard-float。构建见 [开发说明](../../../../docs/development.md)。

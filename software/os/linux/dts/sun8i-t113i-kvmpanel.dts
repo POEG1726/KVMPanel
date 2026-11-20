@@ -1,0 +1,129 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
+/dts-v1/;
+
+#include <dt-bindings/clock/sun20i-d1-ccu.h>
+#include "sun8i-t113s.dtsi"
+
+/ {
+	model = "KVMPanel T113-i";
+	compatible = "kvmpanel,t113-i", "allwinner,sun8i-t113s";
+
+	aliases {
+		serial0 = &uart0;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+
+	/* Nominal capacity of the single K4B4G1646D-BCK0 on the PCB. */
+	memory@40000000 {
+		device_type = "memory";
+		reg = <0x40000000 0x20000000>;
+	};
+
+	reg_1v8: regulator-1v8 {
+		compatible = "regulator-fixed";
+		regulator-name = "1V8";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-always-on;
+	};
+
+	reg_3v3_main: regulator-3v3-main {
+		compatible = "regulator-fixed";
+		regulator-name = "3V3_MAIN";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		regulator-always-on;
+	};
+
+	reg_5v: regulator-5v {
+		compatible = "regulator-fixed";
+		regulator-name = "5V";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		regulator-always-on;
+	};
+};
+
+&ehci1 {
+	status = "okay";
+};
+
+&emac {
+	pinctrl-0 = <&rgmii_pg_pins>;
+	pinctrl-names = "default";
+	phy-handle = <&rtl8211f>;
+	phy-mode = "rgmii-id";
+	phy-supply = <&reg_3v3_main>;
+	/* Verify the PHY reference clock, reset and RGMII delays on hardware. */
+	status = "disabled";
+};
+
+&mdio {
+	rtl8211f: ethernet-phy@1 {
+		/* The PHY driver enables the reference clock before reading MDIO. */
+		compatible = "ethernet-phy-id001c.c916", "ethernet-phy-ieee802.3-c22";
+		reg = <1>;
+		clocks = <&ccu CLK_EMAC_25M>;
+	};
+};
+
+&ohci1 {
+	status = "okay";
+};
+
+&pio {
+	vcc-pb-supply = <&reg_3v3_main>;
+	vcc-pc-supply = <&reg_1v8>;
+	vcc-pg-supply = <&reg_1v8>;
+
+	rgmii_pg_pins: rgmii-pg-pins {
+		pins = "PG0", "PG1", "PG2", "PG3", "PG4", "PG5", "PG6",
+		       "PG7", "PG8", "PG9", "PG10", "PG11", "PG12", "PG14", "PG15";
+		function = "emac";
+	};
+
+	spi0_quad_pins: spi0-quad-pins {
+		pins = "PC6", "PC7";
+		function = "spi0";
+	};
+
+	/* UART0 is routed to U11 (CH343K) on the USB2 debug connector. */
+	uart0_pb8_pins: uart0-pb8-pins {
+		pins = "PB8", "PB9";
+		function = "uart0";
+	};
+};
+
+&spi0 {
+	pinctrl-0 = <&spi0_pins>, <&spi0_quad_pins>;
+	pinctrl-names = "default";
+	/* Enable once the board is ready for SPI NAND probing. */
+	status = "disabled";
+
+	flash@0 {
+		compatible = "spi-nand";
+		reg = <0>;
+		spi-max-frequency = <24000000>;
+		spi-rx-bus-width = <4>;
+		spi-tx-bus-width = <4>;
+	};
+};
+
+&uart0 {
+	pinctrl-0 = <&uart0_pb8_pins>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+&usb_otg {
+	dr_mode = "peripheral";
+	status = "okay";
+};
+
+&usbphy {
+	usb1_vbus-supply = <&reg_5v>;
+	status = "okay";
+};

@@ -1,0 +1,162 @@
+Subject: [PATCH] drm/sun4i: Send generic DSI initialization packets
+
+Use the common MIPI DSI header builder for DCS and generic packets,
+then add the host ECC. Accept generic short and long writes using
+the existing LP transmit paths. Limit long packets to the command
+TX size field, including the four-byte header and two-byte CRC.
+
+--- a/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c
++++ b/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c
+@@ -6,6 +6,7 @@
+  * Maxime Ripard <maxime.ripard@bootlin.com>
+  */
+ 
++#include <linux/bitfield.h>
+ #include <linux/clk.h>
+ #include <linux/component.h>
+ #include <linux/crc-ccitt.h>
+@@ -18,6 +19,7 @@
+ #include <linux/regulator/consumer.h>
+ #include <linux/reset.h>
+ #include <linux/slab.h>
++#include <linux/unaligned.h>
+ 
+ #include <drm/drm_atomic_helper.h>
+ #include <drm/drm_mipi_dsi.h>
+@@ -151,6 +153,7 @@
+ #define SUN6I_DSI_CMD_CTL_RX_OVERFLOW		BIT(26)
+ #define SUN6I_DSI_CMD_CTL_RX_FLAG		BIT(25)
+ #define SUN6I_DSI_CMD_CTL_TX_FLAG		BIT(9)
++#define SUN6I_DSI_CMD_CTL_TX_SIZE		GENMASK(7, 0)
+ 
+ #define SUN6I_DSI_CMD_RX_REG(n)		(0x240 + (n) * 0x04)
+ 
+@@ -847,47 +850,26 @@
+ 	.enable		= sun6i_dsi_encoder_enable,
+ };
+ 
+-static u32 sun6i_dsi_dcs_build_pkt_hdr(struct sun6i_dsi *dsi,
+-				       const struct mipi_dsi_msg *msg)
++static int sun6i_dsi_write_short(struct sun6i_dsi *dsi, u32 header,
++				 const struct mipi_dsi_msg *msg)
+ {
+-	u32 pkt = msg->type;
+-
+-	if (msg->type == MIPI_DSI_DCS_LONG_WRITE) {
+-		pkt |= ((msg->tx_len) & 0xffff) << 8;
+-		pkt |= (((msg->tx_len) >> 8) & 0xffff) << 16;
+-	} else {
+-		pkt |= (((u8 *)msg->tx_buf)[0] << 8);
+-		if (msg->tx_len > 1)
+-			pkt |= (((u8 *)msg->tx_buf)[1] << 16);
+-	}
+-
+-	pkt |= sun6i_dsi_ecc_compute(pkt) << 24;
+-
+-	return pkt;
+-}
+-
+-static int sun6i_dsi_dcs_write_short(struct sun6i_dsi *dsi,
+-				     const struct mipi_dsi_msg *msg)
+-{
+-	regmap_write(dsi->regs, SUN6I_DSI_CMD_TX_REG(0),
+-		     sun6i_dsi_dcs_build_pkt_hdr(dsi, msg));
++	regmap_write(dsi->regs, SUN6I_DSI_CMD_TX_REG(0), header);
+ 	regmap_write_bits(dsi->regs, SUN6I_DSI_CMD_CTL_REG,
+-			  0xff, (4 - 1));
++			  SUN6I_DSI_CMD_CTL_TX_SIZE, 4 - 1);
+ 
+ 	sun6i_dsi_start(dsi, DSI_START_LPTX);
+ 
+ 	return msg->tx_len;
+ }
+ 
+-static int sun6i_dsi_dcs_write_long(struct sun6i_dsi *dsi,
+-				    const struct mipi_dsi_msg *msg)
++static int sun6i_dsi_write_long(struct sun6i_dsi *dsi, u32 header,
++				const struct mipi_dsi_msg *msg)
+ {
+ 	int ret, len = 0;
+ 	u8 *bounce;
+ 	u16 crc;
+ 
+-	regmap_write(dsi->regs, SUN6I_DSI_CMD_TX_REG(0),
+-		     sun6i_dsi_dcs_build_pkt_hdr(dsi, msg));
++	regmap_write(dsi->regs, SUN6I_DSI_CMD_TX_REG(0), header);
+ 
+ 	bounce = kzalloc(ALIGN(msg->tx_len + sizeof(crc), 4), GFP_KERNEL);
+ 	if (!bounce)
+@@ -897,7 +879,7 @@
+ 	len += msg->tx_len;
+ 
+ 	crc = sun6i_dsi_crc_compute(bounce, msg->tx_len);
+-	memcpy((u8 *)bounce + msg->tx_len, &crc, sizeof(crc));
++	put_unaligned_le16(crc, bounce + msg->tx_len);
+ 	len += sizeof(crc);
+ 
+ 	regmap_bulk_write(dsi->regs, SUN6I_DSI_CMD_TX_REG(1), bounce, DIV_ROUND_UP(len, 4));
+@@ -920,15 +902,14 @@
+ 	return msg->tx_len;
+ }
+ 
+-static int sun6i_dsi_dcs_read(struct sun6i_dsi *dsi,
++static int sun6i_dsi_dcs_read(struct sun6i_dsi *dsi, u32 header,
+ 			      const struct mipi_dsi_msg *msg)
+ {
+ 	u32 val;
+ 	int ret;
+ 	u8 byte0;
+ 
+-	regmap_write(dsi->regs, SUN6I_DSI_CMD_TX_REG(0),
+-		     sun6i_dsi_dcs_build_pkt_hdr(dsi, msg));
++	regmap_write(dsi->regs, SUN6I_DSI_CMD_TX_REG(0), header);
+ 	regmap_write(dsi->regs, SUN6I_DSI_CMD_CTL_REG,
+ 		     (4 - 1));
+ 
+@@ -997,8 +978,22 @@
+ 				  const struct mipi_dsi_msg *msg)
+ {
+ 	struct sun6i_dsi *dsi = host_to_sun6i_dsi(host);
++	struct mipi_dsi_packet packet;
++	u32 header;
+ 	int ret;
+ 
++	ret = mipi_dsi_create_packet(&packet, msg);
++	if (ret)
++		return ret;
++
++	if (mipi_dsi_packet_format_is_long(msg->type) &&
++	    msg->tx_len > FIELD_MAX(SUN6I_DSI_CMD_CTL_TX_SIZE) + 1 -
++			  sizeof(packet.header) - sizeof(u16))
++		return -EMSGSIZE;
++
++	header = get_unaligned_le24(packet.header);
++	header |= (u32)sun6i_dsi_ecc_compute(header) << 24;
++
+ 	ret = sun6i_dsi_inst_wait_for_completion(dsi);
+ 	if (ret < 0)
+ 		sun6i_dsi_inst_abort(dsi);
+@@ -1011,17 +1006,20 @@
+ 	switch (msg->type) {
+ 	case MIPI_DSI_DCS_SHORT_WRITE:
+ 	case MIPI_DSI_DCS_SHORT_WRITE_PARAM:
++	case MIPI_DSI_GENERIC_SHORT_WRITE_0_PARAM:
++	case MIPI_DSI_GENERIC_SHORT_WRITE_1_PARAM:
+ 	case MIPI_DSI_GENERIC_SHORT_WRITE_2_PARAM:
+-		ret = sun6i_dsi_dcs_write_short(dsi, msg);
++		ret = sun6i_dsi_write_short(dsi, header, msg);
+ 		break;
+ 
+ 	case MIPI_DSI_DCS_LONG_WRITE:
+-		ret = sun6i_dsi_dcs_write_long(dsi, msg);
++	case MIPI_DSI_GENERIC_LONG_WRITE:
++		ret = sun6i_dsi_write_long(dsi, header, msg);
+ 		break;
+ 
+ 	case MIPI_DSI_DCS_READ:
+ 		if (msg->rx_len == 1) {
+-			ret = sun6i_dsi_dcs_read(dsi, msg);
++			ret = sun6i_dsi_dcs_read(dsi, header, msg);
+ 			break;
+ 		}
+ 		fallthrough;

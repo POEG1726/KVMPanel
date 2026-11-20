@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
+#include "sun8i-t113i-kvmpanel.dts"
+
+&de {
+	status = "okay";
+};
+
+&dsi {
+	pinctrl-names = "default";
+	pinctrl-0 = <&dsi_4lane_pins>;
+	vcc-dsi-supply = <&reg_1v8>;
+	status = "okay";
+};
+
+&pio {
+	vcc-pd-supply = <&reg_1v8>;
+};

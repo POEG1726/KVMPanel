@@ -11,6 +11,4 @@
 - `docs/`：必要的开发说明和适配笔记。
 - `sources/`：已下载的上游源码，本地保存，不提交进这个仓库。
 
-当前选 Linux 6.18。源码已下载，应用和板级系统还没开始实现，也没有烧录或实板测试。
-
-接着看 [交接](HANDOFF.md)、[开发说明](docs/development.md) 和 [6.18 适配笔记](docs/linux-6.18.md)。
+基础系统采用 Linux 6.18 和 Buildroot。参见 [构建方法](docs/development.md)、[T113-i 启动链](software/os/vendor/tina/README.md)和 [6.18 适配笔记](docs/linux-6.18.md)。

@@ -1,0 +1,34 @@
+From: Nguyen Minh Tien <tien.nguyenminh@embeddedlinux.blog>
+Subject: [PATCH] drm/sun4i: Resolve the TCON TOP DSI clock at bind time
+
+Backported to Linux 6.18.64 from:
+https://lists.openwall.net/linux-kernel/2026/09/26/448
+
+diff --git a/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c b/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c
+index c35b70d83..6c0b16c10 100644
+--- a/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c
++++ b/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c
+@@ -1054,6 +1054,14 @@ static int sun6i_dsi_bind(struct device *dev, struct device *master,
+ 	struct sun6i_dsi *dsi = dev_get_drvdata(dev);
+ 	int ret;
+ 
++	/* TCON TOP registers this clock when it binds. */
++	if (dsi->variant->has_mod_clk && !dsi->variant->set_mod_clk) {
++		dsi->mod_clk = devm_clk_get(dev, "mod");
++		if (IS_ERR(dsi->mod_clk))
++			return dev_err_probe(dev, PTR_ERR(dsi->mod_clk),
++					     "Couldn't get the DSI mod clock\n");
++	}
++
+ 	drm_encoder_helper_add(&dsi->encoder,
+ 			       &sun6i_dsi_enc_helper_funcs);
+ 	ret = drm_simple_encoder_init(drm, &dsi->encoder,
+@@ -1152,7 +1160,7 @@ static int sun6i_dsi_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
+-	if (variant->has_mod_clk) {
++	if (variant->has_mod_clk && variant->set_mod_clk) {
+ 		dsi->mod_clk = devm_clk_get(dev, "mod");
+ 		if (IS_ERR(dsi->mod_clk)) {
+ 			dev_err(dev, "Couldn't get the DSI mod clock\n");

@@ -12,7 +12,7 @@
 
 D 盘本地镜像在 `repos/<名称>.git`；Ubuntu WSL 中对应的源码目录在 `~/work/KVMPanel/upstream/<名称>`，名称分别为 `linux`、`u-boot`、`buildroot`、`tina-framework`、`tina-t113i-overlay`。
 
-`donors/` 是之前研究时保存的几个参考代码文件。
+`donors/` 保存参考代码和厂商资料。`donors/tina-t113i-devkit-default/` 中是从百问网 T113i DevKit 默认固件提取的 Boot0、FES1、U-Boot 和配置文件，提取来源见该目录的 `source-url.txt`。
 
 Tina 框架和 overlay 不是完整 SDK，尚缺配套 kernel、brandy/DDR、platform、prebuilt 等包。后续需要时再补，不影响先研究 6.18。
 
