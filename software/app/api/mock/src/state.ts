@@ -82,6 +82,11 @@ export interface State {
   };
   mcpKey: string | null;
   logo: { type: string; data: Buffer } | null;
+  startedAt: number;
+  /** PC host program link (drives panel telemetry). */
+  pc: { connected: boolean; last_seen_ts: number | null };
+  /** Number of open /api/ws console connections. */
+  consoleSessions: number;
 }
 
 export function hashPassword(password: string, salt = randomBytes(16).toString('hex')): { salt: string; hash: string } {
@@ -121,5 +126,8 @@ export function createState(opts: { now?: () => number; sleep?: (ms: number) => 
     network: { mode: 'dhcp', dns: { mode: 'dhcp', servers: [] }, https: { enabled: false, port: 443 }, http_port: 80, bind: '0.0.0.0' },
     mcpKey: null,
     logo: null,
+    startedAt: (opts.now ?? Date.now)(),
+    pc: { connected: true, last_seen_ts: null },
+    consoleSessions: 0,
   };
 }

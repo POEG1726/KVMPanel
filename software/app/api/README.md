@@ -96,3 +96,39 @@ Mock 的测试会对照 `openapi.yaml` 校验每一个响应。初始账号为 `
 - 文本消息只有一种：`{"t":"resize","cols":120,"rows":40}`。
 - 服务端可能在握手完成后立刻发出第一段输出，客户端要在连接建立前就挂好消息监听。
 - 自定义脚本用 `/api/scripts` 管理，详见 `openapi.yaml`。
+
+## panel socket：`kvmd` ↔ 副屏
+
+- 板子上是 Unix socket `/run/kvmd/panel.sock`，PC 上的 mock 用 TCP `127.0.0.1:7701`。
+- 每行一个 JSON 对象（NDJSON），用 `t` 区分类型。完整定义见 `schema/panel.schema.json` 的 `$defs/ToPanel` 和 `$defs/FromPanel`。
+- 副屏是本机进程，被视为可信，改配置时不检查权限。但校验规则和 `PATCH /api/config` 相同，包括 `invalid_config` 和 `endpoints_full`。
+
+**kvmd → 副屏**
+
+| `t` | 说明 |
+|---|---|
+| `hello` | 连上时第一条，带 `version` |
+| `config` | 完整配置。连上时推一次，此后每次变更都推，不管改动来自网页还是副屏 |
+| `status` | 右上角状态栏用：`eth`、`pc`、`usb_a`、`kvm.sessions`，另有 `lux`。变化时推，另外每 5 秒推一次 |
+| `telemetry` | 每秒一次：`ts` 加上 `metrics[]`，每项是 `{id,label,unit,value,min,max,warn?,group}`。`value` 为 null 表示电脑没上报这一项，比如空的内存槽。`warn` 已经合并了 `config.panel.thresholds`。`hidden_metrics` 里的项不发 |
+| `pc` | 上位机连接状态变化。断开期间不发 `telemetry`，副屏切到“等待电脑数据”画面 |
+| `kvm_restarting` | 网页端的 KVM 服务正在重启，副屏自身不受影响 |
+| `result` | 对请求的回复，`id` 和请求相同。如果请求那一行本身无法解析，回复里没有 `id`，错误为 `bad_message` |
+
+**副屏 → kvmd**（都带整数 `id`）
+
+| `t` | 回复 |
+|---|---|
+| `get_config` | `result.data` 是完整配置 |
+| `patch_config`（`patch`） | 成功时 `result.data` 是新配置，失败时带 `error` 和 `detail` |
+| `action`（`reboot`、`shutdown`、`restart_kvm`、`reset_hid`、`disconnect_sessions`、`eject_media`、`usb_apply`） | `result.ok` |
+| `device_info` | `result.data` 和 `GET /api/device` 相同 |
+
+**指标 id**：布局模板按 id 取数据，见 `mock/src/panel/metrics.ts`。
+
+| 分组 | id |
+|---|---|
+| CPU | `cpu.clock_eff`、`cpu.bclk`、`cpu.fclk`、`cpu.vcore`、`cpu.tctl`、`cpu.load`、`cpu.ppt`、`cpu.core.0`–`cpu.core.15`（0–7 属于 CCD0） |
+| GPU | `gpu.clock`、`gpu.temp`、`gpu.mem_junction`、`gpu.load`、`gpu.vram_used`、`gpu.power` |
+| 内存 | `mem.used`、`mem.dimm.a1`/`a2`/`b1`/`b2`、`mem.mclk`、`mem.uclk` |
+| 整机 | `sys.power`、`ssd.0.temp`、`ssd.1.temp`、`net.rx`、`net.tx` |

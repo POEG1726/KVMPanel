@@ -55,8 +55,12 @@ export function registerWs(app: FastifyInstance, state: State) {
 
     const conn: Conn = { socket, account, ip: req.ip || req.socket?.remoteAddress || '0.0.0.0', since: state.now() };
     live.add(conn);
+    state.consoleSessions = live.size;
+    state.events.emit('console_sessions');
     socket.on('close', () => {
       live.delete(conn);
+      state.consoleSessions = live.size;
+      state.events.emit('console_sessions');
       broadcastStatus();
     });
     broadcastStatus();

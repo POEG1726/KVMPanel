@@ -7,16 +7,13 @@ import { bodyGuard, requirePerm, sendError } from './auth.js';
 const LOGO_MAX = 256 * 1024;
 const TAILSCALE_ACTIONS = ['install', 'uninstall', 'up', 'down', 'login', 'logout'];
 
-export function registerSystem(app: FastifyInstance, state: State) {
-  const startedAt = state.now();
-
-  app.addContentTypeParser(['image/png', 'image/svg+xml'], { parseAs: 'buffer', bodyLimit: 4 * LOGO_MAX }, (_req, body, done) => done(null, body));
-
-  app.get('/api/device', { preHandler: requirePerm(state, 'device') }, async () => ({
-    hostname: state.config.device.hostname,
+/** Device info shared by GET /api/device and the panel's device_info request. */
+export function deviceInfo(state: State) {
+  return {
+    hostname: String(state.config.device.hostname),
     version: state.version,
     kernel: 'Linux 6.18.64',
-    uptime_s: Math.floor((state.now() - startedAt) / 1000) + 273_600,
+    uptime_s: Math.floor((state.now() - state.startedAt) / 1000) + 273_600,
     ip: '192.168.1.50',
     mac: '02:1a:7c:3e:51:9d',
     link_mbps: 1000,
@@ -24,7 +21,13 @@ export function registerSystem(app: FastifyInstance, state: State) {
     mem: { used: 138e6, total: 512e6 },
     data: { used: 1.2e9, total: 3.4e9 },
     lux: 212,
-  }));
+  };
+}
+
+export function registerSystem(app: FastifyInstance, state: State) {
+  app.addContentTypeParser(['image/png', 'image/svg+xml'], { parseAs: 'buffer', bodyLimit: 4 * LOGO_MAX }, (_req, body, done) => done(null, body));
+
+  app.get('/api/device', { preHandler: requirePerm(state, 'device') }, async () => deviceInfo(state));
 
   app.post('/api/device/action', { preHandler: [requirePerm(state, 'device'), bodyGuard('deviceAction')] }, async (req, reply) => {
     const { action } = req.body as { action: string };
