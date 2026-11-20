@@ -1,0 +1,5 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
+#include "sun8i-t113i-kvmpanel-dsi.dts"
+#include "kvmpanel-peripherals.dtsi"
+#include "kvmpanel-capture.dtsi"
+#include "kvmpanel-display.dtsi"

@@ -1,0 +1,780 @@
+From: Codex <noreply@openai.com>
+Subject: [PATCH] drm/sun4i: Drive the TD4322 with TE-triggered command frames
+
+Use the supplier's TD4322 initialization sequence and RGB888 mode.
+Set up a DCS packet per scanline, then arm DSI and the TCON from the
+panel TE GPIO. Serialize backlight writes with the shared sequencer.
+
+The register sequence follows the sun8iw20 DSI 4.0 code in Allwinner's
+disp2 lowlevel_v2x (de_dsi.c, de_lcd_sun50iw10.c and disp_al.c).
+
+Signed-off-by: Codex <noreply@openai.com>
+---
+ MAINTAINERS                            |   1 +
+ drivers/gpu/drm/panel/Kconfig          |  10 ++
+ drivers/gpu/drm/panel/Makefile         |   1 +
+ drivers/gpu/drm/panel/panel-td4322.c   | 257 +++++++++++++++++++++++++++++++++
+ drivers/gpu/drm/sun4i/sun4i_tcon.c     |  33 +++--
+ drivers/gpu/drm/sun4i/sun4i_tcon.h     |   2 +
+ drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c | 177 ++++++++++++++++++++---
+ drivers/gpu/drm/sun4i/sun6i_mipi_dsi.h |   7 +
+ 8 files changed, 457 insertions(+), 31 deletions(-)
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 3183d26f3..6a5c23579 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -8136,6 +8136,7 @@ DRM DRIVER FOR SYNAPTICS TD4322 PANELS
+ M:	POEG1726 <poeg1726g@gmail.com>
+ S:	Maintained
+ F:	Documentation/devicetree/bindings/display/panel/synaptics,td4322.yaml
++F:	drivers/gpu/drm/panel/panel-td4322.c
+ 
+ DRM DRIVER FOR SYNOPSYS DESIGNWARE DISPLAYPORT BRIDGE
+ M:	Andy Yan <andy.yan@rock-chips.com>
+diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
+index 967265ed6..6fd79e944 100644
+--- a/drivers/gpu/drm/panel/Kconfig
++++ b/drivers/gpu/drm/panel/Kconfig
+@@ -1059,6 +1059,16 @@ config DRM_PANEL_SYNAPTICS_R63353
+ 	  Say Y if you want to enable support for panels based on the
+ 	  Synaptics R63353 controller.
+ 
++config DRM_PANEL_TD4322
++	tristate "Synaptics TD4322 command mode panel"
++	depends on OF && DRM_MIPI_DSI && GPIOLIB
++	depends on BACKLIGHT_CLASS_DEVICE
++	help
++	  Enable the 1080x1920 four-lane RGB888 TD4322 panel profile used
++	  on KVMPanel. The driver exposes the panel's MIPI DCS brightness
++	  control as a backlight device. Connect the panel TE signal for
++	  synchronized frame transfers with the sun6i DSI controller.
++
+ config DRM_PANEL_TDO_TL070WSH30
+ 	tristate "TDO TL070WSH30 DSI panel"
+ 	depends on OF
+diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
+index 3615a761b..d8c0c5f75 100644
+--- a/drivers/gpu/drm/panel/Makefile
++++ b/drivers/gpu/drm/panel/Makefile
+@@ -100,6 +100,7 @@ obj-$(CONFIG_DRM_PANEL_SITRONIX_ST7703) += panel-sitronix-st7703.o
+ obj-$(CONFIG_DRM_PANEL_SITRONIX_ST7789V) += panel-sitronix-st7789v.o
+ obj-$(CONFIG_DRM_PANEL_SUMMIT) += panel-summit.o
+ obj-$(CONFIG_DRM_PANEL_SYNAPTICS_R63353) += panel-synaptics-r63353.o
++obj-$(CONFIG_DRM_PANEL_TD4322) += panel-td4322.o
+ obj-$(CONFIG_DRM_PANEL_SONY_ACX565AKM) += panel-sony-acx565akm.o
+ obj-$(CONFIG_DRM_PANEL_SONY_TD4353_JDI) += panel-sony-td4353-jdi.o
+ obj-$(CONFIG_DRM_PANEL_SONY_TULIP_TRULY_NT35521) += panel-sony-tulip-truly-nt35521.o
+diff --git a/drivers/gpu/drm/panel/panel-td4322.c b/drivers/gpu/drm/panel/panel-td4322.c
+new file mode 100644
+index 000000000..8adc51213
+--- /dev/null
++++ b/drivers/gpu/drm/panel/panel-td4322.c
+@@ -0,0 +1,257 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * panel-td4322.c
++ * Created on Nov 20, 2026
++ * Author: @POEG1726
++ *
++ * Mode and panel command sequence from the supplier's GPL TD4322 profile.
++ */
++
++#include <linux/backlight.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/regulator/consumer.h>
++
++#include <drm/drm_mipi_dsi.h>
++#include <drm/drm_modes.h>
++#include <drm/drm_panel.h>
++#include <video/mipi_display.h>
++
++struct td4322_panel {
++	struct drm_panel panel;
++	struct mipi_dsi_device *dsi;
++	struct regulator_bulk_data supplies[2];
++	struct gpio_desc *reset;
++	/* Protect brightness writes while changing the panel power state. */
++	struct mutex lock;
++	bool ready;
++};
++
++static inline struct td4322_panel *to_td4322_panel(struct drm_panel *panel)
++{
++	return container_of(panel, struct td4322_panel, panel);
++}
++
++static int td4322_panel_on(struct mipi_dsi_device *dsi)
++{
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = dsi };
++
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xfc, 0x5a, 0x5a, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xf3, 0x01, 0x00);
++
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_EXIT_SLEEP_MODE, 0x00);
++	mipi_dsi_msleep(&dsi_ctx, 20);
++
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xcc, 0x54, 0x8a);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb0, 0x04);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb6, 0x13);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
++
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_SET_TEAR_ON, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_WRITE_CONTROL_DISPLAY, 0x20);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_SET_DISPLAY_BRIGHTNESS, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x57, 0x40);
++	mipi_dsi_msleep(&dsi_ctx, 120);
++
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xfc, 0x5a, 0x5a);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb0, 0x01);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xd2, 0x20);
++
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_SET_DISPLAY_ON, 0x00);
++	mipi_dsi_msleep(&dsi_ctx, 120);
++
++	return dsi_ctx.accum_err;
++}
++
++static int td4322_panel_prepare(struct drm_panel *panel)
++{
++	struct td4322_panel *ctx = to_td4322_panel(panel);
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
++	int ret;
++
++	guard(mutex)(&ctx->lock);
++	ret = regulator_bulk_enable(ARRAY_SIZE(ctx->supplies), ctx->supplies);
++	if (ret)
++		return ret;
++
++	/* The module controls VAVDD/ELVDD/ELVSS through the bias converter. */
++	msleep(20);
++	gpiod_set_value_cansleep(ctx->reset, 1);
++	msleep(120);
++	gpiod_set_value_cansleep(ctx->reset, 0);
++	msleep(120);
++
++	ret = td4322_panel_on(ctx->dsi);
++	if (!ret) {
++		/* Each TE launches a full RGB888 frame into this address window. */
++		mipi_dsi_dcs_set_pixel_format_multi(&dsi_ctx, MIPI_DCS_PIXEL_FMT_24BIT);
++		mipi_dsi_dcs_set_column_address_multi(&dsi_ctx, 0, 1079);
++		mipi_dsi_dcs_set_page_address_multi(&dsi_ctx, 0, 1919);
++		ret = dsi_ctx.accum_err;
++	}
++	if (ret) {
++		dev_err(panel->dev, "panel initialization failed: %d\n", ret);
++		gpiod_set_value_cansleep(ctx->reset, 1);
++		regulator_bulk_disable(ARRAY_SIZE(ctx->supplies), ctx->supplies);
++		return ret;
++	}
++
++	ctx->ready = true;
++	return 0;
++}
++
++static int td4322_panel_unprepare(struct drm_panel *panel)
++{
++	struct td4322_panel *ctx = to_td4322_panel(panel);
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
++
++	guard(mutex)(&ctx->lock);
++	ctx->ready = false;
++	mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 10);
++	mipi_dsi_dcs_enter_sleep_mode_multi(&dsi_ctx);
++	msleep(150);
++	if (dsi_ctx.accum_err)
++		dev_warn(panel->dev, "sleep sequence failed: %d\n", dsi_ctx.accum_err);
++	gpiod_set_value_cansleep(ctx->reset, 1);
++	usleep_range(10000, 11000);
++
++	return regulator_bulk_disable(ARRAY_SIZE(ctx->supplies), ctx->supplies);
++}
++
++static const struct drm_display_mode td4322_panel_mode = {
++	.clock = 140640,
++	.hdisplay = 1080,
++	.hsync_start = 1080 + 140,
++	.hsync_end = 1080 + 140 + 12,
++	.htotal = 1080 + 140 + 12 + 70,
++	.vdisplay = 1920,
++	.vsync_start = 1920 + 16,
++	.vsync_end = 1920 + 16 + 5,
++	.vtotal = 1920 + 16 + 5 + 16,
++	.flags = DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC,
++	.width_mm = 68,
++	.height_mm = 121,
++};
++
++static int td4322_panel_get_modes(struct drm_panel *panel,
++				  struct drm_connector *connector)
++{
++	struct drm_display_mode *mode;
++
++	mode = drm_mode_duplicate(connector->dev, &td4322_panel_mode);
++	if (!mode)
++		return -ENOMEM;
++
++	drm_mode_set_name(mode);
++
++	mode->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
++	connector->display_info.width_mm = mode->width_mm;
++	connector->display_info.height_mm = mode->height_mm;
++	drm_mode_probed_add(connector, mode);
++
++	return 1;
++}
++
++static const struct drm_panel_funcs td4322_funcs = {
++	.prepare = td4322_panel_prepare,
++	.unprepare = td4322_panel_unprepare,
++	.get_modes = td4322_panel_get_modes,
++};
++
++static int td4322_update_brightness(struct backlight_device *bl)
++{
++	struct td4322_panel *ctx = bl_get_data(bl);
++	u8 brightness = backlight_get_brightness(bl);
++	ssize_t ret;
++
++	guard(mutex)(&ctx->lock);
++	if (!ctx->ready)
++		return 0;
++
++	ret = mipi_dsi_dcs_write(ctx->dsi, MIPI_DCS_SET_DISPLAY_BRIGHTNESS,
++				 &brightness, sizeof(brightness));
++	return ret < 0 ? ret : 0;
++}
++
++static const struct backlight_ops td4322_bl_ops = {
++	.update_status = td4322_update_brightness,
++};
++
++static int td4322_probe(struct mipi_dsi_device *dsi)
++{
++	struct backlight_properties props = {
++		.type = BACKLIGHT_RAW,
++		.brightness = 184,
++		.max_brightness = 255,
++	};
++	struct device *dev = &dsi->dev;
++	struct td4322_panel *ctx;
++	int ret;
++
++	ctx = devm_drm_panel_alloc(dev, struct td4322_panel, panel,
++				   &td4322_funcs, DRM_MODE_CONNECTOR_DSI);
++	if (IS_ERR(ctx))
++		return PTR_ERR(ctx);
++
++	ctx->supplies[0].supply = "vci";
++	ctx->supplies[1].supply = "vddi";
++	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(ctx->supplies), ctx->supplies);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to get panel supplies\n");
++
++	ctx->reset = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(ctx->reset))
++		return dev_err_probe(dev, PTR_ERR(ctx->reset), "failed to get panel reset\n");
++
++	mutex_init(&ctx->lock);
++	ctx->dsi = dsi;
++	mipi_dsi_set_drvdata(dsi, ctx);
++	dsi->lanes = 4;
++	dsi->format = MIPI_DSI_FMT_RGB888;
++	dsi->mode_flags = MIPI_DSI_MODE_LPM;
++	ctx->panel.prepare_prev_first = true;
++	ctx->panel.backlight = devm_backlight_device_register(dev, dev_name(dev),
++							      dev, ctx, &td4322_bl_ops,
++							      &props);
++	if (IS_ERR(ctx->panel.backlight))
++		return PTR_ERR(ctx->panel.backlight);
++
++	drm_panel_add(&ctx->panel);
++	ret = mipi_dsi_attach(dsi);
++	if (ret)
++		drm_panel_remove(&ctx->panel);
++
++	return ret;
++}
++
++static void td4322_remove(struct mipi_dsi_device *dsi)
++{
++	struct td4322_panel *ctx = mipi_dsi_get_drvdata(dsi);
++
++	mipi_dsi_detach(dsi);
++	drm_panel_remove(&ctx->panel);
++}
++
++static const struct of_device_id td4322_of_match[] = {
++	{ .compatible = "synaptics,td4322" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, td4322_of_match);
++
++static struct mipi_dsi_driver td4322_driver = {
++	.probe = td4322_probe,
++	.remove = td4322_remove,
++	.driver = {
++		.name = "panel-td4322",
++		.of_match_table = td4322_of_match,
++	},
++};
++module_mipi_dsi_driver(td4322_driver);
++
++MODULE_DESCRIPTION("Synaptics TD4322 command mode panel");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/gpu/drm/sun4i/sun4i_tcon.c b/drivers/gpu/drm/sun4i/sun4i_tcon.c
+index 67047e3b6..26f7c070a 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_tcon.c
++++ b/drivers/gpu/drm/sun4i/sun4i_tcon.c
+@@ -234,7 +234,7 @@ void sun4i_tcon_enable_vblank(struct sun4i_tcon *tcon, bool enable)
+ 		SUN4I_TCON_GINT0_TCON0_TRI_FINISH_ENABLE;
+ 
+ 	if (enable)
+-		val = mask;
++		val = tcon->command_mode ? SUN4I_TCON_GINT0_TCON0_TRI_FINISH_ENABLE : mask;
+ 
+ 	regmap_update_bits(tcon->regs, SUN4I_TCON_GINT0_REG, mask, val);
+ }
+@@ -353,15 +353,13 @@ static void sun4i_tcon0_mode_set_cpu(struct sun4i_tcon *tcon,
+ 	u8 bpp = mipi_dsi_pixel_format_to_bpp(device->format);
+ 	u8 lanes = device->lanes;
+ 	u32 block_space, start_delay;
+-	u32 tcon_div;
++	u32 tcon_div, trans_start = 10;
+ 
+-	/*
+-	 * dclk is required to run at 1/4 the DSI per-lane bit rate.
+-	 */
+-	tcon->dclk_min_div = SUN6I_DSI_TCON_DIV;
+-	tcon->dclk_max_div = SUN6I_DSI_TCON_DIV;
+-	clk_set_rate(tcon->dclk, mode->crtc_clock * 1000 * (bpp / lanes)
+-						  / SUN6I_DSI_TCON_DIV);
++	/* Command mode consumes one pixel per TCON clock. */
++	tcon_div = tcon->command_mode ? bpp / lanes : SUN6I_DSI_TCON_DIV;
++	tcon->dclk_min_div = tcon_div;
++	tcon->dclk_max_div = tcon_div;
++	clk_set_rate(tcon->dclk, mode->crtc_clock * 1000 * (bpp / lanes) / tcon_div);
+ 
+ 	/* Set the resolution */
+ 	regmap_write(tcon->regs, SUN4I_TCON0_BASIC0_REG,
+@@ -390,10 +388,15 @@ static void sun4i_tcon0_mode_set_cpu(struct sun4i_tcon *tcon,
+ 	 * The datasheet says that this should be set higher than 20 *
+ 	 * pixel cycle, but it's not clear what a pixel cycle is.
+ 	 */
+-	regmap_read(tcon->regs, SUN4I_TCON0_DCLK_REG, &tcon_div);
+-	tcon_div &= GENMASK(6, 0);
+-	block_space = mode->htotal * bpp / (tcon_div * lanes);
+-	block_space -= mode->hdisplay + 40;
++	if (tcon->command_mode) {
++		block_space = mode->htotal - mode->hdisplay;
++		trans_start = mode->hdisplay - 1;
++	} else {
++		regmap_read(tcon->regs, SUN4I_TCON0_DCLK_REG, &tcon_div);
++		tcon_div &= GENMASK(6, 0);
++		block_space = mode->htotal * bpp / (tcon_div * lanes);
++		block_space -= mode->hdisplay + 40;
++	}
+ 
+ 	regmap_write(tcon->regs, SUN4I_TCON0_CPU_TRI0_REG,
+ 		     SUN4I_TCON0_CPU_TRI0_BLOCK_SPACE(block_space) |
+@@ -406,7 +409,7 @@ static void sun4i_tcon0_mode_set_cpu(struct sun4i_tcon *tcon,
+ 	start_delay = start_delay * mode->crtc_htotal * 149;
+ 	start_delay = start_delay / (mode->crtc_clock / 1000) / 8;
+ 	regmap_write(tcon->regs, SUN4I_TCON0_CPU_TRI2_REG,
+-		     SUN4I_TCON0_CPU_TRI2_TRANS_START_SET(10) |
++		     SUN4I_TCON0_CPU_TRI2_TRANS_START_SET(trans_start) |
+ 		     SUN4I_TCON0_CPU_TRI2_START_DELAY(start_delay));
+ 
+ 	/*
+@@ -713,6 +716,8 @@ void sun4i_tcon_mode_set(struct sun4i_tcon *tcon,
+ 			 const struct drm_encoder *encoder,
+ 			 const struct drm_display_mode *mode)
+ {
++	tcon->command_mode = encoder->encoder_type == DRM_MODE_ENCODER_DSI &&
++			     encoder_to_sun6i_dsi(encoder)->te_irq > 0;
+ 	switch (encoder->encoder_type) {
+ 	case DRM_MODE_ENCODER_DSI:
+ 		/* DSI is tied to special case of CPU interface */
+diff --git a/drivers/gpu/drm/sun4i/sun4i_tcon.h b/drivers/gpu/drm/sun4i/sun4i_tcon.h
+index fa23aa23f..94cdcd1ba 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_tcon.h
++++ b/drivers/gpu/drm/sun4i/sun4i_tcon.h
+@@ -85,6 +85,7 @@
+ #define SUN4I_TCON0_CPU_IF_MODE_MASK			GENMASK(31, 28)
+ #define SUN4I_TCON0_CPU_IF_MODE_DSI			(1 << 28)
+ #define SUN4I_TCON0_CPU_IF_TRI_FIFO_FLUSH		BIT(16)
++#define SUN4I_TCON0_CPU_IF_TRI_START			BIT(1)
+ #define SUN4I_TCON0_CPU_IF_TRI_FIFO_EN			BIT(2)
+ #define SUN4I_TCON0_CPU_IF_TRI_EN			BIT(0)
+ 
+@@ -271,6 +272,7 @@ struct sun4i_tcon {
+ 	struct clk			*dclk;
+ 	u8				dclk_max_div;
+ 	u8				dclk_min_div;
++	bool				command_mode;
+ 
+ 	/* Reset control */
+ 	struct reset_control		*lcd_rst;
+diff --git a/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c b/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c
+index 23ef266c3..f4cbf1451 100644
+--- a/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c
++++ b/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c
+@@ -10,6 +10,8 @@
+ #include <linux/clk.h>
+ #include <linux/component.h>
+ #include <linux/crc-ccitt.h>
++#include <linux/gpio/consumer.h>
++#include <linux/interrupt.h>
+ #include <linux/module.h>
+ #include <linux/of_address.h>
+ #include <linux/phy/phy-mipi-dphy.h>
+@@ -80,6 +82,7 @@
+ #define SUN6I_DSI_INST_JUMP_SEL_REG	0x048
+ 
+ #define SUN6I_DSI_INST_JUMP_CFG_REG(n)	(0x04c + (n) * 0x04)
++#define SUN6I_DSI_INST_JUMP_CFG_ENABLE		BIT(28)
+ #define SUN6I_DSI_INST_JUMP_CFG_TO(n)		(((n) & 0xf) << 20)
+ #define SUN6I_DSI_INST_JUMP_CFG_POINT(n)	(((n) & 0xf) << 16)
+ #define SUN6I_DSI_INST_JUMP_CFG_NUM(n)		((n) & 0xffff)
+@@ -104,6 +107,9 @@
+ #define SUN6I_DSI_PIXEL_PH_VC(n)		(((n) & 3) << 6)
+ #define SUN6I_DSI_PIXEL_PH_DT(n)		((n) & 0x3f)
+ 
++#define SUN6I_DSI_PIXEL_PD_REG		0x094
++#define SUN6I_DSI_PIXEL_PD_LINEN		GENMASK(23, 16)
++
+ #define SUN6I_DSI_PIXEL_PF0_REG		0x098
+ #define SUN6I_DSI_PIXEL_PF0_CRC_FORCE(n)	((n) & 0xffff)
+ 
+@@ -168,6 +174,7 @@ enum sun6i_dsi_start_inst {
+ 	DSI_START_LPTX,
+ 	DSI_START_HSC,
+ 	DSI_START_HSD,
++	DSI_START_HSTX,
+ };
+ 
+ enum sun6i_dsi_inst_id {
+@@ -306,12 +313,14 @@ static void sun6i_dsi_inst_commit(struct sun6i_dsi *dsi)
+ 
+ static int sun6i_dsi_inst_wait_for_completion(struct sun6i_dsi *dsi)
+ {
++	/* LP packets normally finish within 5 ms; a full frame can take longer. */
++	unsigned int timeout = dsi->refresh_tcon ? 50000 : 5000;
+ 	u32 val;
+ 
+ 	return regmap_read_poll_timeout(dsi->regs, SUN6I_DSI_BASIC_CTL0_REG,
+ 					val,
+ 					!(val & SUN6I_DSI_BASIC_CTL0_INST_ST),
+-					100, 5000);
++					100, timeout);
+ }
+ 
+ static void sun6i_dsi_inst_setup(struct sun6i_dsi *dsi,
+@@ -459,7 +468,15 @@ static void sun6i_dsi_setup_inst_loop(struct sun6i_dsi *dsi,
+ 	struct mipi_dsi_device *device = dsi->device;
+ 	u16 delay = 50 - 1;
+ 
+-	if (device->mode_flags & MIPI_DSI_MODE_VIDEO_BURST) {
++	if (dsi->te_irq > 0) {
++		/* NOP branches to clock exit after the last active line. */
++		regmap_write(dsi->regs, SUN6I_DSI_INST_JUMP_CFG_REG(0),
++			     SUN6I_DSI_INST_JUMP_CFG_ENABLE |
++			     SUN6I_DSI_INST_JUMP_CFG_POINT(DSI_INST_ID_NOP) |
++			     SUN6I_DSI_INST_JUMP_CFG_TO(DSI_INST_ID_HSCEXIT) |
++			     SUN6I_DSI_INST_JUMP_CFG_NUM(mode->vdisplay));
++		delay = 0;
++	} else if (device->mode_flags & MIPI_DSI_MODE_VIDEO_BURST) {
+ 		u32 hsync_porch = (mode->htotal - mode->hdisplay) * 150;
+ 
+ 		delay = (hsync_porch / ((mode->clock / 1000) * 8));
+@@ -530,6 +547,28 @@ static void sun6i_dsi_setup_format(struct sun6i_dsi *dsi,
+ 		     SUN6I_DSI_PIXEL_CTL0_FORMAT(fmt));
+ }
+ 
++/* Insert one DCS command byte before every scanline from the TCON FIFO. */
++static void sun6i_dsi_setup_command(struct sun6i_dsi *dsi, struct drm_display_mode *mode)
++{
++	u16 wc = 1 + mode->hdisplay * 3;
++	u32 header;
++
++	header = sun6i_dsi_build_sync_pkt(MIPI_DSI_DCS_LONG_WRITE, dsi->device->channel,
++					  wc & 0xff, wc >> 8);
++	regmap_write(dsi->regs, SUN6I_DSI_BASIC_CTL1_REG, 0);
++	regmap_write(dsi->regs, SUN6I_DSI_TCON_DRQ_REG, 0);
++	regmap_write(dsi->regs, SUN6I_DSI_PIXEL_CTL0_REG, SUN6I_DSI_PIXEL_CTL0_FORMAT(0));
++	regmap_write(dsi->regs, SUN6I_DSI_PIXEL_PH_REG, header);
++	regmap_write(dsi->regs, SUN6I_DSI_PIXEL_PD_REG,
++		     FIELD_PREP(SUN6I_DSI_PIXEL_PD_LINEN, MIPI_DCS_WRITE_MEMORY_CONTINUE) |
++		     MIPI_DCS_WRITE_MEMORY_START);
++	regmap_write(dsi->regs, SUN6I_DSI_PIXEL_PF0_REG, SUN6I_DSI_PIXEL_PF0_CRC_FORCE(0xffff));
++	/* CRC-CCITT after the first payload byte, 0x2c or 0x3c respectively. */
++	regmap_write(dsi->regs, SUN6I_DSI_PIXEL_PF1_REG,
++		     SUN6I_DSI_PIXEL_PF1_CRC_INIT_LINE0(0xe4e9) |
++		     SUN6I_DSI_PIXEL_PF1_CRC_INIT_LINEN(0xf468));
++}
++
+ static void sun6i_dsi_setup_timings(struct sun6i_dsi *dsi,
+ 				    struct drm_display_mode *mode)
+ {
+@@ -691,6 +730,15 @@ static int sun6i_dsi_start(struct sun6i_dsi *dsi,
+ 			     DSI_INST_ID_HSC  << (4 * DSI_INST_ID_LP11) |
+ 			     DSI_INST_ID_END  << (4 * DSI_INST_ID_HSC));
+ 		break;
++	case DSI_START_HSTX:
++		regmap_write(dsi->regs, SUN6I_DSI_INST_JUMP_SEL_REG,
++			     DSI_INST_ID_HSC  << (4 * DSI_INST_ID_LP11) |
++			     DSI_INST_ID_NOP  << (4 * DSI_INST_ID_HSC) |
++			     DSI_INST_ID_HSD  << (4 * DSI_INST_ID_NOP) |
++			     DSI_INST_ID_DLY  << (4 * DSI_INST_ID_HSD) |
++			     DSI_INST_ID_NOP  << (4 * DSI_INST_ID_DLY) |
++			     DSI_INST_ID_END  << (4 * DSI_INST_ID_HSCEXIT));
++		break;
+ 	case DSI_START_HSD:
+ 		regmap_write(dsi->regs, SUN6I_DSI_INST_JUMP_SEL_REG,
+ 			     DSI_INST_ID_NOP  << (4 * DSI_INST_ID_LP11) |
+@@ -716,6 +764,46 @@ static int sun6i_dsi_start(struct sun6i_dsi *dsi,
+ 	return 0;
+ }
+ 
++/* Launch at most one full frame per external TE. Leave an in-flight frame alone. */
++static irqreturn_t sun6i_dsi_te_irq(int irq, void *data)
++{
++	struct sun6i_dsi *dsi = data;
++	struct sun4i_tcon *tcon;
++	u32 status;
++
++	/* Skip a busy TE edge rather than starting late after an LP command. */
++	ACQUIRE(mutex_try, lock)(&dsi->xfer_lock);
++	if (ACQUIRE_ERR(mutex_try, &lock))
++		return IRQ_HANDLED;
++	tcon = dsi->refresh_tcon;
++	if (!tcon)
++		return IRQ_HANDLED;
++
++	regmap_read(tcon->regs, SUN4I_TCON0_CPU_IF_REG, &status);
++	if (status & SUN4I_TCON0_CPU_IF_TRI_START)
++		return IRQ_HANDLED;
++	regmap_read(dsi->regs, SUN6I_DSI_BASIC_CTL0_REG, &status);
++	if (status & SUN6I_DSI_BASIC_CTL0_INST_ST)
++		return IRQ_HANDLED;
++
++	/* Arm the DSI engine before releasing the first line from TCON. */
++	sun6i_dsi_start(dsi, DSI_START_HSTX);
++	regmap_set_bits(tcon->regs, SUN4I_TCON0_CPU_IF_REG, SUN4I_TCON0_CPU_IF_TRI_START);
++	return IRQ_HANDLED;
++}
++
++static void sun6i_dsi_stop_refresh(struct sun6i_dsi *dsi)
++{
++	guard(mutex)(&dsi->xfer_lock);
++	if (!dsi->refresh_tcon)
++		return;
++	if (sun6i_dsi_inst_wait_for_completion(dsi)) {
++		dev_warn(dsi->dev, "timed out draining final DSI frame\n");
++		sun6i_dsi_inst_abort(dsi);
++	}
++	dsi->refresh_tcon = NULL;
++}
++
+ static void sun6i_dsi_encoder_enable(struct drm_encoder *encoder)
+ {
+ 	struct drm_display_mode *mode = &encoder->crtc->state->adjusted_mode;
+@@ -750,17 +838,21 @@ static void sun6i_dsi_encoder_enable(struct drm_encoder *encoder)
+ 
+ 	regmap_write(dsi->regs, SUN6I_DSI_DEBUG_DATA_REG, 0xff);
+ 
+-	delay = sun6i_dsi_get_video_start_delay(dsi, mode);
+-	regmap_write(dsi->regs, SUN6I_DSI_BASIC_CTL1_REG,
+-		     SUN6I_DSI_BASIC_CTL1_VIDEO_ST_DELAY(delay) |
+-		     SUN6I_DSI_BASIC_CTL1_VIDEO_FILL |
+-		     SUN6I_DSI_BASIC_CTL1_VIDEO_PRECISION |
+-		     SUN6I_DSI_BASIC_CTL1_VIDEO_MODE);
+-
+-	sun6i_dsi_setup_burst(dsi, mode);
+ 	sun6i_dsi_setup_inst_loop(dsi, mode);
+-	sun6i_dsi_setup_format(dsi, mode);
+-	sun6i_dsi_setup_timings(dsi, mode);
++	if (dsi->te_irq > 0) {
++		sun6i_dsi_setup_command(dsi, mode);
++	} else {
++		delay = sun6i_dsi_get_video_start_delay(dsi, mode);
++		regmap_write(dsi->regs, SUN6I_DSI_BASIC_CTL1_REG,
++			     SUN6I_DSI_BASIC_CTL1_VIDEO_ST_DELAY(delay) |
++			     SUN6I_DSI_BASIC_CTL1_VIDEO_FILL |
++			     SUN6I_DSI_BASIC_CTL1_VIDEO_PRECISION |
++			     SUN6I_DSI_BASIC_CTL1_VIDEO_MODE);
++
++		sun6i_dsi_setup_burst(dsi, mode);
++		sun6i_dsi_setup_format(dsi, mode);
++		sun6i_dsi_setup_timings(dsi, mode);
++	}
+ 
+ 	phy_init(dsi->dphy);
+ 
+@@ -772,8 +864,11 @@ static void sun6i_dsi_encoder_enable(struct drm_encoder *encoder)
+ 	phy_configure(dsi->dphy, &opts);
+ 	phy_power_on(dsi->dphy);
+ 
+-	if (dsi->panel)
++	if (dsi->panel) {
+ 		drm_panel_prepare(dsi->panel);
++		if (dsi->te_irq > 0 && !dsi->panel->prepared)
++			return;
++	}
+ 
+ 	/*
+ 	 * FIXME: This should be moved after the switch to HS mode.
+@@ -790,6 +885,12 @@ static void sun6i_dsi_encoder_enable(struct drm_encoder *encoder)
+ 	if (dsi->panel)
+ 		drm_panel_enable(dsi->panel);
+ 
++	if (dsi->te_irq > 0) {
++		guard(mutex)(&dsi->xfer_lock);
++		dsi->refresh_tcon = drm_crtc_to_sun4i_crtc(encoder->crtc)->tcon;
++		return;
++	}
++
+ 	sun6i_dsi_start(dsi, DSI_START_HSC);
+ 
+ 	udelay(1000);
+@@ -803,10 +904,12 @@ static void sun6i_dsi_encoder_disable(struct drm_encoder *encoder)
+ 
+ 	DRM_DEBUG_DRIVER("Disabling DSI output\n");
+ 
+-	if (dsi->panel) {
++	sun6i_dsi_stop_refresh(dsi);
++
++	if (dsi->panel && dsi->panel->enabled)
+ 		drm_panel_disable(dsi->panel);
++	if (dsi->panel && dsi->panel->prepared)
+ 		drm_panel_unprepare(dsi->panel);
+-	}
+ 
+ 	phy_power_off(dsi->dphy);
+ 	phy_exit(dsi->dphy);
+@@ -940,17 +1043,46 @@ static int sun6i_dsi_dcs_read(struct sun6i_dsi *dsi, u32 header,
+ 	return 1;
+ }
+ 
++static int sun6i_dsi_get_te_irq(struct sun6i_dsi *dsi, struct device *dev)
++{
++	struct gpio_desc *te;
++	unsigned long flags;
++	int irq, ret;
++
++	te = devm_gpiod_get(dev, "te", GPIOD_IN);
++	if (IS_ERR(te))
++		return dev_err_probe(dev, PTR_ERR(te), "command mode needs a TE GPIO\n");
++	irq = gpiod_to_irq(te);
++	if (irq < 0)
++		return irq;
++	flags = gpiod_is_active_low(te) ? IRQF_TRIGGER_FALLING : IRQF_TRIGGER_RISING;
++	ret = devm_request_threaded_irq(dev, irq, NULL, sun6i_dsi_te_irq,
++					flags | IRQF_ONESHOT, "sun6i-dsi-te", dsi);
++	return ret ? ret : irq;
++}
++
+ static int sun6i_dsi_attach(struct mipi_dsi_host *host,
+ 			    struct mipi_dsi_device *device)
+ {
+ 	struct sun6i_dsi *dsi = host_to_sun6i_dsi(host);
+ 	struct drm_panel *panel = of_drm_find_panel(device->dev.of_node);
++	int irq = 0;
+ 
+ 	if (IS_ERR(panel))
+ 		return PTR_ERR(panel);
+ 	if (!dsi->drm || !dsi->drm->registered)
+ 		return -EPROBE_DEFER;
+ 
++	if (!(device->mode_flags & (MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST |
++				    MIPI_DSI_MODE_VIDEO_SYNC_PULSE))) {
++		/* This packet and TCON setup is for four lanes of RGB888. */
++		if (device->format != MIPI_DSI_FMT_RGB888 || device->lanes != 4)
++			return -EOPNOTSUPP;
++		irq = sun6i_dsi_get_te_irq(dsi, &device->dev);
++		if (irq < 0)
++			return irq;
++	}
++	dsi->te_irq = irq;
+ 	dsi->panel = panel;
+ 	dsi->device = device;
+ 
+@@ -966,10 +1098,15 @@ static int sun6i_dsi_detach(struct mipi_dsi_host *host,
+ {
+ 	struct sun6i_dsi *dsi = host_to_sun6i_dsi(host);
+ 
++	sun6i_dsi_stop_refresh(dsi);
++	if (dsi->te_irq > 0)
++		devm_free_irq(&device->dev, dsi->te_irq, dsi);
++	dsi->te_irq = 0;
+ 	dsi->panel = NULL;
+ 	dsi->device = NULL;
+ 
+-	drm_kms_helper_hotplug_event(dsi->drm);
++	if (dsi->drm)
++		drm_kms_helper_hotplug_event(dsi->drm);
+ 
+ 	return 0;
+ }
+@@ -994,9 +1131,13 @@ static ssize_t sun6i_dsi_transfer(struct mipi_dsi_host *host,
+ 	header = get_unaligned_le24(packet.header);
+ 	header |= (u32)sun6i_dsi_ecc_compute(header) << 24;
+ 
++	guard(mutex)(&dsi->xfer_lock);
+ 	ret = sun6i_dsi_inst_wait_for_completion(dsi);
+-	if (ret < 0)
++	if (ret < 0) {
++		if (dsi->refresh_tcon)
++			return ret;
+ 		sun6i_dsi_inst_abort(dsi);
++	}
+ 
+ 	regmap_write(dsi->regs, SUN6I_DSI_CMD_CTL_REG,
+ 		     SUN6I_DSI_CMD_CTL_RX_OVERFLOW |
+@@ -1097,6 +1238,7 @@ static void sun6i_dsi_unbind(struct device *dev, struct device *master,
+ {
+ 	struct sun6i_dsi *dsi = dev_get_drvdata(dev);
+ 
++	sun6i_dsi_stop_refresh(dsi);
+ 	dsi->drm = NULL;
+ }
+ 
+@@ -1122,6 +1264,7 @@ static int sun6i_dsi_probe(struct platform_device *pdev)
+ 		return -ENOMEM;
+ 	dev_set_drvdata(dev, dsi);
+ 	dsi->dev = dev;
++	mutex_init(&dsi->xfer_lock);
+ 	dsi->host.ops = &sun6i_dsi_host_ops;
+ 	dsi->host.dev = dev;
+ 	dsi->variant = variant;
+diff --git a/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.h b/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.h
+index f1ddefe0f..5158577eb 100644
+--- a/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.h
++++ b/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.h
+@@ -9,6 +9,8 @@
+ #ifndef _SUN6I_MIPI_DSI_H_
+ #define _SUN6I_MIPI_DSI_H_
+ 
++#include <linux/mutex.h>
++
+ #include <drm/drm_connector.h>
+ #include <drm/drm_encoder.h>
+ #include <drm/drm_mipi_dsi.h>
+@@ -37,6 +39,11 @@ struct sun6i_dsi {
+ 	struct drm_device	*drm;
+ 	struct drm_panel	*panel;
+ 
++	/* Serializes the TE trigger and LP transfers on the instruction engine. */
++	struct mutex		xfer_lock;
++	struct sun4i_tcon	*refresh_tcon;
++	int			te_irq;
++
+ 	const struct sun6i_dsi_variant *variant;
+ };
+ 

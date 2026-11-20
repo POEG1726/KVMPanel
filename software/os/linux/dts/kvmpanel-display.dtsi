@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
+&dsi {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	panel@0 {
+		compatible = "synaptics,td4322";
+		reg = <0>;
+		vddi-supply = <&reg_1v8>;
+		vci-supply = <&reg_3v3_main>;
+		/*
+		 * CN2.28 (DISP_RST) and CN2.26 (DISP_TE) have no SoC net.
+		 * Add reset-gpios (active low) and te-gpios after routing.
+		 * Brightness is programmed via DCS. CN2 controls the SGM3851A.
+		 */
+		status = "disabled";
+	};
+};
