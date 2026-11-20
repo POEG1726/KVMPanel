@@ -30,6 +30,13 @@ export function isMounted(state: State, t: Target): boolean {
   return !!m && m.root === t.root && m.path === t.path;
 }
 
+/** True when the mounted image is `t` itself or lives under `t`. */
+function holdsMount(state: State, t: Target): boolean {
+  const m = state.mediaMount;
+  if (!m || m.root !== t.root) return false;
+  return m.path === t.path || t.path === '/' || m.path.startsWith(t.path + '/');
+}
+
 function shareBusy(state: State, reply: FastifyReply, t: Target): boolean {
   if (t.root === 'share' && state.share.exported_to_host) {
     sendError(reply, 409, 'share_busy');
@@ -85,6 +92,8 @@ export function registerFiles(app: FastifyInstance, state: State) {
     const vol = state.volumes[t.root];
     const at = parentOf(vol, t.parts);
     if (!at) return sendError(reply, 404, 'not_found');
+    if (at.parent.children.get(at.name)?.type === 'dir') return sendError(reply, 409, 'is_dir');
+    if (isMounted(state, t)) return sendError(reply, 409, 'in_use');
     const declared = Number(req.headers['content-length'] ?? 0);
     if (declared > free(state, t.root)) {
       reply.header('connection', 'close');
@@ -93,8 +102,17 @@ export function registerFiles(app: FastifyInstance, state: State) {
     const expected = req.headers['x-sha256']?.toString().toLowerCase();
     const chunks: Buffer[] = [];
     const hash = createHash('sha256');
+    // Bytes of the file being replaced are freed by the write.
+    const old = at.parent.children.get(at.name);
+    const budget = free(state, t.root) + (old?.type === 'file' ? old.size : 0);
+    let received = 0;
     try {
       for await (const chunk of req.body as Readable) {
+        received += (chunk as Buffer).length;
+        if (received > budget) {
+          reply.header('connection', 'close');
+          return sendError(reply, 507, 'no_space');
+        }
         hash.update(chunk as Buffer);
         chunks.push(chunk as Buffer);
       }
@@ -129,7 +147,8 @@ export function registerFiles(app: FastifyInstance, state: State) {
     const to = resolveTarget(state, req, reply, b.root, b.to);
     if (!to) return reply;
     if (shareBusy(state, reply, t)) return reply;
-    if (isMounted(state, t)) return sendError(reply, 409, 'in_use');
+    if (holdsMount(state, t)) return sendError(reply, 409, 'in_use');
+    if (to.path === t.path || to.path.startsWith(t.path + '/')) return sendError(reply, 400, 'bad_path');
     const vol = state.volumes[t.root];
     const from = parentOf(vol, t.parts);
     const dest = parentOf(vol, to.parts);
@@ -145,7 +164,7 @@ export function registerFiles(app: FastifyInstance, state: State) {
     const t = resolveTarget(state, req, reply, b.root, b.path);
     if (!t) return reply;
     if (shareBusy(state, reply, t)) return reply;
-    if (isMounted(state, t)) return sendError(reply, 409, 'in_use');
+    if (holdsMount(state, t)) return sendError(reply, 409, 'in_use');
     const at = parentOf(state.volumes[t.root], t.parts);
     if (!at || !at.parent.children.has(at.name)) return sendError(reply, 404, 'not_found');
     at.parent.children.delete(at.name);

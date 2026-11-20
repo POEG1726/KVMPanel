@@ -11,6 +11,7 @@ import { registerFiles } from './routes/files.js';
 import { registerMedia } from './routes/media.js';
 import { registerTerminal } from './routes/terminal.js';
 import { registerSystem } from './routes/system.js';
+import { installSocketPolicy } from './sockets.js';
 
 export interface ServerOptions {
   now?: () => number;
@@ -41,6 +42,17 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
   registerMedia(app, state);
   registerTerminal(app, state);
   registerSystem(app, state);
+  installSocketPolicy(state);
+
+  // Keep every error body on the contract's Error shape.
+  app.setNotFoundHandler((_req, reply) => reply.code(404).send({ error: 'not_found' }));
+  app.setErrorHandler((err: { code?: string; statusCode?: number }, _req, reply) => {
+    if (err.code === 'FST_ERR_CTP_INVALID_JSON_BODY' || err.code === 'FST_ERR_CTP_EMPTY_JSON_BODY') return reply.code(400).send({ error: 'invalid_json' });
+    if (err.code === 'FST_ERR_CTP_INVALID_MEDIA_TYPE') return reply.code(415).send({ error: 'unsupported_type' });
+    if (err.code === 'FST_ERR_CTP_BODY_TOO_LARGE') return reply.code(413).send({ error: 'too_large' });
+    if (err.statusCode && err.statusCode < 500) return reply.code(err.statusCode).send({ error: 'bad_request' });
+    return reply.code(500).send({ error: 'internal' });
+  });
 
   return app;
 }

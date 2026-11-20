@@ -87,6 +87,11 @@ export interface State {
   pc: { connected: boolean; last_seen_ts: number | null };
   /** Number of open /api/ws console connections. */
   consoleSessions: number;
+  mcpEnabled: boolean;
+  update: { channel: 'stable' | 'preview'; server: string };
+  updateJobs: Map<string, { id: string; state: 'running' | 'done' | 'failed'; progress: number }>;
+  /** USB set the gadget is running (config.usb may be ahead until applied). */
+  usbApplied: Record<string, unknown>;
 }
 
 export function hashPassword(password: string, salt = randomBytes(16).toString('hex')): { salt: string; hash: string } {
@@ -103,6 +108,7 @@ export function createState(opts: { now?: () => number; sleep?: (ms: number) => 
     name: 'admin', role: 'admin', permissions: [...ALL_PERMISSIONS], view_only: false, disabled: false,
     must_change_password: true, token_version: 0, ...hashPassword('admin'),
   };
+  const config = defaultConfig();
   return {
     version: contract.info.version,
     events: new EventEmitter(),
@@ -111,7 +117,7 @@ export function createState(opts: { now?: () => number; sleep?: (ms: number) => 
     accounts: new Map([[admin.name, admin]]),
     sessions: new Map(),
     loginGuards: new Map(),
-    config: defaultConfig(),
+    config,
     hdmi: { signal: true, width: 1920, height: 1080, fps: 60 },
     locks: { num: false, caps: false, scroll: false },
     power: { on: true, hdd: false },
@@ -129,5 +135,9 @@ export function createState(opts: { now?: () => number; sleep?: (ms: number) => 
     startedAt: (opts.now ?? Date.now)(),
     pc: { connected: true, last_seen_ts: null },
     consoleSessions: 0,
+    mcpEnabled: false,
+    update: { channel: 'stable', server: 'https://updates.example.invalid/kvmpanel' },
+    updateJobs: new Map(),
+    usbApplied: structuredClone(config.usb),
   };
 }

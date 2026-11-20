@@ -13,11 +13,17 @@ export const SECTION_PERM: Record<string, Permission> = {
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
+/** Open maps where a null value in a patch deletes the key instead of storing null. */
+const DELETABLE_MAPS = new Set(['panel.thresholds']);
+
 /** Recursive object merge; arrays and scalars (including null) replace. */
-function merge(target: unknown, patch: unknown): unknown {
+function merge(target: unknown, patch: unknown, path = ''): unknown {
   if (!isObj(patch) || !isObj(target)) return structuredClone(patch);
   const out: Record<string, unknown> = { ...target };
-  for (const [k, v] of Object.entries(patch)) out[k] = merge(target[k], v);
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null && DELETABLE_MAPS.has(path)) delete out[k];
+    else out[k] = merge(target[k], v, path ? `${path}.${k}` : k);
+  }
   return out;
 }
 
@@ -56,7 +62,13 @@ export function registerConfig(app: FastifyInstance, state: State) {
 
   app.get('/api/usb/budget', { preHandler: requirePerm(state) }, async () => usbBudget(state.config.usb as never));
 
+  app.get('/api/usb/applied', { preHandler: requirePerm(state) }, async () => ({
+    usb: state.usbApplied,
+    pending: JSON.stringify(state.usbApplied) !== JSON.stringify(state.config.usb),
+  }));
+
   app.post('/api/usb/apply', { preHandler: requirePerm(state, 'usb') }, async (_req, reply) => {
+    state.usbApplied = structuredClone(state.config.usb);
     state.events.emit('usb_reenumerated');
     return reply.code(202).send({ reenumerating: true });
   });

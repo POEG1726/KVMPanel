@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { edid1080p, mockFrame } from '../frames.js';
 import type { State } from '../state.js';
 import { accountForToken, bodyGuard, COOKIE, hasPerm, requirePerm, sendError } from './auth.js';
+import { trackSocket } from '../sockets.js';
 
 const EDID_RE = /^00ffffffffffff00([0-9a-f]{240}|[0-9a-f]{496})$/;
 
@@ -13,6 +14,7 @@ export function registerStream(app: FastifyInstance, state: State) {
     const acc = accountForToken(state, req.cookies[COOKIE]);
     if (!acc) return socket.close(4401, 'unauthenticated');
     if (!hasPerm(acc, 'console')) return socket.close(4403, 'forbidden');
+    trackSocket(state, socket, req.cookies[COOKIE]!, 'console');
 
     let paused = false;
     let frame = 0;

@@ -23,6 +23,17 @@
   - WebSocket 握手同样校验 cookie。未登录以 4401 关闭；登录了但缺少权限，以 4403 关闭。
 - **权限键**：`console`、`power`、`media`、`terminal`、`files`、`device`、`network`、`updates`、`mcp`、`tailscale`、`panel`、`usb`。`admin` 角色拥有全部权限。
 - **配置**：只有 `kvmd` 能写配置。网页和副屏都通过契约修改，不直接写文件。
+- **WebSocket 关闭码**（`/api/ws`、`/api/stream`、`/api/terminal` 通用）：
+
+  | 关闭码 | 含义 | 客户端应该怎么做 |
+  |---|---|---|
+  | 4401 | 未登录，或会话已失效（登出、改密码、账号被停用或删除） | 回到登录页 |
+  | 4403 | 缺少权限，或权限被收回 | 提示没有权限，不要重连 |
+  | 4404 | 没有配置串口（仅终端） | 隐藏串口标签页 |
+  | 4409 | 管理员断开了所有远程会话 | 提示已被断开，不要自动重连 |
+  | 1012 | kvmd 正在重启 | 显示“KVM 服务重启中”，然后退避重连 |
+
+  会话或权限一有变化，服务端就主动关闭这个用户已经打开的连接，不会等到下一条消息才处理。
 
 ## 端口
 
@@ -101,6 +112,8 @@ Mock 的测试会对照 `openapi.yaml` 校验每一个响应。初始账号为 `
 
 - 板子上是 Unix socket `/run/kvmd/panel.sock`，PC 上的 mock 用 TCP `127.0.0.1:7701`。
 - 每行一个 JSON 对象（NDJSON），用 `t` 区分类型。完整定义见 `schema/panel.schema.json` 的 `$defs/ToPanel` 和 `$defs/FromPanel`。
+- `kvmd` 就是这个 socket 的服务端。重启时它先发 `kvm_restarting`，随后连接断开。副屏要保持当前画面，退避重连；重连后收到新的 `hello`，表示 `kvmd` 已经恢复。
+- 解析得出 `id` 的请求，即使格式不对，回复的 `result` 也会带上同一个 `id`。
 - 副屏是本机进程，被视为可信，改配置时不检查权限。但校验规则和 `PATCH /api/config` 相同，包括 `invalid_config` 和 `endpoints_full`。
 
 **kvmd → 副屏**
@@ -123,6 +136,8 @@ Mock 的测试会对照 `openapi.yaml` 校验每一个响应。初始账号为 `
 | `patch_config`（`patch`） | 成功时 `result.data` 是新配置，失败时带 `error` 和 `detail` |
 | `action`（`reboot`、`shutdown`、`restart_kvm`、`reset_hid`、`disconnect_sessions`、`eject_media`、`usb_apply`） | `result.ok` |
 | `device_info` | `result.data` 和 `GET /api/device` 相同 |
+
+**告警阈值**：`config.panel.thresholds` 的键可以是指标 id，比如 `gpu.temp`；也可以是以 `.*` 结尾的前缀，比如 `mem.dimm.*`。同一个指标同时匹配时，精确的 id 优先于前缀。在 PATCH 里把某个键设为 null 就删除这个阈值。默认值为 `cpu.tctl` 85、`gpu.mem_junction` 95、`mem.dimm.*` 60。
 
 **指标 id**：布局模板按 id 取数据，见 `mock/src/panel/metrics.ts`。
 

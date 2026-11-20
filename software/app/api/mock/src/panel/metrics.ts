@@ -10,11 +10,9 @@ export interface MetricDef {
   max: number;
   warn?: number;
   group: Group;
-  /** Threshold key in config.panel.thresholds that overrides `warn`. */
-  thresholdKey?: string;
 }
 
-export interface Metric extends Omit<MetricDef, 'thresholdKey'> {
+export interface Metric extends MetricDef {
   value: number | null;
 }
 
@@ -23,7 +21,7 @@ const cores: MetricDef[] = Array.from({ length: 16 }, (_, i) => ({
 }));
 
 const dimm = (slot: string): MetricDef => ({
-  id: `mem.dimm.${slot}`, label: `DIMM ${slot.toUpperCase()}`, unit: '°C', min: 30, max: 60, warn: 60, group: 'mem', thresholdKey: 'mem.dimm_temp',
+  id: `mem.dimm.${slot}`, label: `DIMM ${slot.toUpperCase()}`, unit: '°C', min: 30, max: 60, warn: 60, group: 'mem',
 });
 
 export const METRICS: MetricDef[] = [
@@ -31,13 +29,13 @@ export const METRICS: MetricDef[] = [
   { id: 'cpu.bclk', label: 'BCLK', unit: 'MHz', min: 99, max: 101, group: 'cpu' },
   { id: 'cpu.fclk', label: 'FCLK', unit: 'MHz', min: 1900, max: 2100, group: 'cpu' },
   { id: 'cpu.vcore', label: 'Vcore', unit: 'V', min: 0.9, max: 1.4, group: 'cpu' },
-  { id: 'cpu.tctl', label: 'Tctl', unit: '°C', min: 30, max: 95, warn: 85, group: 'cpu', thresholdKey: 'cpu.tctl' },
+  { id: 'cpu.tctl', label: 'Tctl', unit: '°C', min: 30, max: 95, warn: 85, group: 'cpu' },
   { id: 'cpu.load', label: 'Load', unit: '%', min: 0, max: 100, group: 'cpu' },
   { id: 'cpu.ppt', label: 'PPT', unit: 'W', min: 0, max: 230, group: 'cpu' },
   ...cores,
   { id: 'gpu.clock', label: 'Core', unit: 'MHz', min: 0, max: 3000, group: 'gpu' },
   { id: 'gpu.temp', label: 'Temp', unit: '°C', min: 30, max: 90, group: 'gpu' },
-  { id: 'gpu.mem_junction', label: 'Mem junction', unit: '°C', min: 30, max: 100, warn: 95, group: 'gpu', thresholdKey: 'gpu.mem_junction' },
+  { id: 'gpu.mem_junction', label: 'Mem junction', unit: '°C', min: 30, max: 100, warn: 95, group: 'gpu' },
   { id: 'gpu.load', label: 'Load', unit: '%', min: 0, max: 100, group: 'gpu' },
   { id: 'gpu.vram_used', label: 'VRAM', unit: 'GB', min: 0, max: 32, group: 'gpu' },
   { id: 'gpu.power', label: 'Power', unit: 'W', min: 0, max: 600, group: 'gpu' },
@@ -94,12 +92,24 @@ export function generate(t: number): Record<string, number | null> {
 
 const round = (x: number | null) => (x === null ? null : Math.round(x * 1000) / 1000);
 
+/** Threshold for `id`: exact key first, then the longest matching `prefix.*` pattern, else the catalogue default. */
+export function warnFor(id: string, thresholds: Record<string, number>, fallback?: number): number | undefined {
+  if (thresholds[id] !== undefined) return thresholds[id];
+  let best: string | undefined;
+  for (const key of Object.keys(thresholds)) {
+    if (!key.endsWith('.*')) continue;
+    const prefix = key.slice(0, -1);
+    if (id.startsWith(prefix) && (!best || key.length > best.length)) best = key;
+  }
+  return best ? thresholds[best] : fallback;
+}
+
 /** Builds the telemetry metric list, applying config thresholds and hidden ids. */
 export function snapshot(t: number, thresholds: Record<string, number>, hidden: string[]): Metric[] {
   const values = generate(t);
-  return METRICS.filter((d) => !hidden.includes(d.id)).map(({ thresholdKey, ...d }) => {
-    const warn = thresholdKey && thresholds[thresholdKey] !== undefined ? thresholds[thresholdKey] : d.warn;
+  return METRICS.filter((d) => !hidden.includes(d.id)).map((d) => {
     const m: Metric = { ...d, value: round(values[d.id] ?? null) };
+    const warn = warnFor(d.id, thresholds, d.warn);
     if (warn !== undefined) m.warn = warn;
     else delete m.warn;
     return m;

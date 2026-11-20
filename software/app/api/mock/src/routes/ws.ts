@@ -3,6 +3,7 @@ import type WebSocket from 'ws';
 import { messageValidator } from '../contract.js';
 import type { Account, State } from '../state.js';
 import { accountForToken, COOKIE, hasPerm } from './auth.js';
+import { trackSocket } from '../sockets.js';
 
 const validClient = messageValidator('ws.schema.json', 'ClientMessage');
 const STATUS_INTERVAL_MS = 1000;
@@ -36,10 +37,7 @@ export function registerWs(app: FastifyInstance, state: State) {
 
   state.events.on('status_changed', broadcastStatus);
   state.events.on('usb_reenumerated', () => live.forEach((c) => send(c, { t: 'usb_reenumerated' })));
-  state.events.on('kvm_restarting', () => live.forEach((c) => {
-    send(c, { t: 'kvm_restarting' });
-    c.socket.close(1012, 'kvm restarting');
-  }));
+  state.events.on('kvm_restarting', () => live.forEach((c) => send(c, { t: 'kvm_restarting' })));
 
   const timer = setInterval(broadcastStatus, STATUS_INTERVAL_MS);
   timer.unref();
@@ -53,6 +51,7 @@ export function registerWs(app: FastifyInstance, state: State) {
     if (!account) return socket.close(4401, 'unauthenticated');
     if (!hasPerm(account, 'console')) return socket.close(4403, 'forbidden');
 
+    trackSocket(state, socket, req.cookies[COOKIE]!, 'console');
     const conn: Conn = { socket, account, ip: req.ip || req.socket?.remoteAddress || '0.0.0.0', since: state.now() };
     live.add(conn);
     state.consoleSessions = live.size;

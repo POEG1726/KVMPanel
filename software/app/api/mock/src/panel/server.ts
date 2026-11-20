@@ -45,7 +45,11 @@ export function startPanelServer(state: State, listen: Listen): Promise<Server> 
   const status = setInterval(() => broadcast(statusMessage(state)), STATUS_MS);
 
   const onConfig = (config: unknown) => broadcast({ t: 'config', config });
-  const onRestart = () => broadcast({ t: 'kvm_restarting' });
+  // kvmd serves this socket, so a restart drops it; the panel reconnects and a new hello means kvmd is back.
+  const onRestart = () => {
+    broadcast({ t: 'kvm_restarting' });
+    setImmediate(() => clients.forEach((s) => s.end()));
+  };
   const onStatus = () => broadcast(statusMessage(state));
   state.events.on('config_changed', onConfig);
   state.events.on('kvm_restarting', onRestart);
@@ -73,7 +77,12 @@ export function startPanelServer(state: State, listen: Listen): Promise<Server> 
   function handle(sock: Socket, line: string) {
     let m: { t: string; id: number; patch?: unknown; action?: string };
     try { m = JSON.parse(line); } catch { return send(sock, { t: 'result', ok: false, error: 'bad_message' }); }
-    if (!validFromPanel(m)) return send(sock, { t: 'result', ok: false, error: 'bad_message' });
+    if (!validFromPanel(m)) {
+      const id = (m as { id?: unknown })?.id;
+      return send(sock, Number.isInteger(id) && (id as number) >= 0
+        ? { t: 'result', id, ok: false, error: 'bad_message' }
+        : { t: 'result', ok: false, error: 'bad_message' });
+    }
     const reply = (extra: Record<string, unknown>) => send(sock, { t: 'result', id: m.id, ...extra });
     switch (m.t) {
       case 'get_config':
@@ -92,8 +101,10 @@ export function startPanelServer(state: State, listen: Listen): Promise<Server> 
           state.events.emit('status_changed');
         } else if (m.action === 'usb_apply' || m.action === 'reset_hid') {
           state.events.emit('usb_reenumerated');
-        } else if (m.action === 'restart_kvm' || m.action === 'disconnect_sessions') {
-          state.events.emit('kvm_restarting');
+        } else if (m.action === 'restart_kvm') {
+          setImmediate(() => state.events.emit('kvm_restarting'));
+        } else if (m.action === 'disconnect_sessions') {
+          state.events.emit('disconnect_sessions');
         }
         return reply({ ok: true });
     }

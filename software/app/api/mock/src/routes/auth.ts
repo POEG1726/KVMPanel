@@ -78,8 +78,9 @@ function issueSession(state: State, req: FastifyRequest, reply: FastifyReply, ac
   reply.setCookie(COOKIE, token, { path: '/', httpOnly: true, sameSite: 'strict' });
 }
 
-function endSessionsOf(acc: Account) {
+function endSessionsOf(state: State, acc: Account) {
   acc.token_version += 1;
+  state.events.emit('sessions_changed');
 }
 
 export function registerAuth(app: FastifyInstance, state: State) {
@@ -112,6 +113,7 @@ export function registerAuth(app: FastifyInstance, state: State) {
   app.post('/api/auth/logout', async (req, reply) => {
     const token = req.cookies[COOKIE];
     if (token) state.sessions.delete(token);
+    state.events.emit('sessions_changed');
     reply.clearCookie(COOKIE, { path: '/' });
     return reply.code(204).send();
   });
@@ -124,7 +126,7 @@ export function registerAuth(app: FastifyInstance, state: State) {
     if (!passwordMatches(acc, old)) return sendError(reply, 403, 'wrong_password');
     Object.assign(acc, hashPassword(next));
     acc.must_change_password = false;
-    endSessionsOf(acc);
+    endSessionsOf(state, acc);
     issueSession(state, req, reply, acc);
     return reply.code(204).send();
   });
@@ -153,12 +155,13 @@ export function registerAuth(app: FastifyInstance, state: State) {
     if (b.view_only !== undefined) acc.view_only = b.view_only;
     if (b.disabled !== undefined) {
       acc.disabled = b.disabled;
-      if (b.disabled) endSessionsOf(acc);
+      if (b.disabled) endSessionsOf(state, acc);
     }
     if (b.password) {
       Object.assign(acc, hashPassword(b.password));
-      endSessionsOf(acc);
+      endSessionsOf(state, acc);
     }
+    state.events.emit('sessions_changed'); // role/permission/view-only changes apply to open sockets too
     return publicUser(acc);
   });
 
@@ -167,7 +170,7 @@ export function registerAuth(app: FastifyInstance, state: State) {
     if (name === req.account!.name) return sendError(reply, 409, 'cannot_delete_self');
     const acc = state.accounts.get(name);
     if (!acc) return sendError(reply, 404, 'not_found');
-    endSessionsOf(acc);
+    endSessionsOf(state, acc);
     state.accounts.delete(name);
     return reply.code(204).send();
   });

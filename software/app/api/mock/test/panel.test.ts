@@ -116,7 +116,7 @@ describe('panel socket', () => {
     p.send('{not json\n');
     expect(await p.next((m) => m.t === 'result')).toEqual({ t: 'result', ok: false, error: 'bad_message' });
     p.send({ t: 'nope', id: 2 });
-    expect(await p.next((m) => m.t === 'result')).toEqual({ t: 'result', ok: false, error: 'bad_message' });
+    expect(await p.next((m) => m.t === 'result')).toEqual({ t: 'result', id: 2, ok: false, error: 'bad_message' });
     p.send({ t: 'device_info', id: 3 });
     const info = await p.next((m) => m.t === 'result' && m.id === 3);
     expect(info.ok).toBe(true);

@@ -235,7 +235,7 @@ paths:
         '401': *unauthenticated
     patch:
       operationId: patchConfig
-      summary: Partial update. Objects merge recursively; null sets a nullable field to null (it never deletes a key). Each top-level section needs its permission (panel/function_key→panel, usb→usb, video/hid→console, serial→terminal, web/device/kvm→device).
+      summary: Partial update. Objects merge recursively; null sets a nullable field to null — except inside panel.thresholds, where null deletes the key. Each top-level section needs its permission (panel/function_key→panel, usb→usb, video/hid→console, serial→terminal, web/device/kvm→device).
       requestBody:
         required: true
         content:
@@ -554,7 +554,7 @@ paths:
         '403': *forbidden
         '404': *notFound
         '409':
-          description: The share is exported to the PC (error=share_busy)
+          description: The share is exported to the PC (share_busy), the path is a folder (is_dir) or the mounted image (in_use)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -564,7 +564,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '507':
-          description: Content-Length exceeds free space (error=no_space)
+          description: Content-Length, or the bytes actually received (chunked uploads), exceed free space (error=no_space); nothing is kept
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -594,7 +594,7 @@ paths:
   /api/files/rename:
     post:
       operationId: renamePath
-      summary: Rename or move within one root
+      summary: Rename or move within one root. Moving a folder into itself → 400 bad_path; moving the mounted image or a folder that contains it → 409 in_use.
       requestBody:
         required: true
         content:
@@ -619,7 +619,7 @@ paths:
   /api/files/delete:
     post:
       operationId: deletePath
-      summary: Delete a file or a folder with its contents
+      summary: Delete a file or a folder with its contents; the mounted image or a folder that contains it → 409 in_use
       requestBody:
         required: true
         content:
@@ -1035,6 +1035,33 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
   /api/mcp:
+    put:
+      operationId: putMcp
+      summary: Enable or disable the MCP API without changing the key (mcp permission)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              additionalProperties: false
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200':
+          description: MCP state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/McpState' }
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+        '409':
+          description: Enabling without a key (error=no_key)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
     get:
       operationId: getMcp
       responses:
@@ -1042,19 +1069,13 @@ paths:
           description: MCP state; the key itself is never returned here
           content:
             application/json:
-              schema:
-                type: object
-                required: [enabled, key_hint]
-                additionalProperties: false
-                properties:
-                  enabled: { type: boolean }
-                  key_hint: { type: [string, 'null'], description: Last 4 characters of the key }
+              schema: { $ref: '#/components/schemas/McpState' }
         '401': *unauthenticated
         '403': *forbidden
   /api/mcp/regenerate:
     post:
       operationId: regenerateMcpKey
-      summary: Create a new key (the old one stops working). This is the only response that contains the full key.
+      summary: Create a new key (the old one stops working) and enable MCP. This is the only response that contains the full key.
       responses:
         '200':
           description: New key
@@ -1117,6 +1138,109 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+  /api/usb/applied:
+    get:
+      operationId: getUsbApplied
+      summary: The USB set the gadget is actually running. pending=true means config.usb differs and needs POST /api/usb/apply; to revert, PATCH config.usb back to this set.
+      responses:
+        '200':
+          description: Applied set
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [usb, pending]
+                additionalProperties: false
+                properties:
+                  usb: { $ref: '#/components/schemas/Config/properties/usb' }
+                  pending: { type: boolean }
+        '401': *unauthenticated
+  /api/mcp/key:
+    delete:
+      operationId: revokeMcpKey
+      summary: Revoke the MCP key; MCP stays disabled until a new key is generated (mcp permission)
+      responses:
+        '204': *noContent
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/mcp/v1/screenshot:
+    get:
+      operationId: mcpScreenshot
+      summary: MCP clients only (Authorization Bearer <key>); current HDMI frame
+      security:
+        - mcpKey: []
+      responses:
+        '200':
+          description: JPEG
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+        '401':
+          description: Missing/wrong key or MCP disabled (error=unauthenticated)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: error=no_signal
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/mcp/v1/hid:
+    post:
+      operationId: mcpHid
+      summary: MCP clients only (Bearer). Body is one /api/ws client input message (key, mouse_abs, mouse_rel, wheel, paste, shortcut; see schema/ws.schema.json).
+      security:
+        - mcpKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '204': *noContent
+        '400':
+          description: Not a valid input message (error=bad_message)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: error=unauthenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/update/settings:
+    put:
+      operationId: putUpdateSettings
+      summary: Choose the update channel and server (updates permission)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateSettings' }
+      responses:
+        '200':
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UpdateSettings' }
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/update/jobs/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getUpdateJob
+      summary: Poll an update job started by apply or offline upload (updates permission)
+      responses:
+        '200':
+          description: Job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UpdateJobEnvelope' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
 components:
   securitySchemes:
     session:
@@ -1205,15 +1329,17 @@ components:
             brightness: { type: integer, minimum: 0, maximum: 100, default: 70 }
             offline_sleep_min: { type: integer, minimum: 0, maximum: 120, default: 5, description: '0 = never sleep' }
             thresholds:
-              description: Warn thresholds by metric id (values flash red above them)
+              description: Warn thresholds (values flash red above them). Keys are metric ids (see README, e.g. gpu.temp) or a prefix pattern ending in `.*` (mem.dimm.* covers mem.dimm.a1…b2); an exact id wins over a pattern. In PATCH, a null value deletes that key.
               type: object
+              propertyNames: { pattern: '^[a-z0-9_]+(\.[a-z0-9_]+)*(\.\*)?$' }
               additionalProperties: { type: number }
-              default: { cpu.tctl: 85, gpu.mem_junction: 95, mem.dimm_temp: 60 }
+              default: { cpu.tctl: 85, gpu.mem_junction: 95, mem.dimm.*: 60 }
             hidden_metrics:
+              description: Metric ids the panel does not show (and the panel socket does not send)
               type: array
               items: { type: string }
               uniqueItems: true
-              default: [sys.fan]
+              default: []
         function_key:
           type: object
           required: [short, long]
@@ -1446,3 +1572,17 @@ components:
             id: { type: string }
             state: { type: string, enum: [running, done, failed] }
             progress: { type: integer, minimum: 0, maximum: 100 }
+    UpdateSettings:
+      type: object
+      required: [channel, server]
+      additionalProperties: false
+      properties:
+        channel: { type: string, enum: [stable, preview] }
+        server: { type: string, format: uri, pattern: "^https?://" }
+    McpState:
+      type: object
+      required: [enabled, key_hint]
+      additionalProperties: false
+      properties:
+        enabled: { type: boolean }
+        key_hint: { type: [string, 'null'], description: Last 4 characters of the key }

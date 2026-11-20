@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { State } from '../state.js';
 import { accountForToken, COOKIE, hasPerm, requirePerm, sendError } from './auth.js';
+import { trackSocket } from '../sockets.js';
 
 const PROMPT = 'root@kvmpanel:~# ';
 const SCRIPT_NAME = /^[A-Za-z0-9._-]{1,64}$/;
@@ -14,6 +15,7 @@ export function registerTerminal(app: FastifyInstance, state: State) {
     const kind = (req.query as { kind?: string }).kind ?? 'local';
     if (kind !== 'local' && kind !== 'serial') return socket.close(4400, 'bad_kind');
     if (kind === 'serial' && !state.config.serial.device) return socket.close(4404, 'no_serial_device');
+    trackSocket(state, socket, req.cookies[COOKIE]!, 'terminal');
 
     const out = (s: string) => socket.readyState === 1 && socket.send(Buffer.from(s, 'utf8'), { binary: true });
     let line = '';
