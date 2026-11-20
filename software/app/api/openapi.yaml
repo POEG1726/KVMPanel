@@ -11,6 +11,36 @@ servers:
     description: mock server on a development PC
 security:
   - session: []
+x-common-responses:
+  unauthenticated: &unauthenticated
+    description: Not logged in or session expired (error=unauthenticated)
+    content:
+      application/json:
+        schema: { $ref: '#/components/schemas/Error' }
+  forbidden: &forbidden
+    description: Missing permission or role (error=forbidden)
+    content:
+      application/json:
+        schema: { $ref: '#/components/schemas/Error' }
+  badRequest: &badRequest
+    description: Invalid request body or parameters
+    content:
+      application/json:
+        schema: { $ref: '#/components/schemas/Error' }
+  notFound: &notFound
+    description: Resource does not exist (error=not_found)
+    content:
+      application/json:
+        schema: { $ref: '#/components/schemas/Error' }
+  conflict: &conflict
+    description: Request conflicts with current state
+    content:
+      application/json:
+        schema: { $ref: '#/components/schemas/Error' }
+  noContent: &noContent
+    description: Done, no body
+  accepted: &accepted
+    description: Accepted, runs in the background
 paths:
   /api/health:
     get:
@@ -24,6 +54,174 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Health'
+  /api/auth/login:
+    post:
+      operationId: login
+      summary: Log in and receive the kvm_session cookie
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              additionalProperties: false
+              properties:
+                username: { type: string, minLength: 1 }
+                password: { type: string }
+      responses:
+        '200':
+          description: Logged in; Set-Cookie kvm_session (HttpOnly)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserEnvelope' }
+        '400': *badRequest
+        '401':
+          description: Wrong username or password (error=invalid_credentials). From the 3rd consecutive failure each failed reply is delayed 1 s.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Account disabled (error=user_disabled)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: Locked for 300 s after 5 consecutive failures (error=login_locked, detail.retry_after_s)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/auth/logout:
+    post:
+      operationId: logout
+      responses:
+        '204': *noContent
+  /api/auth/me:
+    get:
+      operationId: getMe
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserEnvelope' }
+        '401': *unauthenticated
+  /api/users:
+    get:
+      operationId: listUsers
+      summary: List accounts (admin only)
+      responses:
+        '200':
+          description: All accounts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users]
+                additionalProperties: false
+                properties:
+                  users:
+                    type: array
+                    items: { $ref: '#/components/schemas/User' }
+        '401': *unauthenticated
+        '403': *forbidden
+    post:
+      operationId: createUser
+      summary: Create an account (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, password, role]
+              additionalProperties: false
+              properties:
+                name: { $ref: '#/components/schemas/UserName' }
+                password: { type: string, minLength: 6 }
+                role: { $ref: '#/components/schemas/Role' }
+                permissions:
+                  type: array
+                  items: { $ref: '#/components/schemas/Permission' }
+                view_only: { type: boolean }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+        '409': *conflict
+  /api/users/{name}:
+    parameters:
+      - { name: name, in: path, required: true, schema: { $ref: '#/components/schemas/UserName' } }
+    patch:
+      operationId: updateUser
+      summary: Change role, permissions, view-only, disabled or password (admin only). Disabling or a password reset ends the user's sessions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                role: { $ref: '#/components/schemas/Role' }
+                permissions:
+                  type: array
+                  items: { $ref: '#/components/schemas/Permission' }
+                view_only: { type: boolean }
+                disabled: { type: boolean }
+                password: { type: string, minLength: 6 }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+    delete:
+      operationId: deleteUser
+      responses:
+        '204': *noContent
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+        '409':
+          description: An admin cannot delete their own account (error=cannot_delete_self)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/users/me/password:
+    post:
+      operationId: changePassword
+      summary: Change own password. All sessions of the user end; the caller gets a fresh cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [old, new]
+              additionalProperties: false
+              properties:
+                old: { type: string }
+                new: { type: string, minLength: 6 }
+      responses:
+        '204': *noContent
+        '400': *badRequest
+        '401': *unauthenticated
+        '403':
+          description: Old password is wrong (error=wrong_password)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 components:
   securitySchemes:
     session:
@@ -53,3 +251,34 @@ components:
           const: true
         version:
           type: string
+    Role:
+      type: string
+      enum: [admin, user]
+    Permission:
+      type: string
+      enum: [console, power, media, terminal, files, device, network, updates, mcp, tailscale, panel, usb]
+    UserName:
+      type: string
+      pattern: '^[A-Za-z0-9._-]{1,32}$'
+    User:
+      type: object
+      required: [name, role, permissions, view_only, disabled, must_change_password]
+      additionalProperties: false
+      properties:
+        name: { $ref: '#/components/schemas/UserName' }
+        role: { $ref: '#/components/schemas/Role' }
+        permissions:
+          description: Effective permissions; admin always has all of them.
+          type: array
+          items: { $ref: '#/components/schemas/Permission' }
+        view_only:
+          description: Console sessions of this user may watch but not send input.
+          type: boolean
+        disabled: { type: boolean }
+        must_change_password: { type: boolean }
+    UserEnvelope:
+      type: object
+      required: [user]
+      additionalProperties: false
+      properties:
+        user: { $ref: '#/components/schemas/User' }

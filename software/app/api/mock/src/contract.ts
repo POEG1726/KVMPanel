@@ -46,6 +46,43 @@ export function schemaValidator(name: string): ValidateFunction {
   return v;
 }
 
+type RequestOp = Operation & { requestBody?: { content?: Record<string, { schema?: unknown }> } };
+
+/**
+ * Validates a JSON request body against the contract. Returns null when valid,
+ * otherwise the JSON pointer of the first offending field (for `detail.path`).
+ */
+export function checkRequest(operationId: string, body: unknown): { path: string } | null {
+  const entry = opIndex.get(operationId);
+  if (!entry) throw new Error(`unknown operationId ${operationId}`);
+  const media = (entry.op as RequestOp).requestBody?.content?.['application/json'];
+  if (!media?.schema) return null;
+  const key = `req:${operationId}`;
+  let v = cache.get(key);
+  if (!v) {
+    const ptr = ['paths', entry.path, entry.method, 'requestBody', 'content', 'application/json', 'schema']
+      .map(pointerEscape)
+      .join('/');
+    v = ajv.compile({ $ref: `${DOC_ID}#/${ptr}` });
+    cache.set(key, v);
+  }
+  if (v(body)) return null;
+  return { path: firstErrorPath(v) };
+}
+
+/** JSON pointer of the first Ajv error, pointing at the unknown property itself for additionalProperties. */
+export function firstErrorPath(v: ValidateFunction): string {
+  const e = v.errors?.[0];
+  if (!e) return '';
+  if (e.keyword === 'additionalProperties') {
+    return `${e.instancePath}/${(e.params as { additionalProperty: string }).additionalProperty}`;
+  }
+  if (e.keyword === 'required') {
+    return `${e.instancePath}/${(e.params as { missingProperty: string }).missingProperty}`;
+  }
+  return e.instancePath;
+}
+
 /** Throws unless `body` matches the JSON response schema of `operationId` for `status`. */
 export function validateResponse(operationId: string, status: number, body: unknown): void {
   const entry = opIndex.get(operationId);
