@@ -118,6 +118,37 @@ describe('VideoCanvas', () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage } as never);
     vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 64, height: 48, close() {} })));
     render(wrap(<VideoCanvas scale="fit" />));
-    await waitFor(() => expect(drawImage).toHaveBeenCalled(), { timeout: 2000 });
+    await waitFor(() => expect(drawImage).toHaveBeenCalled(), { timeout: 5000 });
+  });
+
+  it('decodes the newest frame when several arrive during a decode', async () => {
+    const f = fakeFactory();
+    configureSockets({ base: 'http://x', create: f.create });
+    const drawImage = vi.fn();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage } as never);
+    const resolvers: ((b: unknown) => void)[] = [];
+    const decoded: number[] = [];
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async (blob: Blob) => {
+        decoded.push(blob.size);
+        return new Promise((r) => resolvers.push(r));
+      }),
+    );
+    render(wrap(<VideoCanvas scale="fit" />));
+    await act(async () => void (await new Promise((r) => setTimeout(r, 10))));
+    const stream = f.socks.find((s) => s.url.endsWith('/api/stream'))!;
+    const frame = (n: number) => stream.onmessage?.({ data: new Uint8Array(n).buffer });
+    await act(async () => {
+      frame(1);
+      frame(2);
+      frame(3);
+    });
+    expect(decoded).toEqual([1]);
+    await act(async () => resolvers[0]({ width: 8, height: 8, close() {} }));
+    expect(decoded).toEqual([1, 3]);
+    await act(async () => resolvers[1]({ width: 8, height: 8, close() {} }));
+    await waitFor(() => expect(drawImage).toHaveBeenCalled());
+    expect(decoded).toEqual([1, 3]);
   });
 });

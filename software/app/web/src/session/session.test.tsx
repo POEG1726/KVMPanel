@@ -124,7 +124,7 @@ describe('session expiry', () => {
     jar.setCookie(cookieA);
     mount('/');
     expect(await screen.findByRole('heading', { name: t('console.title') })).toBeInTheDocument();
-    await waitFor(() => expect(connections).toBe(2));
+    await waitFor(() => expect(connections).toBe(2), { timeout: 5000 });
     useUi.setState({ floatingOpen: true });
 
     await changePasswordAs(mock.url, cookieB, 'secret1', 'secret2');

@@ -53,18 +53,31 @@ export function VideoCanvas({ scale, onPointer }: Props) {
     bmp.close?.();
   }, []);
 
-  // A frame that arrives while the previous one is still decoding is dropped.
-  useStream((jpeg) => {
-    if (decoding.current) return;
+  // Only the newest undecoded frame is kept: while one decodes, each arrival replaces the queued bytes.
+  const pending = useRef<ArrayBuffer | null>(null);
+  const alive = useRef(true);
+  const decodeNext = useCallback(() => {
+    const jpeg = pending.current;
+    if (!jpeg || decoding.current) return;
+    pending.current = null;
     decoding.current = true;
     createImageBitmap(new Blob([jpeg], { type: 'image/jpeg' }))
       .then((bmp) => {
+        if (!alive.current) return bmp.close?.();
         latest.current?.close?.();
         latest.current = bmp;
         if (!raf.current) raf.current = requestAnimationFrame(draw);
       })
       .catch(() => undefined)
-      .finally(() => (decoding.current = false));
+      .finally(() => {
+        decoding.current = false;
+        decodeNext();
+      });
+  }, [draw]);
+
+  useStream((jpeg) => {
+    pending.current = jpeg;
+    decodeNext();
   });
 
   const emit = useCallback(
@@ -95,6 +108,8 @@ export function VideoCanvas({ scale, onPointer }: Props) {
 
   useEffect(
     () => () => {
+      alive.current = false;
+      pending.current = null;
       cancelAnimationFrame(raf.current);
       cancelAnimationFrame(pointerRaf.current);
       latest.current?.close?.();
@@ -129,6 +144,8 @@ export function VideoCanvas({ scale, onPointer }: Props) {
   };
 
   const onPointerEvent = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    // In relative mode motion only counts while the pointer is locked to this canvas.
+    if (relative && e.type === 'pointermove' && document.pointerLockElement !== e.currentTarget) return;
     buttons.current = buttonsMask(e.nativeEvent);
     if (relative) {
       pendingRel.current.dx += e.nativeEvent.movementX || 0;
