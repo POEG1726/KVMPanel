@@ -85,8 +85,7 @@ fn set_link(apps: &Path, label: &str, release: Option<&Path>) -> io::Result<()> 
     fs::File::open(apps)?.sync_all()
 }
 pub(super) fn activate(apps: &Path, stage: tempfile::TempDir, job: &str) -> io::Result<()> {
-    let lock = fs::File::open(apps)?;
-    lock.lock()?;
+    // Caller holds the apps directory lock from staging through publication.
     if apps.join(PENDING).try_exists()? {
         return Err(io::Error::other("update already pending"));
     }
@@ -143,6 +142,71 @@ pub(super) fn settle_jobs(data: &Path, jobs: &mut BTreeMap<String, Value>) -> io
     Ok(changed)
 }
 
+fn prune(apps: &Path) -> io::Result<()> {
+    // Only remove release directories created by kvmd. Keep the old previous
+    // until the new current has actually proved healthy.
+    let keep_current = release_link(apps, "current")?;
+    let keep_previous = release_link(apps, "previous")?;
+    for entry in fs::read_dir(apps)? {
+        let entry = entry?;
+        let name = PathBuf::from(entry.file_name());
+        let kind = entry.file_type()?;
+        if kind.is_dir()
+            && (checked_name(&name).is_ok()
+                || name
+                    .as_os_str()
+                    .as_encoded_bytes()
+                    .starts_with(b".incoming-"))
+            && Some(&name) != keep_current.as_ref()
+            && Some(&name) != keep_previous.as_ref()
+        {
+            fs::remove_dir_all(entry.path())?;
+        } else if kind.is_symlink() && name.as_os_str().as_encoded_bytes().starts_with(b".link-") {
+            fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn cleanup_on_boot(data: &Path) -> io::Result<()> {
+    let apps = data.join("apps");
+    let lock = match fs::File::open(&apps) {
+        Ok(f) => f,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    lock.lock()?;
+    if apps.join(PENDING).try_exists()? {
+        return Ok(());
+    }
+    if let Some(current) = release_link(&apps, "current")? {
+        // Old versions had only a current link. For that layout retain the
+        // newest other complete bundle as the previous release.
+        if release_link(&apps, "previous")?.is_none() {
+            let mut candidates = Vec::new();
+            for entry in fs::read_dir(&apps)? {
+                let entry = entry?;
+                let name = PathBuf::from(entry.file_name());
+                if checked_name(&name).is_err() || name == current || !entry.file_type()?.is_dir() {
+                    continue;
+                }
+                let path = entry.path();
+                if ["kvmd", "panel", "web/index.html"]
+                    .iter()
+                    .all(|file| path.join(file).is_file())
+                {
+                    candidates.push((entry.metadata()?.modified()?, name));
+                }
+            }
+            if let Some((_, name)) = candidates.into_iter().max() {
+                set_link(&apps, "previous", Some(&name))?;
+            }
+        }
+    }
+    prune(&apps)?;
+    lock.sync_all()
+}
+
 fn finish(apps: &Path, trial: &Trial, passed: bool) -> io::Result<()> {
     let lock = fs::File::open(apps)?;
     lock.lock()?;
@@ -160,21 +224,7 @@ fn finish(apps: &Path, trial: &Trial, passed: bool) -> io::Result<()> {
     } else if passed || current != trial.previous {
         return Err(io::Error::other("current release changed during trial"));
     }
-    // Only remove release directories created by kvmd. Keep the old previous
-    // until the new current has actually proved healthy.
-    let keep_current = release_link(apps, "current")?;
-    let keep_previous = release_link(apps, "previous")?;
-    for entry in fs::read_dir(apps)? {
-        let entry = entry?;
-        let name = PathBuf::from(entry.file_name());
-        if checked_name(&name).is_ok()
-            && Some(&name) != keep_current.as_ref()
-            && Some(&name) != keep_previous.as_ref()
-            && entry.file_type()?.is_dir()
-        {
-            fs::remove_dir_all(entry.path())?;
-        }
-    }
+    prune(apps)?;
     atomic_write(
         &apps.join(RESULT),
         &serde_json::to_vec(&Outcome {

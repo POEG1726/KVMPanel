@@ -28,6 +28,9 @@ pub(super) fn recover_jobs(
     data: &Path,
     jobs: &mut std::collections::BTreeMap<String, Value>,
 ) -> io::Result<bool> {
+    if let Err(e) = trial::cleanup_on_boot(data) {
+        eprintln!("cleaning old app bundles: {e}");
+    }
     let mut changed = trial::settle_jobs(data, jobs)?;
     let pending = trial::pending_job(data)?;
     for (id, job) in jobs.iter_mut() {
@@ -307,6 +310,8 @@ async fn install(app: &App, file: Option<NamedTempFile>, id: &str) -> io::Result
 
 fn activate(apps: &Path, mut file: NamedTempFile, id: &str) -> io::Result<()> {
     fs::create_dir_all(apps)?;
+    let directory = fs::File::open(apps)?;
+    directory.lock()?;
     let stage = tempfile::Builder::new()
         .prefix(".incoming-")
         .tempdir_in(apps)?;

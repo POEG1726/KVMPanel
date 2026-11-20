@@ -152,3 +152,37 @@ async fn new_update_requests_are_busy_during_health_verification() {
         );
     }
 }
+
+#[test]
+fn cleans_pretrial_release_history_on_startup() {
+    use std::os::unix::fs::symlink;
+    let data = tempfile::tempdir().unwrap();
+    let apps = data.path().join("apps");
+    for name in ["release-one", "release-two", "release-three"] {
+        let release = apps.join(name);
+        fs::create_dir_all(release.join("web")).unwrap();
+        for file in ["kvmd", "panel", "web/index.html"] {
+            fs::write(release.join(file), b"test").unwrap();
+        }
+    }
+    // Make the order deterministic even on filesystems with coarse timestamps.
+    for (offset, name) in ["release-one", "release-two", "release-three"]
+        .iter()
+        .enumerate()
+    {
+        let f = fs::File::open(apps.join(name)).unwrap();
+        let time = std::time::SystemTime::UNIX_EPOCH
+            + std::time::Duration::from_secs(offset as u64 + 1000);
+        f.set_times(fs::FileTimes::new().set_modified(time))
+            .unwrap();
+    }
+    symlink("release-three", apps.join("current")).unwrap();
+    fs::create_dir(apps.join(".incoming-abandoned")).unwrap();
+    System::new(data.path()).unwrap();
+    assert_eq!(
+        fs::read_link(apps.join("previous")).unwrap(),
+        std::path::Path::new("release-two")
+    );
+    assert!(apps.join("release-three").exists() && apps.join("release-two").exists());
+    assert!(!apps.join("release-one").exists() && !apps.join(".incoming-abandoned").exists());
+}
