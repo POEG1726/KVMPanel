@@ -3,6 +3,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { contract } from './contract.js';
 import { defaultConfig, type Config } from './configDefaults.js';
 import { edid1080p } from './frames.js';
+import { seedVolumes, type Root, type Volume } from './memfs.js';
 
 export const ALL_PERMISSIONS = [
   'console', 'power', 'media', 'terminal', 'files', 'device',
@@ -36,6 +37,15 @@ export interface Hdmi { signal: boolean; width: number; height: number; fps: num
 export interface Locks { num: boolean; caps: boolean; scroll: boolean }
 export interface Power { on: boolean; hdd: boolean }
 export interface MediaState { mounted: string | null; mode: 'cdrom' | 'disk' | null }
+export interface MediaMount { root: 'sd'; path: string; mode: 'cdrom' | 'disk'; readonly: boolean }
+export interface DownloadJob {
+  id: string;
+  url: string;
+  path: string;
+  state: 'running' | 'paused' | 'done' | 'failed' | 'canceled';
+  received: number;
+  total: number;
+}
 
 export interface LoginGuard {
   failures: number;
@@ -59,6 +69,10 @@ export interface State {
   media: MediaState;
   edid: { hex: string; preset: '1080p' | 'custom' };
   wol: { name: string; mac: string }[];
+  volumes: Record<Root, Volume>;
+  mediaMount: MediaMount | null;
+  jobs: DownloadJob[];
+  share: { exported_to_host: boolean };
 }
 
 export function hashPassword(password: string, salt = randomBytes(16).toString('hex')): { salt: string; hash: string } {
@@ -90,5 +104,9 @@ export function createState(opts: { now?: () => number; sleep?: (ms: number) => 
     media: { mounted: null, mode: null },
     edid: { hex: edid1080p(), preset: '1080p' },
     wol: [],
+    volumes: seedVolumes(),
+    mediaMount: null,
+    jobs: [],
+    share: { exported_to_host: false },
   };
 }

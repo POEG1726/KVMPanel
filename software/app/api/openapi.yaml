@@ -464,6 +464,338 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '401': *unauthenticated
         '403': *forbidden
+  /api/storage:
+    get:
+      operationId: getStorage
+      summary: Capacity of the file-manager roots (files permission)
+      responses:
+        '200':
+          description: One entry per root
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Volume' }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/files:
+    get:
+      operationId: listFiles
+      summary: List a folder. sd/share paths may not contain `..`; system accepts any absolute path and needs the admin role (files permission).
+      parameters:
+        - { name: root, in: query, required: true, schema: { $ref: '#/components/schemas/Root' } }
+        - { name: path, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Folder entries, folders first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries]
+                additionalProperties: false
+                properties:
+                  entries:
+                    type: array
+                    items: { $ref: '#/components/schemas/FileEntry' }
+        '400':
+          description: Invalid root or path (error=bad_path)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+  /api/files/download:
+    get:
+      operationId: downloadFile
+      parameters:
+        - { name: root, in: query, required: true, schema: { $ref: '#/components/schemas/Root' } }
+        - { name: path, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: File bytes (streamed, Content-Disposition attachment)
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '400':
+          description: error=bad_path
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+  /api/files/upload:
+    put:
+      operationId: uploadFile
+      summary: Upload raw bytes (Content-Type application/octet-stream) to root+path, replacing an existing file. Nothing is kept if the client disconnects or the checksum fails.
+      parameters:
+        - { name: root, in: query, required: true, schema: { $ref: '#/components/schemas/Root' } }
+        - { name: path, in: query, required: true, schema: { type: string } }
+        - { name: X-Sha256, in: header, required: false, schema: { type: string, pattern: '^[0-9a-fA-F]{64}$' } }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '201':
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FileEntry' }
+        '400':
+          description: error=bad_path
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+        '409':
+          description: The share is exported to the PC (error=share_busy)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: X-Sha256 does not match (error=checksum_mismatch)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '507':
+          description: Content-Length exceeds free space (error=no_space)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/files/mkdir:
+    post:
+      operationId: makeDir
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PathRef' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FileEntry' }
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+        '409':
+          description: Already exists (error=exists) or share exported (error=share_busy)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/files/rename:
+    post:
+      operationId: renamePath
+      summary: Rename or move within one root
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: '#/components/schemas/PathRef' }
+              required: [to]
+              properties:
+                to: { type: string }
+      responses:
+        '204': *noContent
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+        '409':
+          description: Target exists (exists), mounted image (in_use) or share exported (share_busy)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/files/delete:
+    post:
+      operationId: deletePath
+      summary: Delete a file or a folder with its contents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PathRef' }
+      responses:
+        '204': *noContent
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+        '409':
+          description: Mounted image (in_use) or share exported (share_busy)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/share:
+    get:
+      operationId: getShare
+      summary: Whether the share volume is currently exported to the PC as a USB disk (files permission)
+      responses:
+        '200':
+          description: Share state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShareState' }
+        '401': *unauthenticated
+        '403': *forbidden
+    post:
+      operationId: setShare
+      summary: Export the share to the PC (it becomes read-only here) or take it back (media permission)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ShareState' }
+      responses:
+        '200':
+          description: New share state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShareState' }
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/media:
+    get:
+      operationId: getMedia
+      summary: Virtual media presented to the PC (media permission)
+      responses:
+        '200':
+          description: Mount state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MediaState' }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/media/mount:
+    post:
+      operationId: mountMedia
+      summary: Present an SD image. cdrom accepts .iso (ISO 9660/UDF) and is always read-only; disk accepts .iso/.img and is read-only unless readonly=false.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [root, path, mode]
+              additionalProperties: false
+              properties:
+                root: { const: sd }
+                path: { type: string }
+                mode: { type: string, enum: [cdrom, disk] }
+                readonly: { type: boolean }
+      responses:
+        '200':
+          description: Mounted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MediaState' }
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+        '409':
+          description: Something is already mounted (error=already_mounted)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: File type cannot be presented in this mode (error=bad_image)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/media/eject:
+    post:
+      operationId: ejectMedia
+      responses:
+        '204': *noContent
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/media/download:
+    post:
+      operationId: startDownload
+      summary: Download an image from an http(s) URL to an SD path in the background
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, path]
+              additionalProperties: false
+              properties:
+                url: { type: string }
+                path: { type: string, description: SD path of the new file }
+                sha256: { type: string, pattern: '^[0-9a-fA-F]{64}$' }
+      responses:
+        '202':
+          description: Job started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job]
+                additionalProperties: false
+                properties:
+                  job: { $ref: '#/components/schemas/DownloadJob' }
+        '400':
+          description: error=bad_url, bad_path or invalid_body
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+        '409': *conflict
+  /api/media/jobs:
+    get:
+      operationId: listJobs
+      responses:
+        '200':
+          description: Download jobs, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobs]
+                additionalProperties: false
+                properties:
+                  jobs:
+                    type: array
+                    items: { $ref: '#/components/schemas/DownloadJob' }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/media/jobs/{id}/{action}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: action, in: path, required: true, schema: { type: string, enum: [pause, resume, cancel] } }
+    post:
+      operationId: controlJob
+      summary: pause (running→paused), resume (paused→running), cancel (running|paused→canceled, partial file removed)
+      responses:
+        '200':
+          description: Job after the change
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DownloadJob' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+        '409':
+          description: Not allowed from the current state (error=bad_state)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 components:
   securitySchemes:
     session:
@@ -655,3 +987,64 @@ components:
       properties:
         name: { type: string }
         mac: { type: string, pattern: '^([0-9a-f]{2}:){5}[0-9a-f]{2}$' }
+    Root:
+      type: string
+      enum: [sd, share, system]
+    Volume:
+      type: object
+      required: [root, total, free, mounted]
+      additionalProperties: false
+      properties:
+        root: { $ref: '#/components/schemas/Root' }
+        total: { type: number, minimum: 0, description: bytes }
+        free: { type: number, minimum: 0, description: bytes }
+        mounted: { type: boolean }
+    FileEntry:
+      type: object
+      required: [name, type, size, mtime]
+      additionalProperties: false
+      properties:
+        name: { type: string }
+        type: { type: string, enum: [dir, file] }
+        size: { type: number, minimum: 0, description: bytes; 0 for folders }
+        mtime: { type: integer, description: Unix ms }
+        mounted: { type: boolean, description: Present and true when this image is the mounted virtual media }
+    PathRef:
+      type: object
+      required: [root, path]
+      properties:
+        root: { $ref: '#/components/schemas/Root' }
+        path: { type: string }
+    ShareState:
+      type: object
+      required: [exported_to_host]
+      additionalProperties: false
+      properties:
+        exported_to_host: { type: boolean }
+    MediaState:
+      type: object
+      required: [mounted, readonly]
+      additionalProperties: false
+      properties:
+        mounted:
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [root, path, mode]
+              additionalProperties: false
+              properties:
+                root: { const: sd }
+                path: { type: string }
+                mode: { type: string, enum: [cdrom, disk] }
+        readonly: { type: boolean }
+    DownloadJob:
+      type: object
+      required: [id, url, path, state, received, total]
+      additionalProperties: false
+      properties:
+        id: { type: string }
+        url: { type: string }
+        path: { type: string }
+        state: { type: string, enum: [running, paused, done, failed, canceled] }
+        received: { type: number, minimum: 0 }
+        total: { type: number, minimum: 0, description: 0 when the server sent no length }
