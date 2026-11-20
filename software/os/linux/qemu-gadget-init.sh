@@ -120,9 +120,15 @@ stop_gadget
 KEYBOARD=0 REL_MOUSE=0 ABS_MOUSE=0 STORAGE=0 TELEMETRY=0 ACM=1 kvmpanel-gadget start
 wait_for configured
 wait_for find_device
+wait_for test -c /dev/ttyACM0
 [ "$(cat "$usb/bNumInterfaces")" -eq 2 ]
+[ "$(cat "$usb/bDeviceClass")" = ef ]
+[ "$(cat "$usb/bDeviceSubClass")" = 02 ]
+[ "$(cat "$usb/bDeviceProtocol")" = 01 ]
+[ "$(cat "$usb":1.0/bInterfaceClass)" = 02 ]
+[ "$(cat "$usb":1.1/bInterfaceClass)" = 0a ]
 stop_gadget
-echo "PASS ACM-only control and data interfaces"
+echo "PASS ACM-only IAD ef/02/01 and host ttyACM0"
 
 for mode in ncm rndis; do
 	NETWORK=$mode MERGE_MICE=1 kvmpanel-gadget start

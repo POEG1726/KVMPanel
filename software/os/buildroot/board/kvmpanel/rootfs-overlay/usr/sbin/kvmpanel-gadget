@@ -96,11 +96,14 @@ echo KVMPanel > "$c/strings/0x409/configuration"
 
 link_function() { ln -s "$f/$1" "$c/"; }
 
-if [ "$net" = 1 ]; then
-	# IAD composite class; put RNDIS first for Windows' composite driver.
+if [ "$net" = 1 ] || [ "$acm" = 1 ]; then
+	# Advertise the interface associations used by CDC functions.
 	echo 0xef > "$g/bDeviceClass"
 	echo 2 > "$g/bDeviceSubClass"
 	echo 1 > "$g/bDeviceProtocol"
+fi
+if [ "$net" = 1 ]; then
+	# Put RNDIS first for the Windows composite driver.
 	eth=$f/$network.usb0
 	mkdir "$eth"
 	echo 02:4b:56:4d:00:01 > "$eth/dev_addr"
