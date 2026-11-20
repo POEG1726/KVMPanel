@@ -286,24 +286,6 @@ async fn wake(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Split a scaled scroll into signed HID deltas without wrapping or losing distance.
-fn wheel_steps(dy: i64, config: &Value) -> Vec<i64> {
-    let speed = config["wheel_speed"].as_i64().unwrap_or(1).clamp(1, 10);
-    let direction = if config["wheel_dir"] == "reverse" {
-        -1
-    } else {
-        1
-    };
-    let mut total = dy * speed * direction;
-    let mut reports = Vec::new();
-    while total != 0 {
-        let step = total.clamp(-127, 127);
-        reports.push(step);
-        total -= step;
-    }
-    reports
-}
-
 async fn type_paste<F, Fut>(
     strokes: Vec<(u8, u8)>,
     allowed: impl Fn() -> bool,
@@ -393,7 +375,7 @@ async fn input_for(
     let mut event = msg.clone();
     crate::normalize_numbers(&mut event);
     match event["t"].as_str() {
-        Some("paste") if !app.sim => {
+        Some("paste") => {
             let hw = app.hw.clone();
             let caps = tokio::task::spawn_blocking(move || hw.locks())
                 .await
@@ -404,8 +386,12 @@ async fn input_for(
                 caps["caps"] == true,
             )
             .map_err(|e| {
-                ApiError::new(400, "bad_message").with_detail(json!({"reason":e.to_string()}))
+                ApiError::new(400, "unmappable").with_detail(json!({"reason":e.to_string()}))
             })?;
+            // Sim has no host to receive reports, but validates the entire paste using the same layout.
+            if app.sim {
+                return Ok(());
+            }
             type_paste(keys, allowed, |modifiers, usage| {
                 let app = app.clone();
                 async move {
@@ -418,19 +404,6 @@ async fn input_for(
                 }
             })
             .await?;
-        }
-        Some("wheel") => {
-            for step in wheel_steps(event["dy"].as_i64().unwrap(), hid) {
-                if !allowed() {
-                    return Err(ApiError::new(403, "forbidden"));
-                }
-                let app = app.clone();
-                tokio::task::spawn_blocking(move || {
-                    hid_write(&app, session, |hw| hw.hid(&json!({"t":"wheel","dy":step})))
-                })
-                .await
-                .map_err(io::Error::other)??;
-            }
         }
         _ => {
             let target = app.clone();
@@ -589,7 +562,7 @@ async fn console(
             _=interval.tick()=>Some(status(&app).await),
             done=async { operation.as_mut().unwrap().await }, if busy=>{
                 operation=None;
-                done.err().map(|e|json!({"t":"error","error":if e.code=="forbidden"{"forbidden"}else{"bad_message"}}))
+                done.err().map(|e|json!({"t":"error","error":match e.code.as_str(){"forbidden"=>"forbidden","unmappable"=>"unmappable",_=>"bad_message"}}))
             },
             msg=async {
                 if !busy {
@@ -695,18 +668,6 @@ mod input_tests {
             .write_hid(None, || record("reset"), || Ok(()))
             .unwrap();
         assert_eq!(*log.borrow(), ["existing", "reset", "new", "reset"]);
-    }
-
-    #[test]
-    fn wheel_uses_signed_hid_range_and_preserves_total() {
-        let cfg = json!({"wheel_speed":10,"wheel_dir":"reverse"});
-        assert_eq!(wheel_steps(-127, &cfg), vec![127; 10]);
-        assert_eq!(wheel_steps(19, &cfg), [-127, -63]);
-        assert!(wheel_steps(0, &cfg).is_empty());
-        assert_eq!(
-            wheel_steps(42, &json!({"wheel_speed":1,"wheel_dir":"normal"})),
-            [42]
-        );
     }
 
     #[tokio::test(start_paused = true)]

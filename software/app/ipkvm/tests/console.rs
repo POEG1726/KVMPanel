@@ -359,3 +359,34 @@ async fn new_and_resumed_streams_immediately_send_the_cached_frame() {
         assert!(current.starts_with(&[0xff, 0xd8]) && current.ends_with(&[0xff, 0xd9]));
     }
 }
+
+#[tokio::test]
+async fn paste_obeys_layout_and_utf8_byte_limit() {
+    let server = Server::new().await;
+    let admin = server.login("admin", "admin").await;
+    let mut ws = open(&server, "/api/ws", &admin).await;
+    for text in ["abc中", "abcÄ"] {
+        send(&mut ws, json!({"t":"paste","text":text})).await;
+        assert_eq!(
+            next_json(&mut ws, |v| v["t"] == "error").await,
+            json!({"t":"error","error":"unmappable"})
+        );
+    }
+    server
+        .app
+        .patch_config(&json!({"hid":{"keyboard_layout":"de"}}), None)
+        .unwrap();
+    let full = "ä".repeat(32768);
+    assert_eq!(full.len(), 65536);
+    send(&mut ws, json!({"t":"paste","text":full})).await;
+    send(&mut ws, json!({"t":"ping"})).await;
+    assert_eq!(
+        next_json(&mut ws, |v| v["t"] == "error" || v["t"] == "pong").await,
+        json!({"t":"pong"})
+    );
+    send(&mut ws, json!({"t":"paste","text":full+"a"})).await;
+    assert_eq!(
+        next_json(&mut ws, |v| v["t"] == "error").await,
+        json!({"t":"error","error":"bad_message"})
+    );
+}
