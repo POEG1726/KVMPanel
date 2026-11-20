@@ -1,0 +1,55 @@
+openapi: 3.1.0
+info:
+  title: KVMPanel API
+  version: 0.1.0
+  description: |
+    HTTP contract between the KVMPanel web frontend and kvmd.
+    WebSocket channels and the panel socket are described in README.md.
+    Errors always use the Error schema; user-facing text is translated by clients from `error`.
+servers:
+  - url: http://127.0.0.1:8800
+    description: mock server on a development PC
+security:
+  - session: []
+paths:
+  /api/health:
+    get:
+      operationId: getHealth
+      summary: Liveness and contract version
+      security: []
+      responses:
+        '200':
+          description: Server is up
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: kvm_session
+    mcpKey:
+      type: http
+      scheme: bearer
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: string
+          pattern: '^[a-z][a-z0-9_]*$'
+        detail:
+          type: object
+    Health:
+      type: object
+      required: [ok, version]
+      additionalProperties: false
+      properties:
+        ok:
+          const: true
+        version:
+          type: string
