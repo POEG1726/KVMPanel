@@ -16,9 +16,9 @@ Signed-off-by: Codex <noreply@openai.com>
  drivers/gpu/drm/panel/panel-td4322.c   | 257 +++++++++++++++++++++++++++++++++
  drivers/gpu/drm/sun4i/sun4i_tcon.c     |  33 +++--
  drivers/gpu/drm/sun4i/sun4i_tcon.h     |   2 +
- drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c | 177 ++++++++++++++++++++---
- drivers/gpu/drm/sun4i/sun6i_mipi_dsi.h |   7 +
- 8 files changed, 457 insertions(+), 31 deletions(-)
+ drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c | 204 +++++++++++++++++++++++---
+ drivers/gpu/drm/sun4i/sun6i_mipi_dsi.h |  11 ++
+ 8 files changed, 488 insertions(+), 31 deletions(-)
 
 diff --git a/MAINTAINERS b/MAINTAINERS
 index 3183d26f3..6a5c23579 100644
@@ -422,19 +422,20 @@ index fa23aa23f..94cdcd1ba 100644
  	/* Reset control */
  	struct reset_control		*lcd_rst;
 diff --git a/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c b/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c
-index 23ef266c3..f4cbf1451 100644
+index 23ef266c3..c54b9bdbf 100644
 --- a/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c
 +++ b/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.c
-@@ -10,6 +10,8 @@
+@@ -10,6 +10,9 @@
  #include <linux/clk.h>
  #include <linux/component.h>
  #include <linux/crc-ccitt.h>
 +#include <linux/gpio/consumer.h>
 +#include <linux/interrupt.h>
++#include <linux/jiffies.h>
  #include <linux/module.h>
  #include <linux/of_address.h>
  #include <linux/phy/phy-mipi-dphy.h>
-@@ -80,6 +82,7 @@
+@@ -80,6 +83,7 @@
  #define SUN6I_DSI_INST_JUMP_SEL_REG	0x048
  
  #define SUN6I_DSI_INST_JUMP_CFG_REG(n)	(0x04c + (n) * 0x04)
@@ -442,7 +443,7 @@ index 23ef266c3..f4cbf1451 100644
  #define SUN6I_DSI_INST_JUMP_CFG_TO(n)		(((n) & 0xf) << 20)
  #define SUN6I_DSI_INST_JUMP_CFG_POINT(n)	(((n) & 0xf) << 16)
  #define SUN6I_DSI_INST_JUMP_CFG_NUM(n)		((n) & 0xffff)
-@@ -104,6 +107,9 @@
+@@ -104,6 +108,9 @@
  #define SUN6I_DSI_PIXEL_PH_VC(n)		(((n) & 3) << 6)
  #define SUN6I_DSI_PIXEL_PH_DT(n)		((n) & 0x3f)
  
@@ -452,7 +453,7 @@ index 23ef266c3..f4cbf1451 100644
  #define SUN6I_DSI_PIXEL_PF0_REG		0x098
  #define SUN6I_DSI_PIXEL_PF0_CRC_FORCE(n)	((n) & 0xffff)
  
-@@ -168,6 +174,7 @@ enum sun6i_dsi_start_inst {
+@@ -168,6 +175,7 @@ enum sun6i_dsi_start_inst {
  	DSI_START_LPTX,
  	DSI_START_HSC,
  	DSI_START_HSD,
@@ -460,7 +461,7 @@ index 23ef266c3..f4cbf1451 100644
  };
  
  enum sun6i_dsi_inst_id {
-@@ -306,12 +313,14 @@ static void sun6i_dsi_inst_commit(struct sun6i_dsi *dsi)
+@@ -306,12 +314,14 @@ static void sun6i_dsi_inst_commit(struct sun6i_dsi *dsi)
  
  static int sun6i_dsi_inst_wait_for_completion(struct sun6i_dsi *dsi)
  {
@@ -476,7 +477,7 @@ index 23ef266c3..f4cbf1451 100644
  }
  
  static void sun6i_dsi_inst_setup(struct sun6i_dsi *dsi,
-@@ -459,7 +468,15 @@ static void sun6i_dsi_setup_inst_loop(struct sun6i_dsi *dsi,
+@@ -459,7 +469,15 @@ static void sun6i_dsi_setup_inst_loop(struct sun6i_dsi *dsi,
  	struct mipi_dsi_device *device = dsi->device;
  	u16 delay = 50 - 1;
  
@@ -493,7 +494,7 @@ index 23ef266c3..f4cbf1451 100644
  		u32 hsync_porch = (mode->htotal - mode->hdisplay) * 150;
  
  		delay = (hsync_porch / ((mode->clock / 1000) * 8));
-@@ -530,6 +547,28 @@ static void sun6i_dsi_setup_format(struct sun6i_dsi *dsi,
+@@ -530,6 +548,28 @@ static void sun6i_dsi_setup_format(struct sun6i_dsi *dsi,
  		     SUN6I_DSI_PIXEL_CTL0_FORMAT(fmt));
  }
  
@@ -522,7 +523,7 @@ index 23ef266c3..f4cbf1451 100644
  static void sun6i_dsi_setup_timings(struct sun6i_dsi *dsi,
  				    struct drm_display_mode *mode)
  {
-@@ -691,6 +730,15 @@ static int sun6i_dsi_start(struct sun6i_dsi *dsi,
+@@ -691,6 +731,15 @@ static int sun6i_dsi_start(struct sun6i_dsi *dsi,
  			     DSI_INST_ID_HSC  << (4 * DSI_INST_ID_LP11) |
  			     DSI_INST_ID_END  << (4 * DSI_INST_ID_HSC));
  		break;
@@ -538,54 +539,76 @@ index 23ef266c3..f4cbf1451 100644
  	case DSI_START_HSD:
  		regmap_write(dsi->regs, SUN6I_DSI_INST_JUMP_SEL_REG,
  			     DSI_INST_ID_NOP  << (4 * DSI_INST_ID_LP11) |
-@@ -716,6 +764,46 @@ static int sun6i_dsi_start(struct sun6i_dsi *dsi,
+@@ -716,6 +765,68 @@ static int sun6i_dsi_start(struct sun6i_dsi *dsi,
  	return 0;
  }
  
-+/* Launch at most one full frame per external TE. Leave an in-flight frame alone. */
++/* A TE edge and the watchdog share one sequencer with LP commands. */
++static bool sun6i_dsi_trigger_frame(struct sun6i_dsi *dsi)
++{
++	struct sun4i_tcon *tcon = dsi->refresh_tcon;
++	u32 status;
++
++	lockdep_assert_held(&dsi->xfer_lock);
++	if (!tcon || time_before(jiffies, dsi->next_trigger))
++		return false;
++
++	if (regmap_read(tcon->regs, SUN4I_TCON0_CPU_IF_REG, &status) ||
++	    (status & SUN4I_TCON0_CPU_IF_TRI_START))
++		return false;
++	if (regmap_read(dsi->regs, SUN6I_DSI_BASIC_CTL0_REG, &status) ||
++	    (status & SUN6I_DSI_BASIC_CTL0_INST_ST))
++		return false;
++
++	/* Arm DSI before TCON. Only TRI_FINISH reports the actual vblank. */
++	sun6i_dsi_start(dsi, DSI_START_HSTX);
++	regmap_set_bits(tcon->regs, SUN4I_TCON0_CPU_IF_REG, SUN4I_TCON0_CPU_IF_TRI_START);
++	/* Discard a second edge within half a nominal frame period. */
++	dsi->next_trigger = jiffies + DIV_ROUND_UP(dsi->frame_period, 2);
++	return true;
++}
++
 +static irqreturn_t sun6i_dsi_te_irq(int irq, void *data)
 +{
 +	struct sun6i_dsi *dsi = data;
-+	struct sun4i_tcon *tcon;
-+	u32 status;
 +
-+	/* Skip a busy TE edge rather than starting late after an LP command. */
++	/* Skip a busy edge rather than launching late after an LP transfer. */
 +	ACQUIRE(mutex_try, lock)(&dsi->xfer_lock);
-+	if (ACQUIRE_ERR(mutex_try, &lock))
-+		return IRQ_HANDLED;
-+	tcon = dsi->refresh_tcon;
-+	if (!tcon)
-+		return IRQ_HANDLED;
-+
-+	regmap_read(tcon->regs, SUN4I_TCON0_CPU_IF_REG, &status);
-+	if (status & SUN4I_TCON0_CPU_IF_TRI_START)
-+		return IRQ_HANDLED;
-+	regmap_read(dsi->regs, SUN6I_DSI_BASIC_CTL0_REG, &status);
-+	if (status & SUN6I_DSI_BASIC_CTL0_INST_ST)
-+		return IRQ_HANDLED;
-+
-+	/* Arm the DSI engine before releasing the first line from TCON. */
-+	sun6i_dsi_start(dsi, DSI_START_HSTX);
-+	regmap_set_bits(tcon->regs, SUN4I_TCON0_CPU_IF_REG, SUN4I_TCON0_CPU_IF_TRI_START);
++	if (!ACQUIRE_ERR(mutex_try, &lock) && sun6i_dsi_trigger_frame(dsi))
++		mod_delayed_work(system_wq, &dsi->te_watchdog, 2 * dsi->frame_period);
 +	return IRQ_HANDLED;
++}
++
++static void sun6i_dsi_te_watchdog(struct work_struct *work)
++{
++	struct sun6i_dsi *dsi = container_of(to_delayed_work(work), struct sun6i_dsi,
++					     te_watchdog);
++
++	guard(mutex)(&dsi->xfer_lock);
++	/* A good TE may already have rearmed the timer while we waited. */
++	if (!dsi->refresh_tcon || delayed_work_pending(&dsi->te_watchdog))
++		return;
++
++	sun6i_dsi_trigger_frame(dsi);
++	schedule_delayed_work(&dsi->te_watchdog, dsi->frame_period);
 +}
 +
 +static void sun6i_dsi_stop_refresh(struct sun6i_dsi *dsi)
 +{
-+	guard(mutex)(&dsi->xfer_lock);
-+	if (!dsi->refresh_tcon)
-+		return;
-+	if (sun6i_dsi_inst_wait_for_completion(dsi)) {
-+		dev_warn(dsi->dev, "timed out draining final DSI frame\n");
-+		sun6i_dsi_inst_abort(dsi);
++	scoped_guard(mutex, &dsi->xfer_lock) {
++		if (dsi->refresh_tcon && sun6i_dsi_inst_wait_for_completion(dsi)) {
++			dev_warn(dsi->dev, "timed out draining final DSI frame\n");
++			sun6i_dsi_inst_abort(dsi);
++		}
++		dsi->refresh_tcon = NULL;
 +	}
-+	dsi->refresh_tcon = NULL;
++	cancel_delayed_work_sync(&dsi->te_watchdog);
 +}
 +
  static void sun6i_dsi_encoder_enable(struct drm_encoder *encoder)
  {
  	struct drm_display_mode *mode = &encoder->crtc->state->adjusted_mode;
-@@ -750,17 +838,21 @@ static void sun6i_dsi_encoder_enable(struct drm_encoder *encoder)
+@@ -750,17 +861,21 @@ static void sun6i_dsi_encoder_enable(struct drm_encoder *encoder)
  
  	regmap_write(dsi->regs, SUN6I_DSI_DEBUG_DATA_REG, 0xff);
  
@@ -617,7 +640,7 @@ index 23ef266c3..f4cbf1451 100644
  
  	phy_init(dsi->dphy);
  
-@@ -772,8 +864,11 @@ static void sun6i_dsi_encoder_enable(struct drm_encoder *encoder)
+@@ -772,8 +887,11 @@ static void sun6i_dsi_encoder_enable(struct drm_encoder *encoder)
  	phy_configure(dsi->dphy, &opts);
  	phy_power_on(dsi->dphy);
  
@@ -630,20 +653,23 @@ index 23ef266c3..f4cbf1451 100644
  
  	/*
  	 * FIXME: This should be moved after the switch to HS mode.
-@@ -790,6 +885,12 @@ static void sun6i_dsi_encoder_enable(struct drm_encoder *encoder)
+@@ -790,6 +908,15 @@ static void sun6i_dsi_encoder_enable(struct drm_encoder *encoder)
  	if (dsi->panel)
  		drm_panel_enable(dsi->panel);
  
 +	if (dsi->te_irq > 0) {
 +		guard(mutex)(&dsi->xfer_lock);
 +		dsi->refresh_tcon = drm_crtc_to_sun4i_crtc(encoder->crtc)->tcon;
++		dsi->frame_period = DIV_ROUND_UP(HZ, max(1, drm_mode_vrefresh(mode)));
++		dsi->next_trigger = jiffies;
++		schedule_delayed_work(&dsi->te_watchdog, 2 * dsi->frame_period);
 +		return;
 +	}
 +
  	sun6i_dsi_start(dsi, DSI_START_HSC);
  
  	udelay(1000);
-@@ -803,10 +904,12 @@ static void sun6i_dsi_encoder_disable(struct drm_encoder *encoder)
+@@ -803,10 +930,12 @@ static void sun6i_dsi_encoder_disable(struct drm_encoder *encoder)
  
  	DRM_DEBUG_DRIVER("Disabling DSI output\n");
  
@@ -658,7 +684,7 @@ index 23ef266c3..f4cbf1451 100644
  
  	phy_power_off(dsi->dphy);
  	phy_exit(dsi->dphy);
-@@ -940,17 +1043,46 @@ static int sun6i_dsi_dcs_read(struct sun6i_dsi *dsi, u32 header,
+@@ -940,17 +1069,46 @@ static int sun6i_dsi_dcs_read(struct sun6i_dsi *dsi, u32 header,
  	return 1;
  }
  
@@ -705,7 +731,7 @@ index 23ef266c3..f4cbf1451 100644
  	dsi->panel = panel;
  	dsi->device = device;
  
-@@ -966,10 +1098,15 @@ static int sun6i_dsi_detach(struct mipi_dsi_host *host,
+@@ -966,10 +1124,15 @@ static int sun6i_dsi_detach(struct mipi_dsi_host *host,
  {
  	struct sun6i_dsi *dsi = host_to_sun6i_dsi(host);
  
@@ -722,7 +748,7 @@ index 23ef266c3..f4cbf1451 100644
  
  	return 0;
  }
-@@ -994,9 +1131,13 @@ static ssize_t sun6i_dsi_transfer(struct mipi_dsi_host *host,
+@@ -994,9 +1157,13 @@ static ssize_t sun6i_dsi_transfer(struct mipi_dsi_host *host,
  	header = get_unaligned_le24(packet.header);
  	header |= (u32)sun6i_dsi_ecc_compute(header) << 24;
  
@@ -737,7 +763,7 @@ index 23ef266c3..f4cbf1451 100644
  
  	regmap_write(dsi->regs, SUN6I_DSI_CMD_CTL_REG,
  		     SUN6I_DSI_CMD_CTL_RX_OVERFLOW |
-@@ -1097,6 +1238,7 @@ static void sun6i_dsi_unbind(struct device *dev, struct device *master,
+@@ -1097,6 +1264,7 @@ static void sun6i_dsi_unbind(struct device *dev, struct device *master,
  {
  	struct sun6i_dsi *dsi = dev_get_drvdata(dev);
  
@@ -745,34 +771,39 @@ index 23ef266c3..f4cbf1451 100644
  	dsi->drm = NULL;
  }
  
-@@ -1122,6 +1264,7 @@ static int sun6i_dsi_probe(struct platform_device *pdev)
+@@ -1122,6 +1290,8 @@ static int sun6i_dsi_probe(struct platform_device *pdev)
  		return -ENOMEM;
  	dev_set_drvdata(dev, dsi);
  	dsi->dev = dev;
 +	mutex_init(&dsi->xfer_lock);
++	INIT_DELAYED_WORK(&dsi->te_watchdog, sun6i_dsi_te_watchdog);
  	dsi->host.ops = &sun6i_dsi_host_ops;
  	dsi->host.dev = dev;
  	dsi->variant = variant;
 diff --git a/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.h b/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.h
-index f1ddefe0f..5158577eb 100644
+index f1ddefe0f..dbf057c78 100644
 --- a/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.h
 +++ b/drivers/gpu/drm/sun4i/sun6i_mipi_dsi.h
-@@ -9,6 +9,8 @@
+@@ -9,6 +9,9 @@
  #ifndef _SUN6I_MIPI_DSI_H_
  #define _SUN6I_MIPI_DSI_H_
  
 +#include <linux/mutex.h>
++#include <linux/workqueue.h>
 +
  #include <drm/drm_connector.h>
  #include <drm/drm_encoder.h>
  #include <drm/drm_mipi_dsi.h>
-@@ -37,6 +39,11 @@ struct sun6i_dsi {
+@@ -37,6 +40,14 @@ struct sun6i_dsi {
  	struct drm_device	*drm;
  	struct drm_panel	*panel;
  
 +	/* Serializes the TE trigger and LP transfers on the instruction engine. */
 +	struct mutex		xfer_lock;
 +	struct sun4i_tcon	*refresh_tcon;
++	struct delayed_work	te_watchdog;
++	unsigned long		frame_period;
++	unsigned long		next_trigger;
 +	int			te_irq;
 +
  	const struct sun6i_dsi_variant *variant;

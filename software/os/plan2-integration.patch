@@ -56,7 +56,7 @@ diff --git a/docs/linux-6.18.md b/docs/linux-6.18.md
 -3. LT8619C 复用寄存器和检测逻辑；T113 CSI 按数据手册/Tina 寄存器实现必要的 V4L2 驱动适配。
 -4. 编码优先评估标准 V4L2 路线。社区作者报告 T113 JPEG 测试成功不等于当前 T113-i + 6.18 已验证。
 -5. STC、面板电源等板级特有功能保持独立小模块，不整体搬入厂商显示/VIN 框架。
-+参考包的 4 lane RGB888、1080×1920 和 140.640 MHz 模式已编进面板驱动。1302×1957 总时序折合约 55.20 Hz，计算线速约 843.84 Mbit/s/lane。面板初始化包的类型、字节和延时按卖家序列复核。每次外部 TE 中断启动一次 HSTX 和 TCON 触发；每行传输 3240 字节像素，首行写 0x2c，后续 0x3c。TCON TRI_FINISH 上报 vblank。LP 控制命令与帧传输互斥，忙时跳过该 TE。
++参考包的 4 lane RGB888、1080×1920 和 140.640 MHz 模式已编进面板驱动。1302×1957 总时序折合约 55.20 Hz，计算线速约 843.84 Mbit/s/lane。面板初始化包的类型、字节和延时按卖家序列复核。有效的外部 TE 边沿触发 HSTX 和 TCON；连续两个名义帧周期未触发时，看门狗按帧周期尝试发送真实帧。共用的触发路径会跳过在途帧，并滤掉半帧内的重复边沿；每行传输 3240 字节像素，首行写 0x2c，后续 0x3c。TCON TRI_FINISH 上报 vblank。LP 控制命令与帧传输互斥，忙时跳过该 TE。
 +
 +亮度用 DCS 0x51 暴露为 0–255 的 backlight。SGM3851A 的控制线经 R17/R13 回到 CN2。CN2.28（DISP_RST）、CN2.26（DISP_TE）都没有 SoC 管脚；组合 DTB 保留 panel@0 并禁用。确认面板型号、VCI/VDDI、复位脉冲、TE 电平/极性和引脚后，填入 reset-gpios 与 te-gpios 并启用。上板测频、验证黑白与色条、亮度、持续翻页和休眠恢复。[卖家参考包](../hardware/reference/display/TD4322.zip) · [BSP 寄存器与触发路径](https://github.com/AvaotaSBC/linux/tree/7c2a33957cb82e522885992ec26331d1c1c6db28/bsp/drivers/video/sunxi/disp2/disp/de/lowlevel_v2x)
 +
