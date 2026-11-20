@@ -10,18 +10,43 @@ pub(super) fn hdmi(app: &App) -> Value {
     }
     app.hw.hdmi().unwrap_or_else(|_| absent())
 }
-fn subscribe(app: &App) -> watch::Receiver<Option<Bytes>> {
+#[derive(Clone)]
+pub(super) enum Frame {
+    Pending,
+    NoSignal,
+    DeviceError(std::sync::Arc<io::Error>),
+    InternalError,
+    Jpeg(Bytes),
+}
+impl Frame {
+    fn captured(result: io::Result<Bytes>) -> Self {
+        match result {
+            Ok(bytes) => Self::Jpeg(bytes),
+            Err(e) if e.kind() == io::ErrorKind::NotConnected => Self::NoSignal,
+            Err(e) => Self::DeviceError(e.into()),
+        }
+    }
+    fn snapshot(&self) -> Result<Vec<u8>, ApiError> {
+        match self {
+            Self::Jpeg(bytes) => Ok(bytes.to_vec()),
+            Self::NoSignal => Err(ApiError::new(503, "no_signal")),
+            Self::DeviceError(e) => Err(ApiError::device(io::Error::other(e.clone()))),
+            Self::InternalError | Self::Pending => Err(ApiError::new(500, "internal")),
+        }
+    }
+}
+fn subscribe(app: &App) -> watch::Receiver<Frame> {
     let mut frames = app.console.frames.lock().unwrap();
     if let Some(tx) = frames.as_ref() {
         return tx.subscribe();
     }
-    let (tx, rx) = watch::channel(None);
+    let (tx, rx) = watch::channel(Frame::Pending);
     *frames = Some(tx.clone());
     tokio::spawn(produce(app.clone(), tx));
     rx
 }
 
-async fn produce(app: App, tx: watch::Sender<Option<Bytes>>) {
+async fn produce(app: App, tx: watch::Sender<Frame>) {
     let mut start = Instant::now();
     let (mut count, mut bytes) = (0u64, 0u64);
     loop {
@@ -41,13 +66,13 @@ async fn produce(app: App, tx: watch::Sender<Option<Bytes>>) {
         let source = app.clone();
         let next = tokio::task::spawn_blocking(move || {
             if source.sim && !source.console.sim_signal.load(Ordering::Relaxed) {
-                return None;
+                return Frame::NoSignal;
             }
-            source.hw.frame(quality).ok()
+            Frame::captured(source.hw.frame(quality))
         })
         .await
-        .unwrap_or(None);
-        if let Some(frame) = next.as_ref() {
+        .unwrap_or(Frame::InternalError);
+        if let Frame::Jpeg(frame) = &next {
             count += 1;
             bytes += frame.len() as u64;
         }
@@ -72,16 +97,16 @@ pub async fn snapshot(app: &App) -> Result<Vec<u8>, ApiError> {
         return Err(ApiError::new(503, "no_signal"));
     }
     let mut frames = subscribe(app);
-    if let Some(frame) = frames.borrow_and_update().as_ref() {
-        return Ok(frame.to_vec());
+    let ready = tokio::time::timeout(
+        Duration::from_secs(5),
+        frames.wait_for(|frame| !matches!(frame, Frame::Pending)),
+    )
+    .await;
+    match ready {
+        Ok(Ok(frame)) => frame.snapshot(),
+        Ok(Err(_)) => Err(ApiError::new(500, "internal")),
+        Err(_) => Err(ApiError::device(io::ErrorKind::TimedOut.into())),
     }
-    let updated = tokio::time::timeout(Duration::from_secs(5), frames.changed()).await;
-    if matches!(updated, Ok(Ok(()))) {
-        if let Some(frame) = frames.borrow().as_ref() {
-            return Ok(frame.to_vec());
-        }
-    }
-    Err(ApiError::new(503, "no_signal"))
 }
 
 pub(super) async fn stream(
@@ -158,7 +183,7 @@ async fn stream_socket(
             result=frames.changed()=>{
                 if result.is_err(){return;}
                 let frame=frames.borrow_and_update().clone();
-                let Some(frame)=frame else {last=None;continue};
+                let Frame::Jpeg(frame)=frame else {last=None;continue};
                 if paused || (app.config()["video"]["frame_diff"]==true && last.as_ref()==Some(&frame)){continue;}
                 if !send_frame(&mut socket,frame.clone()).await{return;}
                 last=Some(frame);
@@ -170,6 +195,18 @@ async fn stream_socket(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn snapshot_distinguishes_missing_hardware_from_no_signal() {
+        for (error, code) in [
+            (io::ErrorKind::NotFound, "device_unavailable"),
+            (io::ErrorKind::PermissionDenied, "device_unavailable"),
+            (io::ErrorKind::NotConnected, "no_signal"),
+        ] {
+            let result = Frame::captured(Err(error.into())).snapshot().unwrap_err();
+            assert_eq!((result.status, result.code.as_str()), (503, code));
+        }
+        assert_eq!(Frame::InternalError.snapshot().unwrap_err().status, 500);
+    }
     #[tokio::test(start_paused = true)]
     async fn a_slow_video_send_closes_with_1011() {
         let sent = std::sync::Arc::new(Mutex::new(Vec::new()));

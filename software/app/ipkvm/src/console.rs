@@ -56,7 +56,7 @@ pub struct Console {
     // Order releases relative to inputs already in flight and the next controller's first key.
     hid_write: Mutex<()>,
     next_id: AtomicU64,
-    frames: Mutex<Option<watch::Sender<Option<Bytes>>>>,
+    frames: Mutex<Option<watch::Sender<video::Frame>>>,
     pub sim_signal: AtomicBool,
     pub sim_pc_connected: AtomicBool,
     pub(crate) stats: Mutex<(u64, u64)>,
@@ -135,7 +135,7 @@ async fn get_edid(State(app): State<App>, h: HeaderMap) -> Result<Json<Value>, A
     if app.sim {
         return Ok(Json(edid_json(&app.console.edid.lock().unwrap())));
     }
-    let bytes = tokio::task::spawn_blocking(move || app.hw.read_edid())
+    let bytes = tokio::task::spawn_blocking(move || app.hw.read_edid().map_err(ApiError::device))
         .await
         .map_err(io::Error::other)??;
     Ok(Json(edid_json(&bytes)))
@@ -162,7 +162,7 @@ async fn reset_edid(State(app): State<App>, h: HeaderMap) -> Result<Json<Value>,
 async fn set_edid(app: App, bytes: Vec<u8>) -> Result<Json<Value>, ApiError> {
     tokio::task::spawn_blocking(move || {
         let mut edid = app.console.edid.lock().unwrap();
-        app.hw.edid(&bytes)?;
+        app.hw.edid(&bytes).map_err(ApiError::device)?;
         *edid = bytes;
         Ok(Json(edid_json(&edid)))
     })
@@ -173,9 +173,14 @@ async fn set_edid(app: App, bytes: Vec<u8>) -> Result<Json<Value>, ApiError> {
 async fn power(State(app): State<App>, h: HeaderMap) -> Result<Json<Value>, ApiError> {
     app.require(&h, "console")?;
     Ok(Json(
-        tokio::task::spawn_blocking(move || app.console.power_cache.read(|| app.hw.power()))
-            .await
-            .map_err(io::Error::other)??,
+        tokio::task::spawn_blocking(move || {
+            app.console
+                .power_cache
+                .read(|| app.hw.power())
+                .map_err(ApiError::device)
+        })
+        .await
+        .map_err(io::Error::other)??,
     ))
 }
 async fn press(
@@ -186,13 +191,15 @@ async fn press(
     app.require(&h, "power")?;
     validate("pressPower", &v)?;
     tokio::task::spawn_blocking(move || {
-        app.hw.press(
-            v["button"].as_str().unwrap(),
-            v["duration_ms"].as_u64().unwrap(),
-        )?;
+        app.hw
+            .press(
+                v["button"].as_str().unwrap(),
+                v["duration_ms"].as_u64().unwrap(),
+            )
+            .map_err(ApiError::device)?;
         app.console.power_cache.invalidate();
         app.emit("status_changed");
-        Ok::<_, io::Error>(())
+        Ok::<_, ApiError>(())
     })
     .await
     .map_err(io::Error::other)??;
@@ -285,9 +292,13 @@ async fn wake(
         for field in packet[6..].chunks_exact_mut(6) {
             field.copy_from_slice(&mac);
         }
-        let sock = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
-        sock.set_broadcast(true)?;
-        sock.send_to(&packet, "255.255.255.255:9").await?;
+        let sock = tokio::net::UdpSocket::bind("0.0.0.0:0")
+            .await
+            .map_err(ApiError::device)?;
+        sock.set_broadcast(true).map_err(ApiError::device)?;
+        sock.send_to(&packet, "255.255.255.255:9")
+            .await
+            .map_err(ApiError::device)?;
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -337,13 +348,19 @@ impl Console {
         if release {
             if let Err(error) = release_keys() {
                 self.sessions.lock().unwrap().release_pending = true;
-                return Err(error.into());
+                return Err(ApiError::device(error));
             }
         }
         if !permitted {
             return Err(ApiError::new(403, "forbidden"));
         }
-        write()?;
+        write().map_err(|e| {
+            if e.kind() == io::ErrorKind::InvalidInput {
+                ApiError::new(400, "bad_message")
+            } else {
+                ApiError::device(e)
+            }
+        })?;
         Ok(())
     }
 }
@@ -383,7 +400,7 @@ async fn input_for(
     match event["t"].as_str() {
         Some("paste") => {
             let hw = app.hw.clone();
-            let caps = tokio::task::spawn_blocking(move || hw.locks())
+            let caps = tokio::task::spawn_blocking(move || hw.locks().map_err(ApiError::device))
                 .await
                 .map_err(io::Error::other)??;
             let keys = crate::hardware::layout::strokes(
