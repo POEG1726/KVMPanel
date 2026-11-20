@@ -69,8 +69,11 @@ struct Guard {
     failures: u32,
     until: Option<Instant>,
 }
+type Accounts = BTreeMap<String, Account>;
+
 pub struct Auth {
-    accounts: BTreeMap<String, Account>,
+    account_writer: Arc<tokio::sync::Mutex<()>>,
+    accounts: Accounts,
     sessions: HashMap<String, String>,
     guards: HashMap<[u8; 32], Guard>,
     guard_order: VecDeque<[u8; 32]>,
@@ -91,6 +94,7 @@ impl Auth {
             )]))
         })?;
         Ok(Self {
+            account_writer: Default::default(),
             accounts,
             sessions: HashMap::new(),
             guards: HashMap::new(),
@@ -159,14 +163,30 @@ impl App {
         }
         Ok(u)
     }
-    fn save_accounts(
-        &self,
-        auth: &mut Auth,
-        next: BTreeMap<String, Account>,
-    ) -> Result<(), ApiError> {
-        save(&self.data_dir.join("accounts.json"), &next)?;
-        auth.accounts = next;
-        Ok(())
+    async fn change_accounts<T, R: Send + 'static>(
+        self,
+        headers: HeaderMap,
+        permission: &'static str,
+        edit: impl FnOnce(&mut Accounts, Value) -> Result<T, ApiError> + Send + 'static,
+        finish: impl FnOnce(&mut Auth, T) -> R + Send + 'static,
+    ) -> Result<R, ApiError> {
+        let writers = self.auth.lock().unwrap().account_writer.clone();
+        let turn = writers.lock_owned().await;
+        tokio::task::spawn_blocking(move || {
+            let _turn = turn;
+            let actor = self.require(&headers, permission)?;
+            let mut accounts = self.auth.lock().unwrap().accounts.clone();
+            let result = edit(&mut accounts, actor)?;
+            // Readers see the previous committed accounts while this fsync/rename runs.
+            save(&self.data_dir.join("accounts.json"), &accounts)?;
+            let mut auth = self.auth.lock().unwrap();
+            auth.accounts = accounts;
+            let response = finish(&mut auth, result);
+            self.emit("sessions_changed");
+            Ok(response)
+        })
+        .await
+        .map_err(io::Error::other)?
     }
 }
 pub fn routes() -> Router<App> {
@@ -294,16 +314,21 @@ async fn create(
         false,
         encode(text(&v, "password")).await?,
     );
-    a.require(&h, "admin")?;
-    let mut auth = a.auth.lock().unwrap();
-    if auth.accounts.contains_key(name) {
-        return Err(ApiError::new(409, "user_exists"));
-    }
-    let out = public(&acc);
-    let mut next = auth.accounts.clone();
-    next.insert(name.to_owned(), acc);
-    a.save_accounts(&mut auth, next)?;
-    Ok((StatusCode::CREATED, Json(out)))
+    let name = name.to_owned();
+    a.change_accounts(
+        h,
+        "admin",
+        move |next, _| {
+            if next.contains_key(&name) {
+                return Err(ApiError::new(409, "user_exists"));
+            }
+            let out = public(&acc);
+            next.insert(name, acc);
+            Ok(out)
+        },
+        |_, out| (StatusCode::CREATED, Json(out)),
+    )
+    .await
 }
 async fn update(
     State(a): State<App>,
@@ -318,42 +343,52 @@ async fn update(
     } else {
         None
     };
-    a.require(&h, "admin")?;
-    let mut auth = a.auth.lock().unwrap();
-    let mut next = auth.accounts.clone();
-    let acc = next.get_mut(&name).ok_or(ApiError::new(404, "not_found"))?;
-    for key in ["permissions", "role", "disabled", "view_only"] {
-        if let Some(val) = v.get(key) {
-            acc.user[key] = val.clone()
-        }
-    }
-    let revoke = new_hash.is_some() || v["disabled"] == true;
-    if let Some(hash) = new_hash {
-        acc.hash = hash
-    }
-    let out = public(acc);
-    a.save_accounts(&mut auth, next)?;
-    if revoke {
-        auth.revoke(&name)
-    }
-    a.emit("sessions_changed");
-    Ok(Json(out))
+    a.change_accounts(
+        h,
+        "admin",
+        move |next, _| {
+            let acc = next.get_mut(&name).ok_or(ApiError::new(404, "not_found"))?;
+            for key in ["permissions", "role", "disabled", "view_only"] {
+                if let Some(val) = v.get(key) {
+                    acc.user[key] = val.clone();
+                }
+            }
+            let revoke = new_hash.is_some() || v["disabled"] == true;
+            if let Some(hash) = new_hash {
+                acc.hash = hash;
+            }
+            Ok((public(acc), revoke.then_some(name)))
+        },
+        |auth, (out, revoke)| {
+            if let Some(name) = revoke {
+                auth.revoke(&name)
+            }
+            Json(out)
+        },
+    )
+    .await
 }
 async fn remove(
     State(a): State<App>,
     h: HeaderMap,
     Param(name): Param<String>,
 ) -> Result<StatusCode, ApiError> {
-    if a.require(&h, "admin")?["name"] == name {
-        return Err(ApiError::new(409, "cannot_delete_self"));
-    }
-    let mut auth = a.auth.lock().unwrap();
-    let mut next = auth.accounts.clone();
-    next.remove(&name).ok_or(ApiError::new(404, "not_found"))?;
-    a.save_accounts(&mut auth, next)?;
-    auth.revoke(&name);
-    a.emit("sessions_changed");
-    Ok(StatusCode::NO_CONTENT)
+    a.change_accounts(
+        h,
+        "admin",
+        move |next, actor| {
+            if actor["name"] == name {
+                return Err(ApiError::new(409, "cannot_delete_self"));
+            }
+            next.remove(&name).ok_or(ApiError::new(404, "not_found"))?;
+            Ok(name)
+        },
+        |auth, name| {
+            auth.revoke(&name);
+            StatusCode::NO_CONTENT
+        },
+    )
+    .await
 }
 async fn password(
     State(a): State<App>,
@@ -376,28 +411,91 @@ async fn password(
         return Err(ApiError::new(403, "wrong_password"));
     }
     let hash = encode(text(&v, "new")).await?;
-    let mut auth = a.auth.lock().unwrap();
-    if auth.sessions.get(token(&h)).map(String::as_str) != Some(name) {
-        return Err(ApiError::new(401, "unauthenticated"));
-    }
-    let mut next = auth.accounts.clone();
-    let acc = next
-        .get_mut(name)
-        .ok_or(ApiError::new(401, "unauthenticated"))?;
-    if acc.hash != old {
-        return Err(ApiError::new(403, "wrong_password"));
-    }
-    acc.hash = hash;
-    acc.user["must_change_password"] = json!(false);
-    a.save_accounts(&mut auth, next)?;
-    auth.revoke(name);
-    a.emit("sessions_changed");
-    Ok((StatusCode::NO_CONTENT, [(SET_COOKIE, auth.issue(name))]))
+    let name = name.to_owned();
+    let caller = token(&h).to_owned();
+    a.change_accounts(
+        h,
+        "",
+        move |next, actor| {
+            if actor["name"] != name {
+                return Err(ApiError::new(401, "unauthenticated"));
+            }
+            let acc = next
+                .get_mut(&name)
+                .ok_or(ApiError::new(401, "unauthenticated"))?;
+            if acc.hash != old {
+                return Err(ApiError::new(403, "wrong_password"));
+            }
+            acc.hash = hash;
+            acc.user["must_change_password"] = json!(false);
+            Ok(name)
+        },
+        move |auth, name| {
+            let still_logged_in = auth.sessions.get(&caller) == Some(&name);
+            auth.revoke(&name);
+            if !still_logged_in {
+                return Err(ApiError::new(401, "unauthenticated"));
+            }
+            Ok((StatusCode::NO_CONTENT, [(SET_COOKIE, auth.issue(&name))]))
+        },
+    )
+    .await?
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn account_edits_leave_authentication_available_and_serialize_updates() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = App::new(dir.path(), true).unwrap();
+        let session = app.auth.lock().unwrap().issue("admin");
+        let mut cookie = HeaderMap::new();
+        cookie.insert(COOKIE, session.split(';').next().unwrap().parse().unwrap());
+        let (entered, started) = tokio::sync::oneshot::channel();
+        let (release, wait) = std::sync::mpsc::channel();
+        let first = tokio::spawn(app.clone().change_accounts(
+            cookie.clone(),
+            "admin",
+            move |next, _| {
+                next.get_mut("admin").unwrap().user["view_only"] = true.into();
+                entered.send(()).unwrap();
+                wait.recv_timeout(Duration::from_secs(3)).unwrap();
+                Ok(())
+            },
+            |_, _| (),
+        ));
+        started.await.unwrap();
+        let reader = app.clone();
+        let headers = cookie.clone();
+        let current = tokio::time::timeout(
+            Duration::from_millis(200),
+            tokio::task::spawn_blocking(move || reader.require(&headers, "admin")),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+        assert_eq!(current["view_only"], false);
+        let second = tokio::spawn(app.clone().change_accounts(
+            cookie.clone(),
+            "admin",
+            |next, _| {
+                assert_eq!(next["admin"].user["view_only"], true);
+                next.get_mut("admin").unwrap().user["must_change_password"] = false.into();
+                Ok(())
+            },
+            |_, _| (),
+        ));
+        release.send(()).unwrap();
+        first.await.unwrap().unwrap();
+        second.await.unwrap().unwrap();
+        let user = app.require(&cookie, "admin").unwrap();
+        assert_eq!(user["view_only"], true);
+        assert_eq!(user["must_change_password"], false);
+        let persisted = Auth::open(dir.path()).unwrap();
+        assert_eq!(public(&persisted.accounts["admin"]), user);
+    }
     #[test]
     fn failed_names_are_bounded_and_evicted_in_insertion_order() {
         let dir = tempfile::tempdir().unwrap();
