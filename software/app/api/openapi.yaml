@@ -1,0 +1,1588 @@
+openapi: 3.1.0
+info:
+  title: KVMPanel API
+  version: 0.1.0
+  description: |
+    HTTP contract between the KVMPanel web frontend and kvmd.
+    WebSocket channels and the panel socket are described in README.md.
+    Errors always use the Error schema; user-facing text is translated by clients from `error`.
+servers:
+  - url: http://127.0.0.1:8800
+    description: mock server on a development PC
+security:
+  - session: []
+x-common-responses:
+  unauthenticated: &unauthenticated
+    description: Not logged in or session expired (error=unauthenticated)
+    content:
+      application/json:
+        schema: { $ref: '#/components/schemas/Error' }
+  forbidden: &forbidden
+    description: Missing permission or role (error=forbidden)
+    content:
+      application/json:
+        schema: { $ref: '#/components/schemas/Error' }
+  badRequest: &badRequest
+    description: Invalid request body or parameters
+    content:
+      application/json:
+        schema: { $ref: '#/components/schemas/Error' }
+  notFound: &notFound
+    description: Resource does not exist (error=not_found)
+    content:
+      application/json:
+        schema: { $ref: '#/components/schemas/Error' }
+  conflict: &conflict
+    description: Request conflicts with current state
+    content:
+      application/json:
+        schema: { $ref: '#/components/schemas/Error' }
+  noContent: &noContent
+    description: Done, no body
+  accepted: &accepted
+    description: Accepted, runs in the background
+paths:
+  /api/health:
+    get:
+      operationId: getHealth
+      summary: Liveness and contract version
+      security: []
+      responses:
+        '200':
+          description: Server is up
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /api/auth/login:
+    post:
+      operationId: login
+      summary: Log in and receive the kvm_session cookie
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              additionalProperties: false
+              properties:
+                username: { type: string, minLength: 1 }
+                password: { type: string }
+      responses:
+        '200':
+          description: Logged in; Set-Cookie kvm_session (HttpOnly)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserEnvelope' }
+        '400': *badRequest
+        '401':
+          description: Wrong username or password (error=invalid_credentials). From the 3rd consecutive failure each failed reply is delayed 1 s.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Account disabled (error=user_disabled)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: Locked for 300 s after 5 consecutive failures (error=login_locked, detail.retry_after_s)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/auth/logout:
+    post:
+      operationId: logout
+      responses:
+        '204': *noContent
+  /api/auth/me:
+    get:
+      operationId: getMe
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserEnvelope' }
+        '401': *unauthenticated
+  /api/users:
+    get:
+      operationId: listUsers
+      summary: List accounts (admin only)
+      responses:
+        '200':
+          description: All accounts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users]
+                additionalProperties: false
+                properties:
+                  users:
+                    type: array
+                    items: { $ref: '#/components/schemas/User' }
+        '401': *unauthenticated
+        '403': *forbidden
+    post:
+      operationId: createUser
+      summary: Create an account (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, password, role]
+              additionalProperties: false
+              properties:
+                name: { $ref: '#/components/schemas/UserName' }
+                password: { type: string, minLength: 6 }
+                role: { $ref: '#/components/schemas/Role' }
+                permissions:
+                  type: array
+                  items: { $ref: '#/components/schemas/Permission' }
+                view_only: { type: boolean }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+        '409': *conflict
+  /api/users/{name}:
+    parameters:
+      - { name: name, in: path, required: true, schema: { $ref: '#/components/schemas/UserName' } }
+    patch:
+      operationId: updateUser
+      summary: Change role, permissions, view-only, disabled or password (admin only). Disabling or a password reset ends the user's sessions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                role: { $ref: '#/components/schemas/Role' }
+                permissions:
+                  type: array
+                  items: { $ref: '#/components/schemas/Permission' }
+                view_only: { type: boolean }
+                disabled: { type: boolean }
+                password: { type: string, minLength: 6 }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+    delete:
+      operationId: deleteUser
+      responses:
+        '204': *noContent
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+        '409':
+          description: An admin cannot delete their own account (error=cannot_delete_self)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/users/me/password:
+    post:
+      operationId: changePassword
+      summary: Change own password. All sessions of the user end; the caller gets a fresh cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [old, new]
+              additionalProperties: false
+              properties:
+                old: { type: string }
+                new: { type: string, minLength: 6 }
+      responses:
+        '204': *noContent
+        '400': *badRequest
+        '401': *unauthenticated
+        '403':
+          description: Old password is wrong (error=wrong_password)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/config:
+    get:
+      operationId: getConfig
+      summary: Whole board configuration (shared by web and panel; only kvmd writes it)
+      responses:
+        '200':
+          description: Current configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Config' }
+        '401': *unauthenticated
+    patch:
+      operationId: patchConfig
+      summary: Partial update. Objects merge recursively; null sets a nullable field to null — except inside panel.thresholds, where null deletes the key. Each top-level section needs its permission (panel/function_key→panel, usb→usb, video/hid→console, serial→terminal, web/device/kvm→device).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Updated configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Config' }
+        '400':
+          description: Field invalid or unknown (error=invalid_config, detail.path = JSON pointer); nothing changed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '409':
+          description: USB set exceeds the endpoint budget (error=endpoints_full, detail.in_missing/out_missing); nothing changed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/usb/budget:
+    get:
+      operationId: getUsbBudget
+      responses:
+        '200':
+          description: Endpoint usage of the configured USB set
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UsbBudget' }
+        '401': *unauthenticated
+  /api/usb/apply:
+    post:
+      operationId: applyUsb
+      summary: Rebuild the USB gadget from config.usb. The host sees a re-enumeration (keyboard/mouse drop 1–2 s); /api/ws then pushes usb_reenumerated.
+      responses:
+        '202':
+          description: Re-enumeration started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reenumerating]
+                additionalProperties: false
+                properties:
+                  reenumerating: { const: true }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/stream/snapshot.jpg:
+    get:
+      operationId: getSnapshot
+      summary: Current HDMI frame as JPEG (console permission)
+      responses:
+        '200':
+          description: JPEG image
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+        '401': *unauthenticated
+        '403': *forbidden
+        '503':
+          description: No HDMI signal (error=no_signal)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/video/edid:
+    get:
+      operationId: getEdid
+      summary: EDID presented to the PC on the HDMI input (console permission)
+      responses:
+        '200':
+          description: Current EDID
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Edid' }
+        '401': *unauthenticated
+        '403': *forbidden
+    put:
+      operationId: putEdid
+      summary: Replace the EDID; the PC sees a hot-plug (device permission)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hex]
+              additionalProperties: false
+              properties:
+                hex: { type: string }
+      responses:
+        '200':
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Edid' }
+        '400':
+          description: Not 128 or 256 bytes of hex, or missing the EDID header (error=bad_edid)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/video/edid/reset:
+    post:
+      operationId: resetEdid
+      summary: Restore the built-in 1080p60 EDID (device permission)
+      responses:
+        '200':
+          description: Restored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Edid' }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/power:
+    get:
+      operationId: getPower
+      summary: PC power and HDD LED state read from the front-panel header (console permission)
+      responses:
+        '200':
+          description: LED state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PowerState' }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/power/press:
+    post:
+      operationId: pressPower
+      summary: Hold the PC power or reset button (PC817) for duration_ms. ≥4000 ms on power forces the PC off. The web asks for confirmation first (power permission).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [button, duration_ms]
+              additionalProperties: false
+              properties:
+                button: { type: string, enum: [power, reset] }
+                duration_ms: { type: integer, minimum: 200, maximum: 12000 }
+      responses:
+        '204': *noContent
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/wol/devices:
+    get:
+      operationId: listWolDevices
+      responses:
+        '200':
+          description: Saved wake-on-LAN targets
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [devices]
+                additionalProperties: false
+                properties:
+                  devices:
+                    type: array
+                    items: { $ref: '#/components/schemas/WolDevice' }
+        '401': *unauthenticated
+        '403': *forbidden
+    post:
+      operationId: addWolDevice
+      summary: Save a named target; mac may use - or :, any case, and is stored as lowercase aa:bb:cc:dd:ee:ff (power permission)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, mac]
+              additionalProperties: false
+              properties:
+                name: { type: string, minLength: 1, maxLength: 64 }
+                mac: { type: string }
+      responses:
+        '201':
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WolDevice' }
+        '400':
+          description: Malformed MAC (error=bad_mac) or body
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '409': *conflict
+  /api/wol/devices/{mac}:
+    parameters:
+      - { name: mac, in: path, required: true, schema: { type: string } }
+    delete:
+      operationId: deleteWolDevice
+      responses:
+        '204': *noContent
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+  /api/wol/wake:
+    post:
+      operationId: wakeOnLan
+      summary: Broadcast a magic packet (power permission)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mac]
+              additionalProperties: false
+              properties:
+                mac: { type: string }
+      responses:
+        '204': *noContent
+        '400':
+          description: Malformed MAC (error=bad_mac)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/storage:
+    get:
+      operationId: getStorage
+      summary: Capacity of the file-manager roots (files permission)
+      responses:
+        '200':
+          description: One entry per root
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Volume' }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/files:
+    get:
+      operationId: listFiles
+      summary: List a folder. sd/share paths may not contain `..`; system accepts any absolute path and needs the admin role (files permission).
+      parameters:
+        - { name: root, in: query, required: true, schema: { $ref: '#/components/schemas/Root' } }
+        - { name: path, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Folder entries, folders first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries]
+                additionalProperties: false
+                properties:
+                  entries:
+                    type: array
+                    items: { $ref: '#/components/schemas/FileEntry' }
+        '400':
+          description: Invalid root or path (error=bad_path)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+  /api/files/download:
+    get:
+      operationId: downloadFile
+      parameters:
+        - { name: root, in: query, required: true, schema: { $ref: '#/components/schemas/Root' } }
+        - { name: path, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: File bytes (streamed, Content-Disposition attachment)
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '400':
+          description: error=bad_path
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+  /api/files/upload:
+    put:
+      operationId: uploadFile
+      summary: Upload raw bytes (Content-Type application/octet-stream) to root+path, replacing an existing file. Nothing is kept if the client disconnects or the checksum fails.
+      parameters:
+        - { name: root, in: query, required: true, schema: { $ref: '#/components/schemas/Root' } }
+        - { name: path, in: query, required: true, schema: { type: string } }
+        - { name: X-Sha256, in: header, required: false, schema: { type: string, pattern: '^[0-9a-fA-F]{64}$' } }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '201':
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FileEntry' }
+        '400':
+          description: error=bad_path
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+        '409':
+          description: The share is exported to the PC (share_busy), the path is a folder (is_dir) or the mounted image (in_use)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: X-Sha256 does not match (error=checksum_mismatch)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '507':
+          description: Content-Length, or the bytes actually received (chunked uploads), exceed free space (error=no_space); nothing is kept
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/files/mkdir:
+    post:
+      operationId: makeDir
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PathRef' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FileEntry' }
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+        '409':
+          description: Already exists (error=exists) or share exported (error=share_busy)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/files/rename:
+    post:
+      operationId: renamePath
+      summary: Rename or move within one root. Moving a folder into itself → 400 bad_path; moving the mounted image or a folder that contains it → 409 in_use.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: '#/components/schemas/PathRef' }
+              required: [to]
+              properties:
+                to: { type: string }
+      responses:
+        '204': *noContent
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+        '409':
+          description: Target exists (exists), mounted image (in_use) or share exported (share_busy)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/files/delete:
+    post:
+      operationId: deletePath
+      summary: Delete a file or a folder with its contents; the mounted image or a folder that contains it → 409 in_use
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PathRef' }
+      responses:
+        '204': *noContent
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+        '409':
+          description: Mounted image (in_use) or share exported (share_busy)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/share:
+    get:
+      operationId: getShare
+      summary: Whether the share volume is currently exported to the PC as a USB disk (files permission)
+      responses:
+        '200':
+          description: Share state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShareState' }
+        '401': *unauthenticated
+        '403': *forbidden
+    post:
+      operationId: setShare
+      summary: Export the share to the PC (it becomes read-only here) or take it back (media permission)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ShareState' }
+      responses:
+        '200':
+          description: New share state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShareState' }
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/media:
+    get:
+      operationId: getMedia
+      summary: Virtual media presented to the PC (media permission)
+      responses:
+        '200':
+          description: Mount state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MediaState' }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/media/mount:
+    post:
+      operationId: mountMedia
+      summary: Present an SD image. cdrom accepts .iso (ISO 9660/UDF) and is always read-only; disk accepts .iso/.img and is read-only unless readonly=false.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [root, path, mode]
+              additionalProperties: false
+              properties:
+                root: { const: sd }
+                path: { type: string }
+                mode: { type: string, enum: [cdrom, disk] }
+                readonly: { type: boolean }
+      responses:
+        '200':
+          description: Mounted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MediaState' }
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+        '409':
+          description: Something is already mounted (error=already_mounted)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: File type cannot be presented in this mode (error=bad_image)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/media/eject:
+    post:
+      operationId: ejectMedia
+      responses:
+        '204': *noContent
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/media/download:
+    post:
+      operationId: startDownload
+      summary: Download an image from an http(s) URL to an SD path in the background
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, path]
+              additionalProperties: false
+              properties:
+                url: { type: string }
+                path: { type: string, description: SD path of the new file }
+                sha256: { type: string, pattern: '^[0-9a-fA-F]{64}$' }
+      responses:
+        '202':
+          description: Job started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job]
+                additionalProperties: false
+                properties:
+                  job: { $ref: '#/components/schemas/DownloadJob' }
+        '400':
+          description: error=bad_url, bad_path or invalid_body
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+        '409': *conflict
+  /api/media/jobs:
+    get:
+      operationId: listJobs
+      responses:
+        '200':
+          description: Download jobs, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobs]
+                additionalProperties: false
+                properties:
+                  jobs:
+                    type: array
+                    items: { $ref: '#/components/schemas/DownloadJob' }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/media/jobs/{id}/{action}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: action, in: path, required: true, schema: { type: string, enum: [pause, resume, cancel] } }
+    post:
+      operationId: controlJob
+      summary: pause (running→paused), resume (paused→running), cancel (running|paused→canceled, partial file removed)
+      responses:
+        '200':
+          description: Job after the change
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DownloadJob' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+        '409':
+          description: Not allowed from the current state (error=bad_state)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/scripts:
+    get:
+      operationId: listScripts
+      summary: Custom scripts runnable from the web (terminal permission)
+      responses:
+        '200':
+          description: Stored scripts
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ScriptInfo' }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/scripts/{name}:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: putScript
+      summary: Create or replace a script; body is the script text (text/plain). name must match [A-Za-z0-9._-]{1,64}.
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema: { type: string }
+      responses:
+        '201':
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScriptInfo' }
+        '400':
+          description: Invalid name (error=bad_name)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+    delete:
+      operationId: deleteScript
+      responses:
+        '204': *noContent
+        '400':
+          description: error=bad_name
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+  /api/scripts/{name}/run:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: runScript
+      summary: Run with /bin/sh on the board (60 s timeout) and return combined stdout/stderr
+      responses:
+        '200':
+          description: Finished
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [exit_code, output]
+                additionalProperties: false
+                properties:
+                  exit_code: { type: integer }
+                  output: { type: string }
+        '400':
+          description: error=bad_name
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+  /api/device:
+    get:
+      operationId: getDevice
+      summary: Board information (device permission); same data as the panel's Device Info page
+      responses:
+        '200':
+          description: Device info
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceInfo' }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/device/action:
+    post:
+      operationId: deviceAction
+      summary: reboot / shutdown the board (not the PC), restart kvmd (web sessions see kvm_restarting then close 1012; the panel keeps running), reset the HID gadget, or disconnect all console sessions (device permission)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              additionalProperties: false
+              properties:
+                action: { $ref: '#/components/schemas/DeviceAction' }
+      responses:
+        '202': *accepted
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/network:
+    get:
+      operationId: getNetwork
+      responses:
+        '200':
+          description: Network settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkConfig' }
+        '401': *unauthenticated
+        '403': *forbidden
+    put:
+      operationId: putNetwork
+      summary: Replace network settings; static mode requires ip, mask and gateway (network permission)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NetworkConfig' }
+      responses:
+        '200':
+          description: Stored (applied after the response is sent)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkConfig' }
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/tailscale:
+    get:
+      operationId: getTailscale
+      responses:
+        '200':
+          description: Tailscale state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [installed, running]
+                additionalProperties: false
+                properties:
+                  installed: { type: boolean }
+                  running: { type: boolean }
+                  ip: { type: string }
+                  login_url: { type: string, description: Present while waiting for the user to authorise the device }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/tailscale/{action}:
+    parameters:
+      - { name: action, in: path, required: true, schema: { type: string, enum: [install, uninstall, up, down, login, logout] } }
+    post:
+      operationId: tailscaleAction
+      responses:
+        '202': *accepted
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/update:
+    get:
+      operationId: getUpdate
+      summary: App-bundle update state (updates permission). Updates replace kvmd, panel and the web files only.
+      responses:
+        '200':
+          description: Versions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [current, channel, server]
+                additionalProperties: false
+                properties:
+                  current: { type: string }
+                  latest: { type: string }
+                  channel: { type: string, enum: [stable, preview] }
+                  server: { type: string }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/update/check:
+    post:
+      operationId: checkUpdate
+      responses:
+        '200':
+          description: Checked; latest is filled when the server answered
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [current]
+                additionalProperties: false
+                properties:
+                  current: { type: string }
+                  latest: { type: string }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/update/apply:
+    post:
+      operationId: applyUpdate
+      responses:
+        '202':
+          description: Update started; kvmd restarts when done
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UpdateJobEnvelope' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '409': *conflict
+  /api/update/offline:
+    put:
+      operationId: uploadUpdate
+      summary: Upload an app-bundle package (application/octet-stream) with its X-Sha256
+      parameters:
+        - { name: X-Sha256, in: header, required: true, schema: { type: string, pattern: '^[0-9a-fA-F]{64}$' } }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '202':
+          description: Verified; install started
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UpdateJobEnvelope' }
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+        '422':
+          description: error=checksum_mismatch
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/mcp:
+    put:
+      operationId: putMcp
+      summary: Enable or disable the MCP API without changing the key (mcp permission)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              additionalProperties: false
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200':
+          description: MCP state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/McpState' }
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+        '409':
+          description: Enabling without a key (error=no_key)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    get:
+      operationId: getMcp
+      responses:
+        '200':
+          description: MCP state; the key itself is never returned here
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/McpState' }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/mcp/regenerate:
+    post:
+      operationId: regenerateMcpKey
+      summary: Create a new key (the old one stops working) and enable MCP. This is the only response that contains the full key.
+      responses:
+        '200':
+          description: New key
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [key]
+                additionalProperties: false
+                properties:
+                  key: { type: string, minLength: 32 }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/about:
+    get:
+      operationId: getAbout
+      security: []
+      responses:
+        '200':
+          description: Product information
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [name, version, licenses_url]
+                additionalProperties: false
+                properties:
+                  name: { const: KVMPanel }
+                  version: { type: string }
+                  licenses_url: { type: string }
+  /api/branding/logo:
+    get:
+      operationId: getLogo
+      security: []
+      responses:
+        '200':
+          description: Logo image
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+            image/svg+xml:
+              schema: { type: string }
+        '404': *notFound
+    put:
+      operationId: putLogo
+      summary: Replace the logo (image/png or image/svg+xml, ≤ 256 KiB; device permission)
+      requestBody:
+        required: true
+        content:
+          image/png:
+            schema: { type: string, format: binary }
+          image/svg+xml:
+            schema: { type: string }
+      responses:
+        '204': *noContent
+        '401': *unauthenticated
+        '403': *forbidden
+        '413':
+          description: error=too_large
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/usb/applied:
+    get:
+      operationId: getUsbApplied
+      summary: The USB set the gadget is actually running. pending=true means config.usb differs and needs POST /api/usb/apply; to revert, PATCH config.usb back to this set.
+      responses:
+        '200':
+          description: Applied set
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [usb, pending]
+                additionalProperties: false
+                properties:
+                  usb: { $ref: '#/components/schemas/Config/properties/usb' }
+                  pending: { type: boolean }
+        '401': *unauthenticated
+  /api/mcp/key:
+    delete:
+      operationId: revokeMcpKey
+      summary: Revoke the MCP key; MCP stays disabled until a new key is generated (mcp permission)
+      responses:
+        '204': *noContent
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/mcp/v1/screenshot:
+    get:
+      operationId: mcpScreenshot
+      summary: MCP clients only (Authorization Bearer <key>); current HDMI frame
+      security:
+        - mcpKey: []
+      responses:
+        '200':
+          description: JPEG
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+        '401':
+          description: Missing/wrong key or MCP disabled (error=unauthenticated)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: error=no_signal
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/mcp/v1/hid:
+    post:
+      operationId: mcpHid
+      summary: MCP clients only (Bearer). Body is one /api/ws client input message (key, mouse_abs, mouse_rel, wheel, paste, shortcut; see schema/ws.schema.json).
+      security:
+        - mcpKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '204': *noContent
+        '400':
+          description: Not a valid input message (error=bad_message)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: error=unauthenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/update/settings:
+    put:
+      operationId: putUpdateSettings
+      summary: Choose the update channel and server (updates permission)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateSettings' }
+      responses:
+        '200':
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UpdateSettings' }
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/update/jobs/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getUpdateJob
+      summary: Poll an update job started by apply or offline upload (updates permission)
+      responses:
+        '200':
+          description: Job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UpdateJobEnvelope' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: kvm_session
+    mcpKey:
+      type: http
+      scheme: bearer
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: string
+          pattern: '^[a-z][a-z0-9_]*$'
+        detail:
+          type: object
+    Health:
+      type: object
+      required: [ok, version]
+      additionalProperties: false
+      properties:
+        ok:
+          const: true
+        version:
+          type: string
+    Role:
+      type: string
+      enum: [admin, user]
+    Permission:
+      type: string
+      enum: [console, power, media, terminal, files, device, network, updates, mcp, tailscale, panel, usb]
+    UserName:
+      type: string
+      pattern: '^[A-Za-z0-9._-]{1,32}$'
+    User:
+      type: object
+      required: [name, role, permissions, view_only, disabled, must_change_password]
+      additionalProperties: false
+      properties:
+        name: { $ref: '#/components/schemas/UserName' }
+        role: { $ref: '#/components/schemas/Role' }
+        permissions:
+          description: Effective permissions; admin always has all of them.
+          type: array
+          items: { $ref: '#/components/schemas/Permission' }
+        view_only:
+          description: Console sessions of this user may watch but not send input.
+          type: boolean
+        disabled: { type: boolean }
+        must_change_password: { type: boolean }
+    UserEnvelope:
+      type: object
+      required: [user]
+      additionalProperties: false
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+    FunctionKeyAction:
+      type: string
+      enum: [none, toggle_settings, toggle_screen, cycle_brightness, pause_kvm]
+    UsbBudget:
+      type: object
+      required: [in, out, fits, in_missing, out_missing]
+      additionalProperties: false
+      properties:
+        in: { type: integer, minimum: 0, description: IN endpoints used (hardware has 5) }
+        out: { type: integer, minimum: 0, description: OUT endpoints used (hardware has 5) }
+        fits: { type: boolean }
+        in_missing: { type: integer, minimum: 0 }
+        out_missing: { type: integer, minimum: 0 }
+    Config:
+      type: object
+      required: [panel, function_key, usb, web, video, hid, serial, device, kvm]
+      additionalProperties: false
+      properties:
+        panel:
+          type: object
+          required: [language, auto_brightness, brightness, offline_sleep_min, thresholds, hidden_metrics]
+          additionalProperties: false
+          properties:
+            language: { type: string, enum: [en, zh], default: en }
+            auto_brightness: { type: boolean, default: true }
+            brightness: { type: integer, minimum: 0, maximum: 100, default: 70 }
+            offline_sleep_min: { type: integer, minimum: 0, maximum: 120, default: 5, description: '0 = never sleep' }
+            thresholds:
+              description: Warn thresholds (values flash red above them). Keys are metric ids (see README, e.g. gpu.temp) or a prefix pattern ending in `.*` (mem.dimm.* covers mem.dimm.a1…b2); an exact id wins over a pattern. In PATCH, a null value deletes that key.
+              type: object
+              propertyNames: { pattern: '^[a-z0-9_]+(\.[a-z0-9_]+)*(\.\*)?$' }
+              additionalProperties: { type: number }
+              default: { cpu.tctl: 85, gpu.mem_junction: 95, mem.dimm.*: 60 }
+            hidden_metrics:
+              description: Metric ids the panel does not show (and the panel socket does not send)
+              type: array
+              items: { type: string }
+              uniqueItems: true
+              default: []
+        function_key:
+          type: object
+          required: [short, long]
+          additionalProperties: false
+          properties:
+            short: { allOf: [{ $ref: '#/components/schemas/FunctionKeyAction' }], default: toggle_settings }
+            long: { allOf: [{ $ref: '#/components/schemas/FunctionKeyAction' }], default: toggle_screen }
+        usb:
+          type: object
+          required: [keyboard, mouse_rel, mouse_abs, mouse_merge, storage, net, net_mode, acm, telemetry]
+          additionalProperties: false
+          properties:
+            keyboard: { type: boolean, default: true }
+            mouse_rel: { type: boolean, default: true }
+            mouse_abs: { type: boolean, default: true }
+            mouse_merge: { type: boolean, default: false }
+            storage: { type: boolean, default: true }
+            net: { type: boolean, default: false }
+            net_mode: { type: string, enum: [ncm, rndis], default: ncm }
+            acm: { type: boolean, default: false }
+            telemetry: { type: boolean, default: true }
+        web:
+          type: object
+          required: [language, workspace_open, remember_float, menubar, title]
+          additionalProperties: false
+          properties:
+            language: { type: string, enum: [auto, en, zh], default: auto, description: auto follows the browser language }
+            workspace_open: { type: string, enum: [float, tab], default: float }
+            remember_float: { type: boolean, default: true }
+            menubar: { type: string, enum: [auto_hide, pinned], default: auto_hide }
+            title: { type: string, minLength: 1, maxLength: 64, default: KVMPanel }
+        video:
+          type: object
+          required: [quality, fps_max, scale, frame_diff]
+          additionalProperties: false
+          properties:
+            quality: { type: integer, minimum: 50, maximum: 100, default: 80 }
+            fps_max: { type: integer, minimum: 1, maximum: 60, default: 30 }
+            scale: { type: string, enum: [fit, '1:1', fill], default: fit }
+            frame_diff: { type: boolean, default: true }
+        hid:
+          type: object
+          required: [keyboard_layout, mouse_mode, wheel_dir, wheel_speed, jiggler, leader_key]
+          additionalProperties: false
+          properties:
+            keyboard_layout: { type: string, minLength: 1, default: us }
+            mouse_mode: { type: string, enum: [abs, rel], default: abs }
+            wheel_dir: { type: string, enum: [normal, reverse], default: normal }
+            wheel_speed: { type: integer, minimum: 1, maximum: 10, default: 1 }
+            jiggler: { type: boolean, default: false }
+            leader_key: { type: [string, 'null'], default: null, description: KeyboardEvent.code that prefixes browser-captured shortcuts }
+        serial:
+          type: object
+          required: [device, baud]
+          additionalProperties: false
+          properties:
+            device: { type: [string, 'null'], default: null, description: 'e.g. /dev/ttyS1; null hides the serial terminal tab' }
+            baud: { type: integer, enum: [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1500000], default: 115200 }
+        device:
+          type: object
+          required: [hostname, ssh, mdns, watchdog]
+          additionalProperties: false
+          properties:
+            hostname: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$', default: kvmpanel }
+            ssh: { type: boolean, default: true }
+            mdns: { type: boolean, default: true }
+            watchdog: { type: boolean, default: false }
+        kvm:
+          type: object
+          required: [enabled]
+          additionalProperties: false
+          properties:
+            enabled: { type: boolean, default: true, description: false keeps only the dashboard }
+    Edid:
+      type: object
+      required: [hex, preset]
+      additionalProperties: false
+      properties:
+        hex: { type: string, pattern: '^00ffffffffffff00([0-9a-f]{240}|[0-9a-f]{496})$', description: 128 or 256 bytes, lowercase hex }
+        preset: { type: string, enum: ['1080p', custom] }
+    PowerState:
+      type: object
+      required: [on, hdd]
+      additionalProperties: false
+      properties:
+        on: { type: boolean, description: Power LED lit }
+        hdd: { type: boolean, description: HDD LED lit }
+    WolDevice:
+      type: object
+      required: [name, mac]
+      additionalProperties: false
+      properties:
+        name: { type: string }
+        mac: { type: string, pattern: '^([0-9a-f]{2}:){5}[0-9a-f]{2}$' }
+    Root:
+      type: string
+      enum: [sd, share, system]
+    Volume:
+      type: object
+      required: [root, total, free, mounted]
+      additionalProperties: false
+      properties:
+        root: { $ref: '#/components/schemas/Root' }
+        total: { type: number, minimum: 0, description: bytes }
+        free: { type: number, minimum: 0, description: bytes }
+        mounted: { type: boolean }
+    FileEntry:
+      type: object
+      required: [name, type, size, mtime]
+      additionalProperties: false
+      properties:
+        name: { type: string }
+        type: { type: string, enum: [dir, file] }
+        size: { type: number, minimum: 0, description: bytes; 0 for folders }
+        mtime: { type: integer, description: Unix ms }
+        mounted: { type: boolean, description: Present and true when this image is the mounted virtual media }
+    PathRef:
+      type: object
+      required: [root, path]
+      properties:
+        root: { $ref: '#/components/schemas/Root' }
+        path: { type: string }
+    ShareState:
+      type: object
+      required: [exported_to_host]
+      additionalProperties: false
+      properties:
+        exported_to_host: { type: boolean }
+    MediaState:
+      type: object
+      required: [mounted, readonly]
+      additionalProperties: false
+      properties:
+        mounted:
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [root, path, mode]
+              additionalProperties: false
+              properties:
+                root: { const: sd }
+                path: { type: string }
+                mode: { type: string, enum: [cdrom, disk] }
+        readonly: { type: boolean }
+    DownloadJob:
+      type: object
+      required: [id, url, path, state, received, total]
+      additionalProperties: false
+      properties:
+        id: { type: string }
+        url: { type: string }
+        path: { type: string }
+        state: { type: string, enum: [running, paused, done, failed, canceled] }
+        received: { type: number, minimum: 0 }
+        total: { type: number, minimum: 0, description: 0 when the server sent no length }
+    ScriptInfo:
+      type: object
+      required: [name, size]
+      additionalProperties: false
+      properties:
+        name: { type: string, pattern: '^[A-Za-z0-9._-]{1,64}$' }
+        size: { type: integer, minimum: 0 }
+    DeviceAction:
+      type: string
+      enum: [reboot, shutdown, restart_kvm, reset_hid, disconnect_sessions]
+    UsedTotal:
+      type: object
+      required: [used, total]
+      additionalProperties: false
+      properties:
+        used: { type: number, minimum: 0, description: bytes }
+        total: { type: number, minimum: 0, description: bytes }
+    DeviceInfo:
+      type: object
+      required: [hostname, version, kernel, uptime_s, ip, mac, link_mbps, soc_temp_c, mem, data, lux]
+      additionalProperties: false
+      properties:
+        hostname: { type: string }
+        version: { type: string }
+        kernel: { type: string }
+        uptime_s: { type: integer, minimum: 0 }
+        ip: { type: [string, 'null'] }
+        mac: { type: string }
+        link_mbps: { type: integer, minimum: 0, description: 0 when the cable is out }
+        soc_temp_c: { type: [number, 'null'] }
+        mem: { $ref: '#/components/schemas/UsedTotal' }
+        data: { $ref: '#/components/schemas/UsedTotal' }
+        lux: { type: [number, 'null'], description: BH1750 reading }
+    NetworkConfig:
+      type: object
+      required: [mode, dns, https, http_port, bind]
+      additionalProperties: false
+      properties:
+        mode: { type: string, enum: [dhcp, static] }
+        ip: { type: string, format: ipv4 }
+        mask: { type: string, format: ipv4 }
+        gateway: { type: string, format: ipv4 }
+        dns:
+          type: object
+          required: [mode, servers]
+          additionalProperties: false
+          properties:
+            mode: { type: string, enum: [dhcp, manual] }
+            servers: { type: array, items: { type: string }, maxItems: 4 }
+        https:
+          type: object
+          required: [enabled, port]
+          additionalProperties: false
+          properties:
+            enabled: { type: boolean }
+            port: { type: integer, minimum: 1, maximum: 65535 }
+            cert_path: { type: string }
+            key_path: { type: string }
+        http_port: { type: integer, minimum: 1, maximum: 65535 }
+        bind: { type: string, description: 'Listen address, e.g. 0.0.0.0' }
+      if:
+        properties: { mode: { const: static } }
+      then:
+        required: [ip, mask, gateway]
+    UpdateJobEnvelope:
+      type: object
+      required: [job]
+      additionalProperties: false
+      properties:
+        job:
+          type: object
+          required: [id, state, progress]
+          additionalProperties: false
+          properties:
+            id: { type: string }
+            state: { type: string, enum: [running, done, failed] }
+            progress: { type: integer, minimum: 0, maximum: 100 }
+    UpdateSettings:
+      type: object
+      required: [channel, server]
+      additionalProperties: false
+      properties:
+        channel: { type: string, enum: [stable, preview] }
+        server: { type: string, format: uri, pattern: "^https?://" }
+    McpState:
+      type: object
+      required: [enabled, key_hint]
+      additionalProperties: false
+      properties:
+        enabled: { type: boolean }
+        key_hint: { type: [string, 'null'], description: Last 4 characters of the key }

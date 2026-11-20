@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "panel.schema.json",
+  "title": "KVMPanel panel socket (kvmd <-> panel), one JSON object per line",
+  "$defs": {
+    "ToPanel": {
+      "oneOf": [
+        { "$ref": "#/$defs/Hello" },
+        { "$ref": "#/$defs/Telemetry" },
+        { "$ref": "#/$defs/Pc" },
+        { "$ref": "#/$defs/Status" },
+        { "$ref": "#/$defs/Config" },
+        { "$ref": "#/$defs/KvmRestarting" },
+        { "$ref": "#/$defs/Result" }
+      ]
+    },
+    "FromPanel": {
+      "oneOf": [
+        { "$ref": "#/$defs/GetConfig" },
+        { "$ref": "#/$defs/PatchConfig" },
+        { "$ref": "#/$defs/Action" },
+        { "$ref": "#/$defs/DeviceInfoRequest" }
+      ]
+    },
+    "Id": { "type": "integer", "minimum": 0 },
+    "Metric": {
+      "type": "object",
+      "required": ["id", "label", "unit", "value", "min", "max", "group"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)+$" },
+        "label": { "type": "string" },
+        "unit": { "type": "string" },
+        "value": { "type": ["number", "null"], "description": "null when the PC does not report it (e.g. empty DIMM slot)" },
+        "min": { "type": "number", "description": "Fixed sparkline range" },
+        "max": { "type": "number" },
+        "warn": { "type": "number", "description": "Flash red above this; already merged with config.panel.thresholds" },
+        "group": { "enum": ["cpu", "gpu", "mem", "sys"] }
+      }
+    },
+    "Hello": {
+      "type": "object", "required": ["t", "version"], "additionalProperties": false,
+      "properties": { "t": { "const": "hello" }, "version": { "type": "string" } }
+    },
+    "Telemetry": {
+      "description": "Once per second while the PC host program is connected",
+      "type": "object", "required": ["t", "ts", "metrics"], "additionalProperties": false,
+      "properties": {
+        "t": { "const": "telemetry" },
+        "ts": { "type": "integer", "description": "Unix ms" },
+        "metrics": { "type": "array", "items": { "$ref": "#/$defs/Metric" } }
+      }
+    },
+    "Pc": {
+      "description": "Host program connection change; telemetry stops while connected=false",
+      "type": "object", "required": ["t", "connected", "last_seen_ts"], "additionalProperties": false,
+      "properties": {
+        "t": { "const": "pc" },
+        "connected": { "type": "boolean" },
+        "last_seen_ts": { "type": ["integer", "null"] }
+      }
+    },
+    "Status": {
+      "description": "On change and every 5 s; drives the top-right status chips",
+      "type": "object", "required": ["t", "eth", "pc", "usb_a", "kvm", "lux"], "additionalProperties": false,
+      "properties": {
+        "t": { "const": "status" },
+        "eth": {
+          "type": "object", "required": ["state", "mbps", "ip"], "additionalProperties": false,
+          "properties": {
+            "state": { "enum": ["up", "no_ip", "down"] },
+            "mbps": { "type": "integer", "minimum": 0 },
+            "ip": { "type": ["string", "null"] }
+          }
+        },
+        "pc": {
+          "type": "object", "required": ["state"], "additionalProperties": false,
+          "properties": { "state": { "enum": ["ok", "partial", "off"], "description": "ok: HID + host program; partial: one of them; off: USB-C not connected" } }
+        },
+        "usb_a": {
+          "type": "object", "required": ["device"], "additionalProperties": false,
+          "properties": { "device": { "type": ["string", "null"] } }
+        },
+        "kvm": {
+          "type": "object", "required": ["enabled", "sessions"], "additionalProperties": false,
+          "properties": { "enabled": { "type": "boolean" }, "sessions": { "type": "integer", "minimum": 0 } }
+        },
+        "lux": { "type": ["number", "null"] }
+      }
+    },
+    "Config": {
+      "description": "Whole Config (openapi.yaml components/schemas/Config) on connect and after every change",
+      "type": "object", "required": ["t", "config"], "additionalProperties": false,
+      "properties": { "t": { "const": "config" }, "config": { "type": "object" } }
+    },
+    "KvmRestarting": {
+      "type": "object", "required": ["t"], "additionalProperties": false,
+      "properties": { "t": { "const": "kvm_restarting" } }
+    },
+    "Result": {
+      "description": "Reply to a request with the same id. id is absent when the request line could not be parsed.",
+      "type": "object", "required": ["t", "ok"], "additionalProperties": false,
+      "properties": {
+        "t": { "const": "result" },
+        "id": { "$ref": "#/$defs/Id" },
+        "ok": { "type": "boolean" },
+        "data": {},
+        "error": { "type": "string" },
+        "detail": { "type": "object" }
+      }
+    },
+    "GetConfig": {
+      "type": "object", "required": ["t", "id"], "additionalProperties": false,
+      "properties": { "t": { "const": "get_config" }, "id": { "$ref": "#/$defs/Id" } }
+    },
+    "PatchConfig": {
+      "type": "object", "required": ["t", "id", "patch"], "additionalProperties": false,
+      "properties": { "t": { "const": "patch_config" }, "id": { "$ref": "#/$defs/Id" }, "patch": { "type": "object" } }
+    },
+    "Action": {
+      "type": "object", "required": ["t", "id", "action"], "additionalProperties": false,
+      "properties": {
+        "t": { "const": "action" },
+        "id": { "$ref": "#/$defs/Id" },
+        "action": { "enum": ["reboot", "shutdown", "restart_kvm", "reset_hid", "disconnect_sessions", "eject_media", "usb_apply"] }
+      }
+    },
+    "DeviceInfoRequest": {
+      "type": "object", "required": ["t", "id"], "additionalProperties": false,
+      "properties": { "t": { "const": "device_info" }, "id": { "$ref": "#/$defs/Id" } }
+    }
+  }
+}
