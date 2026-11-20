@@ -1,0 +1,549 @@
+// Throwaway prototype of the PC-case dashboard main screen (mockup e2-v5.html).
+// Logical canvas is 1080x1920; the mockup was drawn at 420 px wide, so sizes are x2.57.
+
+// kind 0 = metric row (label | sparkline | value), kind 1 = usage bar under the previous row.
+export struct Row {
+    kind: int,
+    label: string,
+    value: string,
+    hot: bool,
+    line: string,
+    area: string,
+    bar: float,
+}
+
+// state 0 = ok (green), 1 = warn (orange), 2 = off (grey)
+export struct Chip {
+    text: string,
+    state: int,
+}
+
+export struct Dimm {
+    text: string,
+    present: bool,
+    hot: bool,
+}
+
+export struct Series {
+    name: string,
+    line: string,
+    area: string,
+    color: color,
+}
+
+global Theme {
+    out property <color> fg: #e2e8f0;
+    out property <color> muted: #8b97aa;
+    out property <color> na: #5a6270;
+    out property <color> hot: #ff6b6b;
+    out property <color> cpu: #5ec4ff;
+    out property <color> cpu-ccd1: #3a8fc0;
+    out property <color> gpu: #7ee787;
+    out property <color> mem: #d2a8ff;
+    out property <color> pwr: #ffb454;
+    out property <length> fs: 32px;       // 12.5px in the mockup
+    out property <length> fs-title: 26px; // .8em
+    out property <length> fs-small: 23px; // .72em
+    out property <string> font: "Ubuntu Sans";
+    // 0..1 pulse used by values above their warn threshold (1.2 s period like the mockup)
+    out property <float> pulse: (1 - Math.cos(animation-tick() / 1.2s * 360deg)) / 2;
+}
+
+component Sparkline inherits Rectangle {
+    in property <string> line;
+    in property <string> area;
+    in property <color> accent;
+    in property <float> vb-width: 84;
+    in property <float> vb-height: 18;
+    in property <int> grid-lines: 2;
+    in property <length> stroke: 2.5px;
+    in property <float> fill-alpha: 0.18;
+    background: #00000059;
+    border-width: 2px;
+    border-color: #ffffff21;
+    border-radius: 8px;
+    for i in root.grid-lines: Rectangle {
+        x: 2px;
+        width: parent.width - 4px;
+        y: parent.height * (i + 1) / (root.grid-lines + 1);
+        height: 1px;
+        background: #ffffff14;
+    }
+    Path {
+        x: 2px;
+        y: 2px;
+        width: parent.width - 4px;
+        height: parent.height - 4px;
+        viewbox-width: root.vb-width;
+        viewbox-height: root.vb-height;
+        fit: fill;
+        commands: root.area;
+        fill: root.accent.with-alpha(root.fill-alpha);
+        stroke: transparent;
+        stroke-width: root.stroke;
+    }
+    Path {
+        x: 2px;
+        y: 2px;
+        width: parent.width - 4px;
+        height: parent.height - 4px;
+        viewbox-width: root.vb-width;
+        viewbox-height: root.vb-height;
+        fit: fill;
+        commands: root.line;
+        fill: transparent;
+        stroke: root.accent;
+        stroke-width: root.stroke;
+    }
+    @children
+}
+
+component Bar inherits Rectangle {
+    in property <float> value;
+    in property <color> accent;
+    height: 10px;
+    background: #ffffff14;
+    border-radius: 5px;
+    Rectangle {
+        x: 0;
+        width: parent.width * Math.clamp(root.value, 0, 1);
+        background: root.accent;
+        border-radius: 5px;
+        animate width { duration: 600ms; easing: ease; }
+    }
+}
+
+component LineItem inherits VerticalLayout {
+    in property <Row> item;
+    in property <color> accent;
+    if root.item.kind == 0: HorizontalLayout {
+        spacing: 15px;
+        Text {
+            text: root.item.label;
+            color: Theme.fg;
+            font-family: Theme.font;
+            font-size: Theme.fs;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        Sparkline {
+            width: 216px;
+            height: 46px;
+            line: root.item.line;
+            area: root.item.area;
+            accent: root.accent;
+        }
+        Text {
+            width: 247px;
+            text: root.item.value;
+            color: root.item.hot ? Theme.fg.mix(Theme.hot, 1 - Theme.pulse) : Theme.fg;
+            font-family: Theme.font;
+            font-size: Theme.fs;
+            font-weight: 600;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+    if root.item.kind == 1: Bar {
+        value: root.item.bar;
+        accent: root.accent;
+    }
+}
+
+component Tile inherits Rectangle {
+    background: #14192299;
+    border-width: 2px;
+    border-color: #ffffff0f;
+    border-radius: 18px;
+}
+
+component Title inherits Text {
+    font-family: Theme.font;
+    font-size: Theme.fs-title;
+    letter-spacing: 1.5px;
+    vertical-alignment: center;
+}
+
+component StatusChip inherits Rectangle {
+    in property <Chip> chip;
+    in property <string> icon;
+    in property <length> max-text: 400px;
+    // only a chip with elide = true may shrink; the others keep their full text
+    in property <bool> elide;
+    property <color> dot: chip.state == 0 ? #3fb950 : chip.state == 1 ? #ffb454 : #5a6270;
+    property <color> ink: chip.state == 2 ? #6b7585 : #c5cfdc;
+    border-radius: self.height / 2;
+    background: #ffffff12;
+    HorizontalLayout {
+        padding-left: 13px;
+        padding-right: 13px;
+        padding-top: 3px;
+        padding-bottom: 3px;
+        spacing: 7px;
+        alignment: center;
+        Rectangle {
+            width: 15px;
+            height: 15px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 7.5px;
+            background: root.dot;
+            drop-shadow-blur: root.chip.state == 2 ? 0 : 12px;
+            drop-shadow-color: root.dot;
+        }
+        Path {
+            width: 28px;
+            height: 28px;
+            viewbox-width: 12;
+            viewbox-height: 12;
+            commands: root.icon;
+            stroke: root.ink;
+            stroke-width: 3.5px;
+            fill: transparent;
+        }
+        Text {
+            text: root.chip.text;
+            color: root.ink;
+            font-family: Theme.font;
+            font-size: Theme.fs-small;
+            vertical-alignment: center;
+            overflow: TextOverflow.elide;
+            max-width: root.max-text;
+            min-width: root.elide ? 0 : self.preferred-width;
+        }
+    }
+}
+
+component Blob inherits Image {
+    in property <length> cx;
+    in property <length> cy;
+    in property <length> base;
+    in property <float> scale;
+    width: self.base * self.scale;
+    height: self.width;
+    x: self.cx - self.width / 2;
+    y: self.cy - self.height / 2;
+    image-fit: fill;
+}
+
+export component Dashboard inherits Window {
+    title: "KVMPanel dashboard (Slint prototype)";
+    width: 1080px;
+    height: 1920px;
+    background: #07090d;
+    default-font-family: Theme.font;
+
+    in property <image> blob0;
+    in property <image> blob1;
+    in property <image> blob2;
+    in property <[Row]> cpu-rows;
+    in property <[Row]> gpu-rows;
+    in property <[Row]> mem-rows;
+    in property <[Row]> sys-rows;
+    in property <[float]> cores: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    in property <[Chip]> chips: [{ text: "ETH", state: 2 }, { text: "PC", state: 2 }, { text: "USB", state: 2 }];
+    in property <[Dimm]> dimms: [{ text: "--" }, { text: "--" }, { text: "--" }, { text: "--" }];
+    in property <[Series]> dimm-series;
+    in property <string> dimm-range: "30–60 °C · last 60 s";
+    in property <string> clocks: "-- / --";
+    in property <bool> waiting: true;
+
+    // ---- E2 background ----
+    property <float> t: animation-tick() / 1ms;
+    // ease-in-out "alternate" drift: 0 -> 1 -> 0 with periods 2x18 s, 2x22 s, 2x26 s
+    property <float> p0: (1 - Math.cos(t / 18000 * 180deg)) / 2;
+    property <float> p1: (1 - Math.cos(t / 22000 * 180deg)) / 2;
+    property <float> p2: (1 - Math.cos(t / 26000 * 180deg)) / 2;
+    // blob images hold the blurred disc plus 3 sigma of blur margin: 831.6 px disc -> 1449.6 px image
+    property <length> blob-size: 1449.6px;
+
+    Blob {
+        source: root.blob0;
+        base: root.blob-size;
+        cx: 275.4px + 332.6px * root.p0;
+        cy: 166.2px + 499px * root.p0;
+        scale: 1 + 0.2 * root.p0;
+    }
+
+    Blob {
+        source: root.blob1;
+        base: root.blob-size;
+        cx: 880.2px - 415.8px * root.p1;
+        cy: 1107px - 332.6px * root.p1;
+        scale: 1 - 0.2 * root.p1;
+    }
+
+    Blob {
+        source: root.blob2;
+        base: root.blob-size;
+        cx: 426.6px + 249.5px * root.p2;
+        cy: 1888.2px - 582.1px * root.p2;
+        scale: 1 + 0.3 * root.p2;
+    }
+
+    // faint grid: 61.7 px cells scrolling down one cell per 8 s, faded at top and bottom
+    property <length> cell: 61.7px;
+    property <length> scroll: root.cell * Math.mod(root.t, 8000) / 8000;
+    for i in 18: Rectangle {
+        x: root.cell * i;
+        y: 0;
+        width: 2px;
+        height: root.height;
+        background: @linear-gradient(180deg, #5ec4ff00 0%, #5ec4ff14 30%, #5ec4ff14 70%, #5ec4ff00 100%);
+    }
+    for i in 33: Rectangle {
+        property <length> pos: root.cell * (i - 1) + root.scroll;
+        property <float> fade: Math.clamp(Math.min(self.pos / (root.height * 0.3), (root.height - self.pos) / (root.height * 0.3)), 0, 1);
+        x: 0;
+        y: self.pos;
+        width: root.width;
+        height: 2px;
+        background: #5ec4ff.with-alpha(0.08 * self.fade);
+    }
+
+    // ---- panels ----
+    property <length> pad: 24px;
+    property <length> gap: 22px;
+    property <length> avail: root.height - 2 * root.pad - 3 * root.gap;
+
+    VerticalLayout {
+        padding: root.pad;
+        spacing: root.gap;
+
+        // CPU
+        Tile {
+            height: root.avail * 10 / 30.5;
+            VerticalLayout {
+                padding-top: 22px;
+                padding-bottom: 22px;
+                padding-left: 33px;
+                padding-right: 33px;
+                alignment: space-between;
+                HorizontalLayout {
+                    spacing: 10px;
+                    Title {
+                        text: "CPU · RYZEN 9 9950X3D";
+                        color: Theme.cpu;
+                        horizontal-stretch: 1;
+                    }
+                    StatusChip {
+                        chip: root.chips[0];
+                        max-text: 260px;
+                        icon: "M3 3 H9 A1 1 0 0 1 10 4 V8 A1 1 0 0 1 9 9 H3 A1 1 0 0 1 2 8 V4 A1 1 0 0 1 3 3 Z M4 9 V10.5 M6 9 V10.5 M8 9 V10.5";
+                    }
+                    StatusChip {
+                        chip: root.chips[1];
+                        max-text: 160px;
+                        icon: "M2.5 2 H9.5 A1 1 0 0 1 10.5 3 V7 A1 1 0 0 1 9.5 8 H2.5 A1 1 0 0 1 1.5 7 V3 A1 1 0 0 1 2.5 2 Z M4 10.5 H8 M6 8 V10.5";
+                    }
+                    StatusChip {
+                        chip: root.chips[2];
+                        max-text: 220px;
+                        elide: true;
+                        icon: "M6 1 V9 M4 3 L6 1 L8 3 M3 6 V7.5 L6 9 M9 5 V6.5 L6 8";
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 6px;
+                    HorizontalLayout {
+                        height: 87px;
+                        spacing: 8px;
+                        for c[i] in root.cores: Rectangle {
+                            Rectangle {
+                                y: parent.height - self.height;
+                                height: parent.height * Math.clamp(c / 100, 0.03, 1);
+                                background: i < 8 ? Theme.cpu : Theme.cpu-ccd1;
+                                border-radius: 5px;
+                                animate height { duration: 600ms; easing: ease; }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        Text {
+                            text: "CCD0 · V-Cache";
+                            color: Theme.muted;
+                            font-size: Theme.fs-small;
+                            horizontal-stretch: 1;
+                        }
+                        Text {
+                            text: "CCD1";
+                            color: Theme.muted;
+                            font-size: Theme.fs-small;
+                        }
+                    }
+                }
+
+                for r in root.cpu-rows: LineItem {
+                    item: r;
+                    accent: Theme.cpu;
+                }
+            }
+        }
+
+        // GPU
+        Tile {
+            height: root.avail * 8 / 30.5;
+            VerticalLayout {
+                padding-top: 22px;
+                padding-bottom: 22px;
+                padding-left: 33px;
+                padding-right: 33px;
+                alignment: space-between;
+                Title {
+                    text: "GPU · RTX 5090";
+                    color: Theme.gpu;
+                }
+                for r in root.gpu-rows: LineItem {
+                    item: r;
+                    accent: Theme.gpu;
+                }
+            }
+        }
+
+        // Memory
+        Tile {
+            height: root.avail * 7 / 30.5;
+            VerticalLayout {
+                padding-top: 22px;
+                padding-bottom: 22px;
+                padding-left: 33px;
+                padding-right: 33px;
+                alignment: space-between;
+                Title {
+                    text: "MEMORY · DDR5-6000 2×32G";
+                    color: Theme.mem;
+                }
+                for r in root.mem-rows: LineItem {
+                    item: r;
+                    accent: Theme.mem;
+                }
+                HorizontalLayout {
+                    Text {
+                        text: "DIMM A1 / A2 / B1 / B2";
+                        color: Theme.fg;
+                        font-size: Theme.fs;
+                        horizontal-stretch: 1;
+                    }
+                    for d[i] in root.dimms: HorizontalLayout {
+                        Text {
+                            text: d.text;
+                            color: !d.present ? Theme.na : d.hot ? Theme.fg.mix(Theme.hot, 1 - Theme.pulse) : Theme.fg;
+                            font-size: Theme.fs;
+                            font-weight: 600;
+                        }
+                        Text {
+                            text: i < 3 ? " / " : " °C";
+                            color: Theme.fg;
+                            font-size: Theme.fs;
+                            font-weight: 600;
+                        }
+                    }
+                }
+                VerticalLayout {
+                    spacing: 4px;
+                    Sparkline {
+                        height: 149px;
+                        vb-width: 200;
+                        vb-height: 58;
+                        grid-lines: 4;
+                        line: "";
+                        area: "";
+                        border-radius: 10px;
+                        for s in root.dimm-series: Rectangle {
+                            Path {
+                                x: 2px;
+                                y: 2px;
+                                width: parent.width - 4px;
+                                height: parent.height - 4px;
+                                viewbox-width: 200;
+                                viewbox-height: 58;
+                                fit: fill;
+                                commands: s.area;
+                                fill: s.color.with-alpha(0.12);
+                                stroke: transparent;
+                                stroke-width: 3px;
+                            }
+                            Path {
+                                x: 2px;
+                                y: 2px;
+                                width: parent.width - 4px;
+                                height: parent.height - 4px;
+                                viewbox-width: 200;
+                                viewbox-height: 58;
+                                fit: fill;
+                                commands: s.line;
+                                fill: transparent;
+                                stroke: s.color;
+                                stroke-width: 3px;
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        alignment: end;
+                        spacing: 26px;
+                        for s in root.dimm-series: Text {
+                            text: "— " + s.name;
+                            color: s.color;
+                            font-size: Theme.fs-small;
+                        }
+                        Text {
+                            text: root.dimm-range;
+                            color: Theme.muted;
+                            font-size: Theme.fs-small;
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    Text {
+                        text: "MCLK / UCLK";
+                        color: Theme.fg;
+                        font-size: Theme.fs;
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: root.clocks;
+                        color: Theme.fg;
+                        font-size: Theme.fs;
+                        font-weight: 600;
+                    }
+                }
+            }
+        }
+
+        // System
+        Tile {
+            height: root.avail * 5.5 / 30.5;
+            VerticalLayout {
+                padding-top: 22px;
+                padding-bottom: 22px;
+                padding-left: 33px;
+                padding-right: 33px;
+                alignment: space-between;
+                Title {
+                    text: "SYSTEM · B850M AORUS ELITE ICE";
+                    color: Theme.pwr;
+                }
+                for r in root.sys-rows: LineItem {
+                    item: r;
+                    accent: Theme.pwr;
+                }
+            }
+        }
+    }
+
+    if root.waiting: Rectangle {
+        x: (root.width - self.width) / 2;
+        y: root.height - 140px;
+        width: 520px;
+        height: 64px;
+        border-radius: 32px;
+        background: #000000b0;
+        Text {
+            text: "Waiting for PC data…";
+            color: Theme.muted;
+            font-size: Theme.fs-small;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
