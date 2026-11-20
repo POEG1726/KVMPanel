@@ -1,7 +1,8 @@
 import { useEffect, useState, type ChangeEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { api, unwrap } from '../../api/client';
+import { ApiError, api, unwrap } from '../../api/client';
+import { sha256File } from '../../api/fileHash';
 import { errorText, useRun } from '../../console/menus/hooks';
 import { Button, ConfirmDialog, Select, toast } from '../../ui';
 import { Alert, Group, Row, TextField } from '../fields';
@@ -10,10 +11,9 @@ import s from '../settings.module.css';
 const UPDATE_KEY = ['update'] as const;
 export const JOB_POLL_MS = 1000;
 
-async function sha256Hex(file: Blob): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
+const ACTIVE_JOB_KEY = ['update', 'activeJob'] as const;
+const NOTIFIED_JOB_KEY = ['update', 'notifiedJob'] as const;
+const MAX_PACKAGE_BYTES = 256 * 1024 * 1024;
 
 /** Update channel and server, online check/install, and offline package upload. */
 export function UpdatePage() {
@@ -21,7 +21,8 @@ export function UpdatePage() {
   const qc = useQueryClient();
   const info = useQuery({ queryKey: UPDATE_KEY, queryFn: () => unwrap(api.GET('/api/update')) });
   const { error, run } = useRun();
-  const [jobId, setJobId] = useState<string | null>(null);
+  const [jobId, setJobId] = useState(() => qc.getQueryData<string>(ACTIVE_JOB_KEY));
+  const [submitting, setSubmitting] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [offlineFile, setOfflineFile] = useState<File | null>(null);
   const job = useQuery({
@@ -30,10 +31,14 @@ export function UpdatePage() {
     enabled: !!jobId,
     refetchInterval: (q) => (q.state.data?.state === 'running' || !q.state.data ? JOB_POLL_MS : false),
   });
-  const done = job.data?.state === 'done';
+  const completedId = job.data?.state === 'done' ? job.data.id : undefined;
   useEffect(() => {
-    if (done) toast(t('settings.update.installed'));
-  }, [done, t]);
+    if (completedId && qc.getQueryData(NOTIFIED_JOB_KEY) !== completedId) {
+      qc.setQueryData(NOTIFIED_JOB_KEY, completedId);
+      toast(t('settings.update.installed'));
+    }
+  }, [completedId, qc, t]);
+  const busy = submitting || (!!jobId && (job.isPending || job.data?.state === 'running'));
 
   const d = info.data;
   const saveSettings = (part: Partial<{ channel: 'stable' | 'preview'; server: string }>) =>
@@ -47,22 +52,28 @@ export function UpdatePage() {
       const r = await unwrap(api.POST('/api/update/check'));
       if (d) qc.setQueryData(UPDATE_KEY, { ...d, ...r });
     });
-  const install = () =>
-    run(async () => {
-      setJobId((await unwrap(api.POST('/api/update/apply'))).job.id);
-    });
   const pick = (e: ChangeEvent<HTMLInputElement>) => {
     setOfflineFile(e.target.files?.[0] ?? null);
     e.target.value = '';
   };
-  const upload = async (file: File) => {
-    await run(async () => {
-      const sha = await sha256Hex(file);
-      const r = await unwrap(
-        api.PUT('/api/update/offline', { params: { header: { 'X-Sha256': sha } }, body: file as never, bodySerializer: (b: unknown) => b as never, headers: { 'content-type': 'application/octet-stream' } }),
-      );
-      setJobId(r.job.id);
-    });
+  const install = async (file?: File) => {
+    setSubmitting(true);
+    try {
+      await run(async () => {
+        if (file && file.size > MAX_PACKAGE_BYTES) throw new ApiError(413, 'too_large');
+        const result = file
+          ? await unwrap(api.PUT('/api/update/offline', {
+              params: { header: { 'X-Sha256': await sha256File(file) } },
+              body: file as never, bodySerializer: () => file,
+              headers: { 'content-type': 'application/octet-stream' },
+            }))
+          : await unwrap(api.POST('/api/update/apply'));
+        qc.setQueryData(ACTIVE_JOB_KEY, result.job.id);
+        setJobId(result.job.id);
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -90,13 +101,13 @@ export function UpdatePage() {
           </Group>
           <div className={s.actions}>
             <Button onClick={() => void check()}>{t('settings.update.check')}</Button>
-            <Button variant="primary" disabled={job.data?.state === 'running'} onClick={() => setConfirming(true)}>
+            <Button variant="primary" disabled={busy} onClick={() => setConfirming(true)}>
               {t('settings.update.install')}
             </Button>
           </div>
           <Group title={t('settings.update.offline')}>
             <Row label={t('settings.update.offlineFile')} hint={t('settings.update.offlineHint')}>
-              <input type="file" aria-label={t('settings.update.offlineFile')} accept=".tar,application/x-tar" onChange={pick} />
+              <input type="file" aria-label={t('settings.update.offlineFile')} accept=".tar,application/x-tar" disabled={busy} onChange={pick} />
             </Row>
           </Group>
         </>
@@ -109,7 +120,7 @@ export function UpdatePage() {
           <span>{t(`settings.update.state.${job.data.state}`)}</span>
         </Group>
       )}
-      <Alert message={error} />
+      <Alert message={error ?? (job.error ? errorText(t, job.error) : null)} />
       {offlineFile && (
         <ConfirmDialog
           title={t('settings.update.installTitle')}
@@ -119,7 +130,7 @@ export function UpdatePage() {
           onConfirm={() => {
             const file = offlineFile;
             setOfflineFile(null);
-            void upload(file);
+            void install(file);
           }}
         />
       )}

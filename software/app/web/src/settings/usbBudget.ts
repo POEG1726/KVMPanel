@@ -1,3 +1,4 @@
+import type { components } from '../api/schema';
 import type { Config } from '../api/client';
 
 /** T113-i USB0 has EP1–EP5, each with one IN and one OUT (datasheet, USB2.0 OTG). */
@@ -6,13 +7,7 @@ export const EP_OUT = 5;
 
 export type UsbConfig = Config['usb'];
 
-export interface UsbBudget {
-  in: number;
-  out: number;
-  fits: boolean;
-  in_missing: number;
-  out_missing: number;
-}
+type UsbBudget = components['schemas']['UsbBudget'];
 
 /** Endpoint cost of a USB gadget set, per the table in spec 4.5 (same rule as the board and the mock). */
 export function usbBudget(u: UsbConfig): UsbBudget {

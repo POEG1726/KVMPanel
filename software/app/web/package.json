@@ -12,6 +12,7 @@
     "gen:ws": "node scripts/gen-ws-types.mjs"
   },
   "dependencies": {
+    "@noble/hashes": "2.0.1",
     "@tanstack/react-query": "^5.108.2",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",

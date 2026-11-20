@@ -73,7 +73,7 @@ export function GeneralPage() {
       </Group>
       <Group>
         <Row label={t('settings.general.title')}>
-          <TextField label={t('settings.general.title')} value={web.title} onCommit={(title) => title.trim() && void patch({ title: title.trim() })} />
+          <TextField label={t('settings.general.title')} value={web.title} onCommit={(title) => void patch({ title: title.trim() })} />
         </Row>
         <Row label={t('settings.general.logo')} hint={t('settings.general.logoHint')}>
           <input type="file" aria-label={t('settings.general.logo')} accept="image/png,image/svg+xml" onChange={(e) => void upload(e)} />

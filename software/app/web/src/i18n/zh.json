@@ -315,7 +315,7 @@
         "storage": "光驱、虚拟 U 盘、文件共享",
         "net": "NCM 或 RNDIS",
         "acm": "",
-        "telemetry": "开着任意鼠标时不占端点；两个鼠标都关时占 1 个 IN"
+        "telemetry": "关闭绝对鼠标时占用 1 个 IN"
       },
       "netMode": "网卡模式",
       "apply": "应用",

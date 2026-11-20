@@ -318,7 +318,7 @@
         "storage": "CD-ROM, virtual disk and file share",
         "net": "NCM or RNDIS",
         "acm": "",
-        "telemetry": "Free while a mouse is on; takes one IN when both mice are off"
+        "telemetry": "Uses one IN when the absolute mouse is off"
       },
       "netMode": "Network card mode",
       "apply": "Apply",

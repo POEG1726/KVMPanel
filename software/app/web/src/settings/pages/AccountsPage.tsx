@@ -5,7 +5,7 @@ import { api, unwrap } from '../../api/client';
 import { beginOwnPasswordChange, endOwnPasswordChange, settleOwnPasswordChange } from '../../api/authEvents';
 import type { components } from '../../api/schema';
 import { useRun } from '../../console/menus/hooks';
-import { ME_KEY } from '../../session/useSession';
+import { fetchMe, ME_KEY } from '../../session/useSession';
 import { Button, ConfirmDialog, Select, Switch, toast } from '../../ui';
 import { Alert, Group, Row } from '../fields';
 import s from '../settings.module.css';
@@ -265,7 +265,7 @@ function UserList() {
 
 /** Own password for everyone; the account list only for admins. */
 export function AccountsPage() {
-  const me = useQuery({ queryKey: ME_KEY, queryFn: () => unwrap(api.GET('/api/auth/me')).then((r) => r.user), staleTime: Infinity });
+  const me = useQuery({ queryKey: ME_KEY, queryFn: fetchMe, staleTime: Infinity });
   return (
     <>
       <OwnPassword />

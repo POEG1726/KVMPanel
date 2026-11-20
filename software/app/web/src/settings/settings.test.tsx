@@ -5,6 +5,7 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import WebSocket from 'ws';
 import i18n from '../i18n';
 import { App } from '../App';
+import { useToasts } from '../ui/Toast';
 import { configureApi } from '../api/client';
 import { configureSockets, type SocketFactory } from '../api/socket';
 import { useUi } from '../state/ui';
@@ -31,9 +32,9 @@ function client() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
 }
 
-function mount(page: SettingsPageId) {
+function mount(page: SettingsPageId, queryClient = client()) {
   return render(
-    <QueryClientProvider client={client()}>
+    <QueryClientProvider client={queryClient}>
       <SettingsWindow page={page} />
     </QueryClientProvider>,
   );
@@ -49,6 +50,7 @@ beforeEach(async () => {
   mock = await startMock();
   requests = [];
   connections = 0;
+  useToasts.setState({ items: [] });
   await setup();
   configureApi({
     fetch: async (input, init) => {
@@ -114,6 +116,38 @@ describe('SettingsWindow', () => {
     expect(patches()).toContainEqual({ web: { language: 'zh' } });
   });
 
+  it('only offers serial settings to users with terminal permission', async () => {
+    const created = await jar.fetch(new Request(mock.url + '/api/users', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'viewer', password: 'secret1', role: 'user', permissions: ['console'] }),
+    }));
+    expect(created.status).toBe(201);
+    await setup(() => loginAs(mock.url, 'viewer', 'secret1'));
+    mount('input');
+    await screen.findByLabelText(t('keyboard.layout'));
+    expect(screen.queryByLabelText(t('settings.input.serialDevice'))).not.toBeInTheDocument();
+  });
+
+  it('shows why clearing the title failed and restores the saved value', async () => {
+    mount('general');
+    const title = await screen.findByLabelText(t('settings.general.title'));
+    fireEvent.change(title, { target: { value: ' ' } });
+    fireEvent.blur(title);
+    await waitFor(() => expect(useToasts.getState().items).toContainEqual(expect.objectContaining({ text: t('error.invalid_config'), kind: 'error' })));
+    expect(title).toHaveValue('KVMPanel');
+  });
+
+  it('stores the selected logo with its original MIME type and bytes', async () => {
+    mount('general');
+    const input = await screen.findByLabelText(t('settings.general.logo'));
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"/>';
+    fireEvent.change(input, { target: { files: [new File([svg], 'brand.svg', { type: 'image/svg+xml' })] } });
+    await waitFor(() => expect(useToasts.getState().items).toContainEqual(expect.objectContaining({ text: t('settings.general.logoSaved') })));
+    const saved = await jar.fetch(mock.url + '/api/branding/logo');
+    expect(saved.headers.get('content-type')).toContain('image/svg+xml');
+    expect(await saved.text()).toBe(svg);
+  });
+
   it('rolls an optimistic change back and toasts when the server refuses it', async () => {
     mount('general');
     const title = await screen.findByLabelText(t('settings.general.title'));
@@ -121,12 +155,20 @@ describe('SettingsWindow', () => {
     fireEvent.change(title, { target: { value: 'x'.repeat(65) } });
     fireEvent.blur(title);
     await waitFor(() => expect(patches()).toHaveLength(1));
-    await waitFor(() => expect(screen.getByLabelText(t('settings.general.title'))).toHaveValue('KVMPanel'));
+    await waitFor(() => expect(useToasts.getState().items).toContainEqual(expect.objectContaining({ text: t('error.invalid_config'), kind: 'error' })));
+    expect(title).toHaveValue('KVMPanel');
   });
 });
 
 describe('USB functions page', () => {
   const sw = (name: string) => screen.findByRole('switch', { name: t(`settings.usb.feature.${name}`) });
+
+  it('displays the dedicated telemetry IN cost when absolute mouse is disabled', async () => {
+    mount('usb');
+    fireEvent.click(await sw('mouse_abs'));
+    const telemetry = await sw('telemetry');
+    expect(telemetry.parentElement!.parentElement).toHaveTextContent('IN 1 · OUT 0');
+  });
 
   it('shows an endpoints_full tip under the budget bar for a switch that does not fit, and hides it after 2.5 s', async () => {
     mount('usb');
@@ -220,6 +262,25 @@ describe('Panel page', () => {
   });
 });
 
+describe('Video page EDID', () => {
+  it('restores the board EDID after confirming reset, even with an unsaved draft', async () => {
+    mount('video');
+    const hex = await screen.findByLabelText(t('settings.video.edidHex')) as HTMLTextAreaElement;
+    await waitFor(() => expect(hex.value.length).toBeGreaterThanOrEqual(256));
+    const original = hex.value;
+    fireEvent.change(hex, { target: { value: 'bad draft' } });
+    fireEvent.click(screen.getByRole('button', { name: t('settings.video.edidReset') }));
+    const dlg = await screen.findByRole('dialog', { name: t('settings.video.edidResetTitle') });
+    fireEvent.click(within(dlg).getByRole('button', { name: t('settings.video.edidReset') }));
+    await waitFor(() => expect(hex).toHaveValue(original));
+    fireEvent.change(hex, { target: { value: original.slice(0, -2) + (original.endsWith('00') ? '01' : '00') } });
+    fireEvent.click(screen.getByRole('button', { name: t('settings.video.edidApply') }));
+    const apply = await screen.findByRole('dialog', { name: t('settings.video.edidApplyTitle') });
+    fireEvent.click(within(apply).getByRole('button', { name: t('settings.video.edidApply') }));
+    await screen.findByText(t('settings.video.presetCustom'));
+  });
+});
+
 describe('Network page', () => {
   it('shows invalid_body for a static address without an IP and stays on the page', async () => {
     mount('network');
@@ -257,7 +318,37 @@ describe('Update page offline upload', () => {
 
   it('uploads with the SHA-256 header after confirming', async () => {
     fireEvent.click(within(await pick()).getByRole('button', { name: t('settings.update.install') }));
-    await waitFor(() => expect(requests.find((r) => r.key === 'PUT /api/update/offline')?.sha).toMatch(/^[0-9a-f]{64}$/));
+    await screen.findByRole('progressbar');
+    expect(requests.find((r) => r.key === 'PUT /api/update/offline')?.sha).toBe('e0ce1a7f3f76d7bfda0ffdae6e0226aa63b3009c4c4a770c321876aecad0a6c1');
+  });
+});
+
+describe('Update job progress', () => {
+  it('resumes tracking the installation on returning to settings and announces completion once per job', async () => {
+    const qc = client();
+    mount('update', qc);
+    fireEvent.click(await screen.findByRole('button', { name: t('settings.update.install') }));
+    const confirm = await screen.findByRole('dialog', { name: t('settings.update.installTitle') });
+    fireEvent.click(within(confirm).getByRole('button', { name: t('settings.update.install') }));
+    await screen.findByRole('progressbar');
+    const jobRequest = requests.find((r) => r.key.startsWith('GET /api/update/jobs/'))!;
+    const id = jobRequest.key.split('/').pop()!;
+    cleanup();
+
+    // The mock leaves jobs running. Simulate kvmd finishing while the settings window was closed.
+    configureApi({ fetch: async (input, init) => {
+      const req = new Request(input, init);
+      return new URL(req.url).pathname === `/api/update/jobs/${id}`
+        ? Response.json({ job: { id, state: 'done', progress: 100 } })
+        : jar.fetch(req);
+    } });
+    mount('update', qc);
+    await screen.findByText(t('settings.update.state.done'));
+    const notifications = () => useToasts.getState().items.filter((m) =>
+      [i18n.getFixedT('en')('settings.update.installed'), i18n.getFixedT('zh')('settings.update.installed')].includes(m.text));
+    await waitFor(() => expect(notifications()).toHaveLength(1));
+    await act(() => i18n.changeLanguage('zh').then(() => {}));
+    expect(notifications()).toHaveLength(1);
   });
 });
 
@@ -299,6 +390,10 @@ describe('Device page', () => {
     expect(patches()).toHaveLength(0);
     fireEvent.click(within(dialog).getByRole('button', { name: t('common.cancel') }));
     expect(patches()).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: t('settings.device.kvmDisable') }));
+    const accepted = await screen.findByRole('dialog', { name: t('settings.device.confirm.kvm_off.title') });
+    fireEvent.click(within(accepted).getByRole('button', { name: t('settings.device.kvmDisable') }));
+    await waitFor(() => expect(patches()).toEqual([{ kvm: { enabled: false } }]));
   });
 });
 
@@ -307,9 +402,11 @@ describe('Accounts page', () => {
     mount('accounts');
     fireEvent.change(await screen.findByLabelText(t('settings.accounts.newName')), { target: { value: 'viewer' } });
     fireEvent.change(screen.getByLabelText(t('settings.accounts.newUserPassword')), { target: { value: 'secret1' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: `${t('settings.accounts.add')}: ${t('settings.accounts.perm.files')}` }));
+    fireEvent.click(screen.getByRole('switch', { name: `${t('settings.accounts.add')}: ${t('settings.accounts.viewOnly')}` }));
     fireEvent.click(screen.getByRole('button', { name: t('settings.accounts.create') }));
     const disable = await screen.findByRole('switch', { name: `viewer: ${t('settings.accounts.disabled')}` });
-    expect(requests).toContainEqual(expect.objectContaining({ key: 'POST /api/users', body: { name: 'viewer', password: 'secret1', role: 'user', permissions: ['console'], view_only: false } }));
+    expect(requests).toContainEqual(expect.objectContaining({ key: 'POST /api/users', body: { name: 'viewer', password: 'secret1', role: 'user', permissions: ['console', 'files'], view_only: true } }));
 
     fireEvent.click(disable);
     await waitFor(() => expect(screen.getByRole('switch', { name: `viewer: ${t('settings.accounts.disabled')}` })).toHaveAttribute('aria-checked', 'true'));

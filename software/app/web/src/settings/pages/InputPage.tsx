@@ -17,7 +17,7 @@ export function InputPage() {
   const { value: serial, patch: patchSerial } = useConfigSection('serial');
   const me = useQuery({ queryKey: ME_KEY, queryFn: fetchMe, retry: false, staleTime: Infinity }).data;
   if (!hid || !serial) return null;
-  const canSerial = !me || me.role === 'admin' || me.permissions.includes('terminal');
+  const canSerial = me?.role === 'admin' || me?.permissions.includes('terminal');
 
   const withCurrent = (list: string[], cur: string) => (list.includes(cur) ? list : [...list, cur]);
   const leader = hid.leader_key ?? '';

@@ -20,7 +20,7 @@ const FEATURES: readonly { key: Feature; in: string; out: string }[] = [
   { key: 'storage', in: '1', out: '1' },
   { key: 'net', in: '2', out: '1' },
   { key: 'acm', in: '2', out: '1' },
-  { key: 'telemetry', in: '0*', out: '0' },
+  { key: 'telemetry', in: '0', out: '0' },
 ];
 
 /** How long the "endpoints full" hint stays below the budget bar. */
@@ -79,7 +79,6 @@ export function UsbFunctionsPage() {
   };
 
   const toggle = (key: Feature, on: boolean) => {
-    // Turning something on may not fit; turning off always does. Predict with the board's rule.
     if (worsens(usb, key, on)) return showTip(usbBudget({ ...usb, [key]: on }));
     void change({ [key]: on } as Partial<UsbConfig>);
   };
@@ -106,7 +105,7 @@ export function UsbFunctionsPage() {
       <Group>
         {FEATURES.map((f) => (
           <Row key={f.key} label={t(`settings.usb.feature.${f.key}`)} hint={t(`settings.usb.featureHint.${f.key}`)}>
-            <span className={s.cost}>{`IN ${f.in} · OUT ${f.out}`}</span>
+            <span className={s.cost}>{`IN ${f.key === 'telemetry' ? Number(!usb.mouse_abs) : f.in} · OUT ${f.out}`}</span>
             {f.key === 'net' && usb.net && (
               <Select
                 label={t('settings.usb.netMode')}

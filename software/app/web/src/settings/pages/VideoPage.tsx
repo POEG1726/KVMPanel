@@ -30,6 +30,7 @@ export function VideoPage() {
           ? await unwrap(api.PUT('/api/video/edid', { body: { hex: clean } }))
           : await unwrap(api.POST('/api/video/edid/reset'));
       qc.setQueryData(EDID_KEY, next);
+      setHex(next.hex);
     });
 
   if (!video) return null;
