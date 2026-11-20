@@ -1,0 +1,2185 @@
+From: Codex <noreply@openai.com>
+Subject: [PATCH 2/2] media: Add LT8619C and D1/T113 CSIC capture
+
+Port Rockchip's LT8619C setup and timing detection to the generic subdev
+API. Use single-channel SDR BT.656 on D8-D15. Add EDID, stream control
+and bounded lock/phase checks.
+
+Backport Nguyen Minh Tien's D1/T113 CSIC driver and SoC node to
+Linux 6.18.64, configure embedded sync and handle source unbind.
+
+Link: https://lore.kernel.org/linux-media/20260930154835.402684-3-tien.nguyenminh@embeddedlinux.blog/
+Link: https://github.com/rockchip-linux/kernel/blob/develop-6.1/drivers/media/i2c/lt8619c.c
+Signed-off-by: Codex <noreply@openai.com>
+---
+ MAINTAINERS                                        |    2 +
+ arch/riscv/boot/dts/allwinner/sunxi-d1s-t113.dtsi  |   31 +
+ drivers/media/i2c/Kconfig                          |   15 +
+ drivers/media/i2c/Makefile                         |    1 +
+ drivers/media/i2c/lt8619c.c                        |  584 ++++++++
+ drivers/media/platform/sunxi/Kconfig               |    1 +
+ drivers/media/platform/sunxi/Makefile              |    1 +
+ drivers/media/platform/sunxi/sun20i-csi/Kconfig    |   17 +
+ drivers/media/platform/sunxi/sun20i-csi/Makefile   |    4 +
+ .../media/platform/sunxi/sun20i-csi/sun20i_csi.c   | 1405 ++++++++++++++++++++
+ 10 files changed, 2061 insertions(+)
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 6e65aa4e9..96bac9dd2 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -890,6 +890,7 @@ L:	linux-media@vger.kernel.org
+ S:	Maintained
+ T:	git git://linuxtv.org/media.git
+ F:	Documentation/devicetree/bindings/media/allwinner,sun20i-d1-csi.yaml
++F:	drivers/media/platform/sunxi/sun20i-csi/
+ 
+ ALLWINNER DMIC DRIVERS
+ M:	Ban Tao <fengzheng923@gmail.com>
+@@ -14597,6 +14598,7 @@ LONTIUM LT8619C KVMPanel CAPTURE SUPPORT
+ L:	linux-media@vger.kernel.org
+ S:	Odd Fixes
+ F:	Documentation/devicetree/bindings/media/i2c/lontium,lt8619c.yaml
++F:	drivers/media/i2c/lt8619c.c
+ 
+ LONTIUM LT8912B MIPI TO HDMI BRIDGE
+ M:	Adrien Grassein <adrien.grassein@gmail.com>
+diff --git a/arch/riscv/boot/dts/allwinner/sunxi-d1s-t113.dtsi b/arch/riscv/boot/dts/allwinner/sunxi-d1s-t113.dtsi
+index 63e252b44..c25c85bfc 100644
+--- a/arch/riscv/boot/dts/allwinner/sunxi-d1s-t113.dtsi
++++ b/arch/riscv/boot/dts/allwinner/sunxi-d1s-t113.dtsi
+@@ -70,6 +70,20 @@ clk_pg11_pin: clk-pg11-pin {
+ 				function = "clk";
+ 			};
+ 
++			/omit-if-no-ref/
++			csi0_8bit_pins: csi0-8bit-pins {
++				pins = "PE0", "PE1", "PE2", "PE4", "PE5",
++				       "PE6", "PE7", "PE8", "PE9", "PE10",
++				       "PE11";
++				function = "ncsi0";
++			};
++
++			/omit-if-no-ref/
++			csi0_mclk_pin: csi0-mclk-pin {
++				pins = "PE3";
++				function = "ncsi0";
++			};
++
+ 			/omit-if-no-ref/
+ 			dsi_4lane_pins: dsi-4lane-pins {
+ 				pins = "PD0", "PD1", "PD2", "PD3", "PD4", "PD5",
+@@ -951,6 +965,23 @@ tcon_tv0_out_tcon_top_hdmi: endpoint {
+ 			};
+ 		};
+ 
++		csi: csi@5800000 {
++			compatible = "allwinner,sun20i-d1-csi";
++			reg = <0x5800000 0x400000>;
++			interrupts = <SOC_PERIPHERAL_IRQ(95) IRQ_TYPE_LEVEL_HIGH>,
++				     <SOC_PERIPHERAL_IRQ(96) IRQ_TYPE_LEVEL_HIGH>,
++				     <SOC_PERIPHERAL_IRQ(100) IRQ_TYPE_LEVEL_HIGH>,
++				     <SOC_PERIPHERAL_IRQ(106) IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_CSI>,
++				 <&ccu CLK_CSI_TOP>,
++				 <&ccu CLK_MBUS_CSI>;
++			clock-names = "bus", "mod", "ram";
++			resets = <&ccu RST_BUS_CSI>;
++			pinctrl-names = "default";
++			pinctrl-0 = <&csi0_8bit_pins>;
++			status = "disabled";
++		};
++
+ 		ppu: power-controller@7001000 {
+ 			compatible = "allwinner,sun20i-d1-ppu";
+ 			reg = <0x7001000 0x1000>;
+diff --git a/drivers/media/i2c/Kconfig b/drivers/media/i2c/Kconfig
+index cdd7ba5da..af88f4ce8 100644
+--- a/drivers/media/i2c/Kconfig
++++ b/drivers/media/i2c/Kconfig
+@@ -1209,6 +1209,21 @@ config VIDEO_ISL7998X
+ 	  Support for Intersil ISL7998x analog to MIPI-CSI2 or
+ 	  BT.656 decoder.
+ 
++config VIDEO_LT8619C
++	tristate "Lontium LT8619C HDMI receiver"
++	depends on VIDEO_DEV && I2C
++	select MEDIA_CONTROLLER
++	select VIDEO_V4L2_SUBDEV_API
++	select REGMAP_I2C
++	select V4L2_FWNODE
++	help
++	  Support for receiving progressive HDMI video over the eight-bit
++	  BT.656 output of a Lontium LT8619C. The driver presents a V4L2
++	  subdevice with EDID and digital video timing controls.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called lt8619c.
++
+ config VIDEO_LT6911UXE
+ 	tristate "Lontium LT6911UXE decoder"
+ 	depends on ACPI && VIDEO_DEV && I2C
+diff --git a/drivers/media/i2c/Makefile b/drivers/media/i2c/Makefile
+index 57cdd8dc9..fc399e035 100644
+--- a/drivers/media/i2c/Makefile
++++ b/drivers/media/i2c/Makefile
+@@ -65,6 +65,7 @@ obj-$(CONFIG_VIDEO_ISL7998X) += isl7998x.o
+ obj-$(CONFIG_VIDEO_KS0127) += ks0127.o
+ obj-$(CONFIG_VIDEO_LM3560) += lm3560.o
+ obj-$(CONFIG_VIDEO_LM3646) += lm3646.o
++obj-$(CONFIG_VIDEO_LT8619C) += lt8619c.o
+ obj-$(CONFIG_VIDEO_LT6911UXE) += lt6911uxe.o
+ obj-$(CONFIG_VIDEO_M52790) += m52790.o
+ obj-$(CONFIG_VIDEO_MAX9271_LIB) += max9271.o
+diff --git a/drivers/media/i2c/lt8619c.c b/drivers/media/i2c/lt8619c.c
+new file mode 100644
+index 000000000..f854c6452
+--- /dev/null
++++ b/drivers/media/i2c/lt8619c.c
+@@ -0,0 +1,584 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * lt8619c.c - Lontium HDMI receiver, eight-bit SDR BT.656 output
++ * Created on Nov 20, 2026
++ * Board adaptation: @POEG1726
++ * Register sequences from the GPL Rockchip driver by Dingxian Wen.
++ * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
++ */
++
++#include <linux/delay.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/regmap.h>
++#include <linux/unaligned.h>
++#include <linux/v4l2-dv-timings.h>
++#include <media/v4l2-device.h>
++#include <media/v4l2-dv-timings.h>
++#include <media/v4l2-fwnode.h>
++
++#define LT_CHIP_ID		0x6000
++#define LT_RX_TIMING		0x6013
++#define LT_TX_TIMING		0x6061
++#define LT_OUTPUT		0x60a8
++#define LT_OUTPUT_OFF		0x07
++#define LT_OUTPUT_ON		0x0f
++#define LT_HPD			0x8006
++#define LT_HPD_ENABLE		BIT(3)
++#define LT_RX_SYNC		0x8013
++#define LT_TMDS_LOCK		0x8043
++#define LT_TMDS_RATE		0x8044
++#define LT_EDID_MODE		0x808e
++#define LT_EDID_ADDRESS		0x808f
++#define LT_EDID_DATA		0x8090
++#define LT_EDID_BLOCK_SIZE	128
++#define LT_MAX_BLOCKS		2
++
++struct lt8619c {
++	struct v4l2_subdev sd;
++	struct media_pad pad;
++	struct regmap *map;
++	struct mutex lock;	/* Timings, stream state and EDID transactions */
++	struct v4l2_dv_timings timings;
++	u8 edid[LT_MAX_BLOCKS * LT_EDID_BLOCK_SIZE];
++	unsigned int blocks;
++	bool streaming;
++};
++
++static const struct regmap_range_cfg lt8619c_range = {
++	.range_min = 0,
++	.range_max = 0x80fe,
++	.selector_reg = 0xff,
++	.selector_mask = 0xff,
++	.window_start = 0,
++	.window_len = 256,
++};
++
++static const struct regmap_config lt8619c_regmap = {
++	.reg_bits = 8,
++	.val_bits = 8,
++	.max_register = 0x80fe,
++	.ranges = &lt8619c_range,
++	.num_ranges = 1,
++};
++
++static const struct v4l2_dv_timings_cap lt8619c_cap = {
++	.type = V4L2_DV_BT_656_1120,
++	V4L2_INIT_BT_TIMINGS(320, 1920, 240, 1080, 10000000, 74250000,
++			     V4L2_DV_BT_STD_CEA861 | V4L2_DV_BT_STD_DMT,
++			     V4L2_DV_BT_CAP_PROGRESSIVE | V4L2_DV_BT_CAP_CUSTOM)
++};
++
++/* Base EDID with a conservative 640x480p60 preferred timing. */
++static const u8 lt8619c_default_edid[LT_EDID_BLOCK_SIZE] = {
++	0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00,
++	0x2e, 0xcd, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x01, 0x24, 0x01, 0x03, 0x80, 0x00, 0x00, 0x78,
++	0x0a, 0x0d, 0xc9, 0xa0, 0x57, 0x47, 0x98, 0x27,
++	0x12, 0x48, 0x4c, 0x20, 0x00, 0x00, 0x01, 0x01,
++	0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
++	0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0xd6, 0x09,
++	0x80, 0xa0, 0x20, 0xe0, 0x2d, 0x10, 0x10, 0x60,
++	0xa2, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18,
++	0x00, 0x00, 0x00, 0xfc, 0x00, 0x4b, 0x56, 0x4d,
++	0x50, 0x61, 0x6e, 0x65, 0x6c, 0x0a, 0x20, 0x20,
++	0x20, 0x20, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4c,
++};
++
++static struct lt8619c *to_lt(struct v4l2_subdev *sd)
++{
++	return container_of(sd, struct lt8619c, sd);
++}
++
++/* Leave HPD low if the sink cannot supply a complete EDID. */
++static int lt8619c_write_edid(struct lt8619c *lt, const u8 *data,
++			      unsigned int blocks)
++{
++	unsigned int i;
++	int ret;
++
++	ret = regmap_update_bits(lt->map, LT_HPD, LT_HPD_ENABLE, 0);
++	if (ret)
++		return ret;
++	lt->blocks = 0;
++	if (!blocks)
++		return 0;
++
++	/* HDMI sources require a low pulse of at least 100 ms. */
++	msleep(110);
++	ret = regmap_write(lt->map, LT_EDID_MODE, 0x07);
++	if (ret)
++		return ret;
++	ret = regmap_write(lt->map, LT_EDID_ADDRESS, 0);
++	if (ret)
++		return ret;
++	for (i = 0; i < blocks * LT_EDID_BLOCK_SIZE; i++) {
++		ret = regmap_write(lt->map, LT_EDID_DATA, data[i]);
++		if (ret)
++			return ret;
++	}
++	ret = regmap_write(lt->map, LT_EDID_MODE, 0x02);
++	if (ret)
++		return ret;
++	ret = regmap_update_bits(lt->map, LT_HPD, LT_HPD_ENABLE, LT_HPD_ENABLE);
++	if (ret)
++		return ret;
++
++	memcpy(lt->edid, data, blocks * LT_EDID_BLOCK_SIZE);
++	lt->blocks = blocks;
++	return 0;
++}
++
++static int lt8619c_get_edid(struct v4l2_subdev *sd, struct v4l2_edid *edid)
++{
++	struct lt8619c *lt = to_lt(sd);
++
++	if (edid->pad)
++		return -EINVAL;
++	guard(mutex)(&lt->lock);
++	if (!edid->start_block && !edid->blocks) {
++		edid->blocks = lt->blocks;
++		return 0;
++	}
++	if (!lt->blocks)
++		return -ENODATA;
++	if (edid->start_block >= lt->blocks || !edid->blocks)
++		return -EINVAL;
++
++	edid->blocks = min(edid->blocks, lt->blocks - edid->start_block);
++	memcpy(edid->edid, lt->edid + edid->start_block * LT_EDID_BLOCK_SIZE,
++	       edid->blocks * LT_EDID_BLOCK_SIZE);
++	return 0;
++}
++
++static int lt8619c_set_edid(struct v4l2_subdev *sd, struct v4l2_edid *edid)
++{
++	struct lt8619c *lt = to_lt(sd);
++
++	if (edid->pad || edid->start_block)
++		return -EINVAL;
++	if (edid->blocks > LT_MAX_BLOCKS) {
++		edid->blocks = LT_MAX_BLOCKS;
++		return -E2BIG;
++	}
++	guard(mutex)(&lt->lock);
++	if (lt->streaming)
++		return -EBUSY;
++	return lt8619c_write_edid(lt, edid->edid, edid->blocks);
++}
++
++/* Read a contiguous timing snapshot and reject an incomplete lock or field. */
++static int lt8619c_detect(struct lt8619c *lt, struct v4l2_dv_timings *timings)
++{
++	struct v4l2_dv_timings_cap meter_cap = lt8619c_cap;
++	struct v4l2_bt_timings *bt = &timings->bt;
++	u8 raw[17], clk[3];
++	unsigned int val;
++	int ret;
++
++	ret = regmap_read(lt->map, LT_TMDS_LOCK, &val);
++	if (ret)
++		return ret;
++	if (!(val & BIT(7)))
++		return -ENOLINK;
++	ret = regmap_read(lt->map, LT_RX_SYNC, &val);
++	if (ret)
++		return ret;
++	if (!(val & BIT(0)))
++		return -ENOLCK;
++	ret = regmap_bulk_read(lt->map, LT_RX_TIMING, raw, sizeof(raw));
++	if (ret)
++		return ret;
++	ret = regmap_bulk_read(lt->map, LT_TMDS_RATE, clk, sizeof(clk));
++	if (ret)
++		return ret;
++	ret = regmap_read(lt->map, 0x8017, &val);
++	if (ret)
++		return ret;
++
++	memset(timings, 0, sizeof(*timings));
++	timings->type = V4L2_DV_BT_656_1120;
++	bt->width = get_unaligned_be16(raw + 15);
++	bt->height = get_unaligned_be16(raw + 13) & 0xfff;
++	bt->hsync = get_unaligned_be16(raw + 1);
++	bt->hbackporch = get_unaligned_be16(raw + 5);
++	bt->hfrontporch = get_unaligned_be16(raw + 7);
++	bt->vsync = raw[0];
++	bt->vbackporch = raw[3];
++	bt->vfrontporch = raw[4];
++	bt->pixelclock = (get_unaligned_be24(clk) & 0x3ffff) * 1000;
++	if (val & BIT(7))
++		bt->polarities |= V4L2_DV_HSYNC_POS_POL;
++	if (val & BIT(6))
++		bt->polarities |= V4L2_DV_VSYNC_POS_POL;
++	if ((bt->width == 1920 && bt->height == 540) ||
++	    (bt->width == 1440 && (bt->height == 240 || bt->height == 288)))
++		return -ERANGE;
++	if (V4L2_DV_BT_FRAME_WIDTH(bt) != get_unaligned_be16(raw + 11) ||
++	    V4L2_DV_BT_FRAME_HEIGHT(bt) != (get_unaligned_be16(raw + 9) & 0xfff))
++		return -ENOLCK;
++
++	/* The frequency meter jitters. Canonicalize known modes before the limit. */
++	meter_cap.bt.max_pixelclock += 150000;
++	v4l2_find_dv_timings_cap(timings, &meter_cap, 150000, NULL, NULL);
++	return v4l2_valid_dv_timings(timings, &lt8619c_cap, NULL, NULL) ? 0 : -ERANGE;
++}
++
++static int lt8619c_query_dv_timings(struct v4l2_subdev *sd, unsigned int pad,
++				    struct v4l2_dv_timings *timings)
++{
++	struct lt8619c *lt = to_lt(sd);
++
++	guard(mutex)(&lt->lock);
++	return lt8619c_detect(lt, timings);
++}
++
++static int lt8619c_set_timings(struct v4l2_subdev *sd, unsigned int pad,
++			       struct v4l2_dv_timings *timings)
++{
++	struct lt8619c *lt = to_lt(sd);
++
++	if (!v4l2_valid_dv_timings(timings, &lt8619c_cap, NULL, NULL))
++		return -ERANGE;
++	guard(mutex)(&lt->lock);
++	if (lt->streaming)
++		return -EBUSY;
++	lt->timings = *timings;
++	return 0;
++}
++
++static int lt8619c_get_timings(struct v4l2_subdev *sd, unsigned int pad,
++			       struct v4l2_dv_timings *timings)
++{
++	struct lt8619c *lt = to_lt(sd);
++
++	guard(mutex)(&lt->lock);
++	*timings = lt->timings;
++	return 0;
++}
++
++static int lt8619c_timings_cap(struct v4l2_subdev *sd, struct v4l2_dv_timings_cap *cap)
++{
++	if (cap->pad)
++		return -EINVAL;
++	*cap = lt8619c_cap;
++	return 0;
++}
++
++static int lt8619c_enum_timings(struct v4l2_subdev *sd, struct v4l2_enum_dv_timings *e)
++{
++	return v4l2_enum_dv_timings_cap(e, &lt8619c_cap, NULL, NULL);
++}
++
++static int lt8619c_enum_code(struct v4l2_subdev *sd, struct v4l2_subdev_state *state,
++			     struct v4l2_subdev_mbus_code_enum *code)
++{
++	if (code->index)
++		return -EINVAL;
++	code->code = MEDIA_BUS_FMT_UYVY8_2X8;
++	return 0;
++}
++
++static int lt8619c_get_fmt(struct v4l2_subdev *sd, struct v4l2_subdev_state *state,
++			   struct v4l2_subdev_format *fmt)
++{
++	struct lt8619c *lt = to_lt(sd);
++
++	guard(mutex)(&lt->lock);
++	fmt->format = (struct v4l2_mbus_framefmt) {
++		.width = lt->timings.bt.width,
++		.height = lt->timings.bt.height,
++		.code = MEDIA_BUS_FMT_UYVY8_2X8,
++		.field = V4L2_FIELD_NONE,
++		.colorspace = lt->timings.bt.height > 576 ?
++			V4L2_COLORSPACE_REC709 : V4L2_COLORSPACE_SMPTE170M,
++	};
++	return 0;
++}
++
++static int lt8619c_config_tx(struct lt8619c *lt, const struct v4l2_bt_timings *bt)
++{
++	u8 tx[12];
++	unsigned int val, csc;
++	int ret;
++
++	/* Copy RX dimensions to the BT encoder in pixels, before serialization. */
++	put_unaligned_be16(bt->hsync + bt->hbackporch, tx);
++	put_unaligned_be16(bt->width, tx + 2);
++	put_unaligned_be16(V4L2_DV_BT_FRAME_WIDTH(bt), tx + 4);
++	tx[6] = bt->vsync + bt->vbackporch;
++	tx[7] = V4L2_DV_BT_BLANKING_HEIGHT(bt);
++	put_unaligned_be16(bt->height, tx + 8);
++	put_unaligned_be16(V4L2_DV_BT_FRAME_HEIGHT(bt), tx + 10);
++	if (V4L2_DV_BT_BLANKING_HEIGHT(bt) > U8_MAX)
++		return -ERANGE;
++	ret = regmap_bulk_write(lt->map, LT_TX_TIMING, tx, sizeof(tx));
++	if (ret)
++		return ret;
++
++	/* AVI InfoFrame Y bits select RGB, 4:2:2 pass-through, or 4:4:4. */
++	ret = regmap_read(lt->map, 0x8071, &val);
++	if (ret)
++		return ret;
++	switch ((val >> 5) & 3) {
++	case 0:
++		csc = 0x0a;
++		break;
++	case 1:
++		csc = 0;
++		break;
++	case 2:
++		csc = 0x02;
++		break;
++	default:
++		return -ERANGE;
++	}
++	ret = regmap_write(lt->map, 0x6007, csc ? 0xf0 : 0x80);
++	if (ret)
++		return ret;
++	if (csc)
++		csc |= bt->height > 576 ? 0x30 : 0x10;
++	return regmap_write(lt->map, 0x6052, csc);
++}
++
++/* Re-lock the output PLL and find the middle of the passing SDR phase window. */
++static int lt8619c_start_tx(struct lt8619c *lt)
++{
++	static const struct reg_sequence reset[] = {
++		{ 0x600e, 0xfd, 50000 }, { 0x600e, 0xff, 100000 },
++		{ 0x600d, 0xfc, 50000 }, { 0x600d, 0xff, 50000 },
++	};
++	static const u8 phases[] = { 0x20, 0x28, 0x21, 0x29, 0x22,
++				     0x2a, 0x23, 0x2b, 0x24, 0x2c };
++	int i, start = -1, end = -1;
++	unsigned int val;
++	int ret;
++
++	ret = regmap_multi_reg_write(lt->map, reset, ARRAY_SIZE(reset));
++	if (ret)
++		return ret;
++	ret = regmap_read_poll_timeout(lt->map, 0x8087, val, val & BIT(5), 5000, 300000);
++	if (ret)
++		return ret;
++	for (i = 0; i < ARRAY_SIZE(phases); i++) {
++		ret = regmap_write(lt->map, 0x60a2, phases[i]);
++		if (ret)
++			return ret;
++		msleep(50);
++		ret = regmap_read(lt->map, 0x6091, &val);
++		if (ret)
++			return ret;
++		if (val == 0x05) {
++			start = i;
++			end = i;
++			break;
++		}
++		if (val == 0x01) {
++			if (start < 0)
++				start = i;
++			end = i;
++		} else if (start >= 0) {
++			break;
++		}
++	}
++	if (start < 0)
++		return -ENOLCK;
++	ret = regmap_write(lt->map, 0x60a2, phases[(start + end) / 2]);
++	if (ret)
++		return ret;
++	return regmap_write(lt->map, LT_OUTPUT, LT_OUTPUT_ON);
++}
++
++static int lt8619c_enable(struct v4l2_subdev *sd, struct v4l2_subdev_state *state,
++			  u32 pad, u64 streams)
++{
++	static const struct reg_sequence reset_rx[] = {
++		{ 0x6009, 0x7f, 10000 }, { 0x6009, 0xff, 100000 },
++		{ 0x600c, 0xfb, 10000 }, { 0x600c, 0xff, 100000 },
++	};
++	struct lt8619c *lt = to_lt(sd);
++	struct v4l2_dv_timings signal;
++	int ret;
++
++	guard(mutex)(&lt->lock);
++	ret = regmap_write(lt->map, LT_OUTPUT, LT_OUTPUT_OFF);
++	if (ret)
++		return ret;
++	ret = regmap_multi_reg_write(lt->map, reset_rx, ARRAY_SIZE(reset_rx));
++	if (ret)
++		return ret;
++	ret = lt8619c_detect(lt, &signal);
++	if (ret)
++		return ret;
++	if (!v4l2_match_dv_timings(&signal, &lt->timings, 150000, false))
++		return -EPIPE;
++	ret = lt8619c_config_tx(lt, &signal.bt);
++	if (ret)
++		return ret;
++	ret = lt8619c_start_tx(lt);
++	if (!ret)
++		lt->streaming = true;
++	return ret;
++}
++
++static int lt8619c_disable(struct v4l2_subdev *sd, struct v4l2_subdev_state *state,
++			   u32 pad, u64 streams)
++{
++	struct lt8619c *lt = to_lt(sd);
++	int ret;
++
++	guard(mutex)(&lt->lock);
++	ret = regmap_write(lt->map, LT_OUTPUT, LT_OUTPUT_OFF);
++	if (ret)
++		dev_warn(sd->dev, "failed to turn off BT output: %d\n", ret);
++	/* Downstream DMA stops independently. Retry the gate on every start. */
++	lt->streaming = false;
++	return 0;
++}
++
++static const struct v4l2_subdev_pad_ops lt8619c_pad_ops = {
++	.get_edid = lt8619c_get_edid,
++	.set_edid = lt8619c_set_edid,
++	.query_dv_timings = lt8619c_query_dv_timings,
++	.g_dv_timings = lt8619c_get_timings,
++	.s_dv_timings = lt8619c_set_timings,
++	.dv_timings_cap = lt8619c_timings_cap,
++	.enum_dv_timings = lt8619c_enum_timings,
++	.enum_mbus_code = lt8619c_enum_code,
++	.get_fmt = lt8619c_get_fmt,
++	.set_fmt = lt8619c_get_fmt,
++	.enable_streams = lt8619c_enable,
++	.disable_streams = lt8619c_disable,
++};
++
++static const struct v4l2_subdev_ops lt8619c_ops = {
++	.pad = &lt8619c_pad_ops,
++};
++
++static int lt8619c_init_hw(struct lt8619c *lt)
++{
++	/* External crystal, internal reference, doubled BT clock, SDR on D8-D15. */
++	static const struct reg_sequence init[] = {
++		{ 0x6080, 0x08 }, { 0x6089, 0x88 }, { 0x608b, 0x90 },
++		{ LT_OUTPUT, LT_OUTPUT_OFF }, { 0x6004, 0xf2 },
++		{ 0x6096, 0x71 }, { 0x60a0, 0x51 }, { 0x60a3, 0x44 },
++		{ 0x60a2, 0x20 }, { 0x60a4, 0x10 }, { 0x606f, 0x04 },
++		{ 0x606d, 0x00 }, { 0x606e, 0x07 },
++	};
++	u8 id[3];
++	int ret;
++
++	ret = regmap_bulk_read(lt->map, LT_CHIP_ID, id, sizeof(id));
++	if (ret)
++		return ret;
++	if (get_unaligned_be24(id) != 0x1604b0)
++		return -ENODEV;
++	ret = regmap_update_bits(lt->map, 0x802c, 0x30, 0x30);
++	if (ret)
++		return ret;
++	ret = regmap_multi_reg_write(lt->map, init, ARRAY_SIZE(init));
++	if (ret)
++		return ret;
++	/* Positive sync, progressive, single-channel eight-bit BT.656 encoder. */
++	ret = regmap_update_bits(lt->map, 0x6060, 0x3f, 0x34);
++	if (ret)
++		return ret;
++	return lt8619c_write_edid(lt, lt8619c_default_edid, 1);
++}
++
++static void lt8619c_quiesce(void *data)
++{
++	struct lt8619c *lt = data;
++
++	regmap_write(lt->map, LT_OUTPUT, LT_OUTPUT_OFF);
++	regmap_update_bits(lt->map, LT_HPD, LT_HPD_ENABLE, 0);
++}
++
++static int lt8619c_probe(struct i2c_client *client)
++{
++	const struct v4l2_dv_timings vga = V4L2_DV_BT_CEA_640X480P59_94;
++	struct v4l2_fwnode_endpoint ep = { .bus_type = V4L2_MBUS_BT656 };
++	struct device *dev = &client->dev;
++	struct fwnode_handle *fwnode;
++	struct lt8619c *lt;
++	int ret;
++
++	fwnode = fwnode_graph_get_next_endpoint(dev_fwnode(dev), NULL);
++	if (!fwnode)
++		return -ENODEV;
++	ret = v4l2_fwnode_endpoint_parse(fwnode, &ep);
++	fwnode_handle_put(fwnode);
++	if (ret)
++		return ret;
++	if (ep.bus.parallel.bus_width != 8 || ep.bus.parallel.data_shift ||
++	    !(ep.bus.parallel.flags & V4L2_MBUS_PCLK_SAMPLE_RISING))
++		return dev_err_probe(dev, -EINVAL, "expected an 8-bit SDR BT.656 endpoint\n");
++
++	lt = devm_kzalloc(dev, sizeof(*lt), GFP_KERNEL);
++	if (!lt)
++		return -ENOMEM;
++	lt->map = devm_regmap_init_i2c(client, &lt8619c_regmap);
++	if (IS_ERR(lt->map))
++		return PTR_ERR(lt->map);
++	ret = devm_mutex_init(dev, &lt->lock);
++	if (ret)
++		return ret;
++	lt->timings = vga;
++	v4l2_i2c_subdev_init(&lt->sd, client, &lt8619c_ops);
++	lt->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
++	lt->sd.entity.function = MEDIA_ENT_F_VID_IF_BRIDGE;
++	lt->pad.flags = MEDIA_PAD_FL_SOURCE;
++	ret = media_entity_pads_init(&lt->sd.entity, 1, &lt->pad);
++	if (ret)
++		return ret;
++	ret = v4l2_subdev_init_finalize(&lt->sd);
++	if (ret)
++		goto err_entity;
++	ret = lt8619c_init_hw(lt);
++	if (ret)
++		goto err_subdev;
++	ret = devm_add_action_or_reset(dev, lt8619c_quiesce, lt);
++	if (ret)
++		goto err_subdev;
++	ret = v4l2_async_register_subdev(&lt->sd);
++	if (!ret)
++		return 0;
++
++err_subdev:
++	v4l2_subdev_cleanup(&lt->sd);
++err_entity:
++	media_entity_cleanup(&lt->sd.entity);
++	return dev_err_probe(dev, ret, "could not initialize receiver\n");
++}
++
++static void lt8619c_remove(struct i2c_client *client)
++{
++	struct v4l2_subdev *sd = i2c_get_clientdata(client);
++
++	v4l2_async_unregister_subdev(sd);
++	v4l2_subdev_cleanup(sd);
++	media_entity_cleanup(&sd->entity);
++}
++
++static const struct of_device_id lt8619c_of_match[] = {
++	{ .compatible = "lontium,lt8619c" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, lt8619c_of_match);
++
++static struct i2c_driver lt8619c_driver = {
++	.driver = {
++		.name = "lt8619c",
++		.of_match_table = lt8619c_of_match,
++	},
++	.probe = lt8619c_probe,
++	.remove = lt8619c_remove,
++};
++module_i2c_driver(lt8619c_driver);
++
++MODULE_DESCRIPTION("Lontium LT8619C HDMI to eight-bit BT.656 receiver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/media/platform/sunxi/Kconfig b/drivers/media/platform/sunxi/Kconfig
+index 2dd15083a..710a38b93 100644
+--- a/drivers/media/platform/sunxi/Kconfig
++++ b/drivers/media/platform/sunxi/Kconfig
+@@ -8,3 +8,4 @@ source "drivers/media/platform/sunxi/sun6i-mipi-csi2/Kconfig"
+ source "drivers/media/platform/sunxi/sun8i-a83t-mipi-csi2/Kconfig"
+ source "drivers/media/platform/sunxi/sun8i-di/Kconfig"
+ source "drivers/media/platform/sunxi/sun8i-rotate/Kconfig"
++source "drivers/media/platform/sunxi/sun20i-csi/Kconfig"
+diff --git a/drivers/media/platform/sunxi/Makefile b/drivers/media/platform/sunxi/Makefile
+index 9aa01cb01..bb117f704 100644
+--- a/drivers/media/platform/sunxi/Makefile
++++ b/drivers/media/platform/sunxi/Makefile
+@@ -6,3 +6,4 @@ obj-y		+= sun6i-mipi-csi2/
+ obj-y		+= sun8i-a83t-mipi-csi2/
+ obj-y		+= sun8i-di/
+ obj-y		+= sun8i-rotate/
++obj-y		+= sun20i-csi/
+diff --git a/drivers/media/platform/sunxi/sun20i-csi/Kconfig b/drivers/media/platform/sunxi/sun20i-csi/Kconfig
+new file mode 100644
+index 000000000..83ec00bf6
+--- /dev/null
++++ b/drivers/media/platform/sunxi/sun20i-csi/Kconfig
+@@ -0,0 +1,17 @@
++# SPDX-License-Identifier: GPL-2.0-only
++config VIDEO_SUN20I_CSI
++	tristate "Allwinner D1 CMOS Sensor Interface Controller (CSIC) Driver"
++	depends on V4L_PLATFORM_DRIVERS && VIDEO_DEV
++	depends on ARCH_SUNXI || COMPILE_TEST
++	depends on PM && COMMON_CLK && RESET_CONTROLLER && HAS_DMA
++	select MEDIA_CONTROLLER
++	select VIDEO_V4L2_SUBDEV_API
++	select VIDEOBUF2_DMA_CONTIG
++	select V4L2_FWNODE
++	help
++	  Support for the parallel camera interface of the Allwinner D1
++	  CMOS Sensor Interface Controller (CSIC), also found on the D1s
++	  and the T113.
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called sun20i-csi.
+diff --git a/drivers/media/platform/sunxi/sun20i-csi/Makefile b/drivers/media/platform/sunxi/sun20i-csi/Makefile
+new file mode 100644
+index 000000000..d799c6076
+--- /dev/null
++++ b/drivers/media/platform/sunxi/sun20i-csi/Makefile
+@@ -0,0 +1,4 @@
++# SPDX-License-Identifier: GPL-2.0-only
++sun20i-csi-y += sun20i_csi.o
++
++obj-$(CONFIG_VIDEO_SUN20I_CSI) += sun20i-csi.o
+diff --git a/drivers/media/platform/sunxi/sun20i-csi/sun20i_csi.c b/drivers/media/platform/sunxi/sun20i-csi/sun20i_csi.c
+new file mode 100644
+index 000000000..70d96edfe
+--- /dev/null
++++ b/drivers/media/platform/sunxi/sun20i-csi/sun20i_csi.c
+@@ -0,0 +1,1405 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Allwinner D1/T113 CMOS Sensor Interface Controller (CSIC) driver
++ *
++ * Copyright (C) 2026 Nguyen Minh Tien <tien.nguyenminh@embeddedlinux.blog>
++ *
++ * The CSIC is split into a parser, which receives the parallel bus, and a
++ * DMA engine, which writes frames to memory and can convert YUV 4:2:2 input
++ * to semi-planar, planar or luma-only output. The parser is exposed as a
++ * bridge subdev and the DMA engine as the capture video device.
++ */
++
++#include <linux/bitfield.h>
++#include <linux/clk.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
++#include <linux/reset.h>
++
++#include <media/media-device.h>
++#include <media/v4l2-async.h>
++#include <media/v4l2-device.h>
++#include <media/v4l2-fwnode.h>
++#include <media/v4l2-ioctl.h>
++#include <media/v4l2-mc.h>
++#include <media/v4l2-subdev.h>
++#include <media/videobuf2-dma-contig.h>
++
++/* Register and field names as in the T113-S3 user manual v1.3, section 6.1. */
++#define SUN20I_CSI_TOP_EN_REG			0x0800
++#define SUN20I_CSI_TOP_EN_CSIC_TOP_EN		BIT(0)
++
++#define SUN20I_CSI_PRS_EN_REG			0x1000
++#define SUN20I_CSI_PRS_EN_NCSIC_EN		BIT(16)
++#define SUN20I_CSI_PRS_EN_PCLK_EN		BIT(15)
++#define SUN20I_CSI_PRS_EN_PRS_EN		BIT(0)
++
++/*
++ * The parser takes HREF and VREF, which are the inverse of HSYNC and VSYNC,
++ * so an active low sync signal needs the positive (set) HREF_POL or VREF_POL,
++ * as explained for the A10 CSI in commit 1948dcf0f928 ("media: sun4i-csi:
++ * Fix [HV]sync polarity handling"). With CLK_POL set, the data changes on the
++ * falling edge of the pixel clock and is sampled on the rising edge.
++ */
++#define SUN20I_CSI_PRS_NCSIC_IF_CFG_REG		0x1004
++#define SUN20I_CSI_PRS_NCSIC_IF_CFG_VREF_POL	BIT(18)
++#define SUN20I_CSI_PRS_NCSIC_IF_CFG_HREF_POL	BIT(17)
++#define SUN20I_CSI_PRS_NCSIC_IF_CFG_CLK_POL	BIT(16)
++#define SUN20I_CSI_PRS_NCSIC_IF_CFG_INPUT_SEQ	GENMASK(7, 6)
++#define SUN20I_CSI_PRS_IF_BT656_1CH		4
++#define SUN20I_CSI_INPUT_SEQ_YUYV		0
++#define SUN20I_CSI_INPUT_SEQ_UYVY		2
++
++#define SUN20I_CSI_PRS_CAP_REG			0x100c
++#define SUN20I_CSI_PRS_CAP_CH0_VCAP_ON		BIT(1)
++
++#define SUN20I_CSI_PRS_CH0_INFMT_REG		0x1024
++#define SUN20I_CSI_INPUT_FMT_RAW		0
++#define SUN20I_CSI_INPUT_FMT_YUV422		3
++#define SUN20I_CSI_PRS_CH0_OUTPUT_HSIZE_REG	0x1028
++#define SUN20I_CSI_PRS_CH0_OUTPUT_VSIZE_REG	0x102c
++
++/* HOR_LEN and VER_LEN of the parser and DMA size registers, from bit 16. */
++#define SUN20I_CSI_LEN				GENMASK(28, 16)
++
++#define SUN20I_CSI_DMA_EN_REG			0x9000
++/* VFLIP_BUF_ADDR, BUF_LENGTH and FLIP_SIZE set by software, as on reset. */
++#define SUN20I_CSI_DMA_EN_SW_CFG_MODE		GENMASK(30, 28)
++#define SUN20I_CSI_DMA_EN_DMA_EN		BIT(4)
++#define SUN20I_CSI_DMA_EN_BK_TOP_EN		BIT(0)
++#define SUN20I_CSI_DMA_CFG_REG			0x9004
++#define SUN20I_CSI_DMA_CFG_OUTPUT_FMT		GENMASK(19, 16)
++#define SUN20I_CSI_DMA_HSIZE_REG		0x9010
++#define SUN20I_CSI_DMA_VSIZE_REG		0x9014
++/* The buffer addresses are in 32-bit words, which the manual doesn't say. */
++#define SUN20I_CSI_DMA_F0_BUFA_REG		0x9020
++#define SUN20I_CSI_DMA_F1_BUFA_REG		0x9028
++#define SUN20I_CSI_DMA_F2_BUFA_REG		0x9030
++#define SUN20I_CSI_DMA_BUF_LEN_REG		0x9038
++#define SUN20I_CSI_DMA_BUF_LEN_BUF_LEN_C	GENMASK(29, 16)
++#define SUN20I_CSI_DMA_BUF_LEN_BUF_LEN		GENMASK(13, 0)
++#define SUN20I_CSI_DMA_INT_EN_REG		0x9050
++#define SUN20I_CSI_DMA_INT_STA_REG		0x9054
++#define SUN20I_CSI_DMA_INT_VS			BIT(7)
++#define SUN20I_CSI_DMA_INT_HB_OF		BIT(6)
++#define SUN20I_CSI_DMA_INT_LC			BIT(5)
++#define SUN20I_CSI_DMA_INT_FIFO2_OF		BIT(4)
++#define SUN20I_CSI_DMA_INT_FIFO1_OF		BIT(3)
++#define SUN20I_CSI_DMA_INT_FIFO0_OF		BIT(2)
++#define SUN20I_CSI_DMA_INT_FD			BIT(1)
++#define SUN20I_CSI_DMA_INT_OF		(SUN20I_CSI_DMA_INT_HB_OF | \
++					 SUN20I_CSI_DMA_INT_FIFO2_OF | \
++					 SUN20I_CSI_DMA_INT_FIFO1_OF | \
++					 SUN20I_CSI_DMA_INT_FIFO0_OF)
++#define SUN20I_CSI_DMA_LINE_CNT_REG		0x9058
++#define SUN20I_CSI_DMA_LINE_CNT_LINE_CNT_NUM	GENMASK(12, 0)
++
++/* OUTPUT_FMT values: "frame" modes, for raw or YUV 4:2:2 input. */
++#define SUN20I_CSI_OUT_RAW_8			0x8
++#define SUN20I_CSI_OUT_PLANAR_420		0x2
++#define SUN20I_CSI_OUT_PLANAR_422		0x3
++#define SUN20I_CSI_OUT_UV_420			0x6
++#define SUN20I_CSI_OUT_UV_422			0x7
++#define SUN20I_CSI_OUT_VU_420			0xa
++#define SUN20I_CSI_OUT_VU_422			0xb
++#define SUN20I_CSI_OUT_Y400			0xf
++
++/* Rate of the module clock, csi_top_clk. */
++#define SUN20I_CSI_MOD_RATE			300000000
++#define SUN20I_CSI_MIN_SIZE			32
++/* HOR_LEN is 13 bits and counts bytes for raw input, 2 bytes per pixel. */
++#define SUN20I_CSI_MAX_WIDTH			4088
++#define SUN20I_CSI_MAX_HEIGHT			4096
++
++enum {
++	SUN20I_CSI_PAD_SINK,
++	SUN20I_CSI_PAD_SOURCE,
++	SUN20I_CSI_NUM_PADS,
++};
++
++struct sun20i_csi_format {
++	u32 fourcc;
++	/* The only bus code, or 0 for any YUV 4:2:2 code (converted). */
++	u32 code;
++	u8 output;
++	u8 bpp;		/* Bytes per pixel in the first plane */
++	u8 planes;	/* 1: packed or luma, 2: semi-planar, 3: planar */
++	u8 vsub;	/* Vertical chroma subsampling */
++	bool swap_uv;	/* Planar: V before U */
++	bool raw;	/* Stored as received, no conversion */
++	bool bayer;
++};
++
++static const u32 sun20i_csi_yuv_codes[] = {
++	MEDIA_BUS_FMT_YUYV8_2X8,
++	MEDIA_BUS_FMT_UYVY8_2X8,
++};
++
++static const u32 sun20i_csi_raw_codes[] = {
++	MEDIA_BUS_FMT_RGB565_2X8_LE,
++	MEDIA_BUS_FMT_RGB565_2X8_BE,
++	MEDIA_BUS_FMT_SBGGR8_1X8,
++	MEDIA_BUS_FMT_SGBRG8_1X8,
++	MEDIA_BUS_FMT_SGRBG8_1X8,
++	MEDIA_BUS_FMT_SRGGB8_1X8,
++};
++
++#define SUN20I_CSI_YUV(_fourcc, _output, _planes, _vsub, _swap_uv)	\
++	{ .fourcc = _fourcc, .output = _output, .bpp = 1,		\
++	  .planes = _planes, .vsub = _vsub, .swap_uv = _swap_uv }
++#define SUN20I_CSI_RAW(_fourcc, _code, _bpp, _bayer)			\
++	{ .fourcc = _fourcc, .code = _code, .output = SUN20I_CSI_OUT_RAW_8, \
++	  .bpp = _bpp, .planes = 1, .vsub = 1, .raw = true, .bayer = _bayer }
++
++static const struct sun20i_csi_format sun20i_csi_formats[] = {
++	SUN20I_CSI_YUV(V4L2_PIX_FMT_NV12, SUN20I_CSI_OUT_UV_420, 2, 2, false),
++	SUN20I_CSI_YUV(V4L2_PIX_FMT_NV21, SUN20I_CSI_OUT_VU_420, 2, 2, false),
++	SUN20I_CSI_YUV(V4L2_PIX_FMT_NV16, SUN20I_CSI_OUT_UV_422, 2, 1, false),
++	SUN20I_CSI_YUV(V4L2_PIX_FMT_NV61, SUN20I_CSI_OUT_VU_422, 2, 1, false),
++	SUN20I_CSI_YUV(V4L2_PIX_FMT_YUV420, SUN20I_CSI_OUT_PLANAR_420,
++		       3, 2, false),
++	SUN20I_CSI_YUV(V4L2_PIX_FMT_YVU420, SUN20I_CSI_OUT_PLANAR_420,
++		       3, 2, true),
++	SUN20I_CSI_YUV(V4L2_PIX_FMT_YUV422P, SUN20I_CSI_OUT_PLANAR_422,
++		       3, 1, false),
++	SUN20I_CSI_YUV(V4L2_PIX_FMT_GREY, SUN20I_CSI_OUT_Y400, 1, 1, false),
++	SUN20I_CSI_RAW(V4L2_PIX_FMT_YUYV, MEDIA_BUS_FMT_YUYV8_2X8, 2, false),
++	SUN20I_CSI_RAW(V4L2_PIX_FMT_UYVY, MEDIA_BUS_FMT_UYVY8_2X8, 2, false),
++	SUN20I_CSI_RAW(V4L2_PIX_FMT_RGB565, MEDIA_BUS_FMT_RGB565_2X8_LE,
++		       2, false),
++	SUN20I_CSI_RAW(V4L2_PIX_FMT_RGB565X, MEDIA_BUS_FMT_RGB565_2X8_BE,
++		       2, false),
++	SUN20I_CSI_RAW(V4L2_PIX_FMT_SBGGR8, MEDIA_BUS_FMT_SBGGR8_1X8, 1, true),
++	SUN20I_CSI_RAW(V4L2_PIX_FMT_SGBRG8, MEDIA_BUS_FMT_SGBRG8_1X8, 1, true),
++	SUN20I_CSI_RAW(V4L2_PIX_FMT_SGRBG8, MEDIA_BUS_FMT_SGRBG8_1X8, 1, true),
++	SUN20I_CSI_RAW(V4L2_PIX_FMT_SRGGB8, MEDIA_BUS_FMT_SRGGB8_1X8, 1, true),
++};
++
++struct sun20i_csi_buffer {
++	struct vb2_v4l2_buffer vb;
++	struct list_head list;
++};
++
++struct sun20i_csi {
++	struct device *dev;
++	void __iomem *regs;
++	struct clk *bus_clk;
++	struct clk *mod_clk;
++	struct clk *ram_clk;
++	struct reset_control *reset;
++	int irq;
++
++	struct media_device mdev;
++	struct v4l2_device v4l2_dev;
++	struct v4l2_async_notifier notifier;
++	struct v4l2_mbus_config_parallel bus;
++	bool bt656;
++
++	/* The parser, as a bridge subdev */
++	struct v4l2_subdev subdev;
++	struct media_pad pads[SUN20I_CSI_NUM_PADS];
++	struct v4l2_subdev *source;
++	u16 source_pad;
++
++	/* The DMA engine, as the capture video device */
++	struct video_device vdev;
++	struct media_pad vdev_pad;
++	struct vb2_queue queue;
++	struct mutex lock;		/* The video device and the queue */
++	struct v4l2_pix_format format;
++	const struct sun20i_csi_format *fmt;
++
++	spinlock_t irqlock;		/* The fields below */
++	struct list_head queued;
++	/* The buffer being written, and the one in the address registers */
++	struct sun20i_csi_buffer *active;
++	struct sun20i_csi_buffer *next;
++	bool active_complete;
++	bool active_error;
++	u32 sequence;
++	u32 errors;
++};
++
++static inline void sun20i_csi_write(struct sun20i_csi *csi, u32 reg, u32 val)
++{
++	writel(val, csi->regs + reg);
++}
++
++static inline u32 sun20i_csi_read(struct sun20i_csi *csi, u32 reg)
++{
++	return readl(csi->regs + reg);
++}
++
++static bool sun20i_csi_code_supported(struct sun20i_csi *csi, u32 code)
++{
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_SIZE(sun20i_csi_yuv_codes); i++)
++		if (sun20i_csi_yuv_codes[i] == code)
++			return true;
++	if (csi->bt656)
++		return false;
++	for (i = 0; i < ARRAY_SIZE(sun20i_csi_raw_codes); i++)
++		if (sun20i_csi_raw_codes[i] == code)
++			return true;
++	return false;
++}
++
++static bool sun20i_csi_format_takes(const struct sun20i_csi_format *fmt,
++				    u32 code)
++{
++	unsigned int i;
++
++	if (fmt->code)
++		return fmt->code == code;
++
++	for (i = 0; i < ARRAY_SIZE(sun20i_csi_yuv_codes); i++)
++		if (sun20i_csi_yuv_codes[i] == code)
++			return true;
++	return false;
++}
++
++static const struct sun20i_csi_format *sun20i_csi_find_format(struct sun20i_csi *csi, u32 fourcc)
++{
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_SIZE(sun20i_csi_formats); i++)
++		if (sun20i_csi_formats[i].fourcc == fourcc &&
++		    (!csi->bt656 || !sun20i_csi_formats[i].raw))
++			return &sun20i_csi_formats[i];
++	return NULL;
++}
++
++/* Number of units in a line for the parser and the DMA engine. */
++static u32 sun20i_csi_line_units(const struct sun20i_csi_format *fmt, u32 width)
++{
++	/* Raw input is counted in bytes, YUV input in pixels. */
++	return fmt->raw ? width * fmt->bpp : width;
++}
++
++/* -------------------------------------------------------------------------
++ * Buffers and interrupt
++ */
++
++static void sun20i_csi_set_buffer(struct sun20i_csi *csi,
++				  struct sun20i_csi_buffer *buf)
++{
++	dma_addr_t addr = vb2_dma_contig_plane_dma_addr(&buf->vb.vb2_buf, 0);
++	u32 width = csi->format.width, height = csi->format.height;
++	const struct sun20i_csi_format *fmt = csi->fmt;
++	dma_addr_t cb, cr;
++
++	sun20i_csi_write(csi, SUN20I_CSI_DMA_F0_BUFA_REG, addr >> 2);
++	if (fmt->planes == 1)
++		return;
++
++	cb = addr + width * height;
++	if (fmt->planes == 3) {
++		cr = cb + width / 2 * (height / fmt->vsub);
++		if (fmt->swap_uv)
++			swap(cb, cr);
++		sun20i_csi_write(csi, SUN20I_CSI_DMA_F2_BUFA_REG, cr >> 2);
++	}
++	sun20i_csi_write(csi, SUN20I_CSI_DMA_F1_BUFA_REG, cb >> 2);
++}
++
++/*
++ * Frame done. It also comes for a frame cut short, such as the first one
++ * after the sensor starts, so only a frame whose last line was written (the
++ * line counter interrupt) counts.
++ */
++static void sun20i_csi_frame_done(struct sun20i_csi *csi)
++{
++	struct sun20i_csi_buffer *buf = csi->active;
++
++	csi->active = NULL;
++
++	/* No buffer was queued: the next frame is going into this one. */
++	if (buf == csi->next)
++		buf = NULL;
++
++	if (!csi->active_complete) {
++		if (buf)
++			list_add(&buf->list, &csi->queued);
++		return;
++	}
++
++	if (buf) {
++		buf->vb.vb2_buf.timestamp = ktime_get_ns();
++		buf->vb.sequence = csi->sequence;
++		buf->vb.field = V4L2_FIELD_NONE;
++		vb2_buffer_done(&buf->vb.vb2_buf, csi->active_error ?
++				VB2_BUF_STATE_ERROR : VB2_BUF_STATE_DONE);
++	}
++	csi->sequence++;
++}
++
++/*
++ * Frame start. The manual: "at this time load the buffer address for the
++ * coming frame. So after this irq come, changing the buffer address could
++ * only effect next frame". The address registers take the next buffer here.
++ */
++static void sun20i_csi_frame_start(struct sun20i_csi *csi)
++{
++	/* A frame that started but was never done: reuse its buffer. */
++	if (csi->active && csi->active != csi->next)
++		list_add(&csi->active->list, &csi->queued);
++
++	csi->active = csi->next;
++	csi->active_complete = false;
++	csi->active_error = false;
++
++	csi->next = list_first_entry_or_null(&csi->queued,
++					     struct sun20i_csi_buffer, list);
++	if (csi->next) {
++		list_del(&csi->next->list);
++		sun20i_csi_set_buffer(csi, csi->next);
++	} else {
++		/* Nothing queued: the next frame goes into the same buffer. */
++		csi->next = csi->active;
++	}
++}
++
++static irqreturn_t sun20i_csi_irq(int irq, void *data)
++{
++	struct sun20i_csi *csi = data;
++	u32 status;
++
++	status = sun20i_csi_read(csi, SUN20I_CSI_DMA_INT_STA_REG);
++	sun20i_csi_write(csi, SUN20I_CSI_DMA_INT_STA_REG, status);
++	status &= SUN20I_CSI_DMA_INT_VS | SUN20I_CSI_DMA_INT_LC |
++		  SUN20I_CSI_DMA_INT_FD | SUN20I_CSI_DMA_INT_OF;
++	if (!status)
++		return IRQ_NONE;
++
++	spin_lock(&csi->irqlock);
++
++	/* The line counter is set to the last line of the frame. */
++	if (status & SUN20I_CSI_DMA_INT_LC)
++		csi->active_complete = true;
++
++	if (status & SUN20I_CSI_DMA_INT_OF) {
++		csi->active_error = true;
++		csi->errors++;
++	}
++
++	/* A frame ends before the next one starts. */
++	if (status & SUN20I_CSI_DMA_INT_FD)
++		sun20i_csi_frame_done(csi);
++	if (status & SUN20I_CSI_DMA_INT_VS)
++		sun20i_csi_frame_start(csi);
++
++	spin_unlock(&csi->irqlock);
++
++	return IRQ_HANDLED;
++}
++
++/* -------------------------------------------------------------------------
++ * Bridge subdev (the parser)
++ */
++
++static const struct v4l2_mbus_framefmt sun20i_csi_default_fmt = {
++	.width = 640,
++	.height = 480,
++	.code = MEDIA_BUS_FMT_YUYV8_2X8,
++	.field = V4L2_FIELD_NONE,
++	.colorspace = V4L2_COLORSPACE_SRGB,
++	.ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT,
++	.quantization = V4L2_QUANTIZATION_DEFAULT,
++	.xfer_func = V4L2_XFER_FUNC_DEFAULT,
++};
++
++static struct sun20i_csi *sd_to_csi(struct v4l2_subdev *sd)
++{
++	return container_of(sd, struct sun20i_csi, subdev);
++}
++
++static int sun20i_csi_bridge_init_state(struct v4l2_subdev *sd,
++					struct v4l2_subdev_state *state)
++{
++	struct v4l2_mbus_framefmt fmt = sun20i_csi_default_fmt;
++
++	if (sd_to_csi(sd)->bt656) {
++		fmt.code = MEDIA_BUS_FMT_UYVY8_2X8;
++		fmt.colorspace = V4L2_COLORSPACE_SMPTE170M;
++	}
++	*v4l2_subdev_state_get_format(state, SUN20I_CSI_PAD_SINK) = fmt;
++	*v4l2_subdev_state_get_format(state, SUN20I_CSI_PAD_SOURCE) = fmt;
++
++	return 0;
++}
++
++static int
++sun20i_csi_bridge_enum_mbus_code(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *state,
++				 struct v4l2_subdev_mbus_code_enum *code)
++{
++	unsigned int nyuv = ARRAY_SIZE(sun20i_csi_yuv_codes);
++
++	/* The source pad passes on the sink pad format. */
++	if (code->pad == SUN20I_CSI_PAD_SOURCE) {
++		const struct v4l2_mbus_framefmt *fmt;
++
++		if (code->index)
++			return -EINVAL;
++		fmt = v4l2_subdev_state_get_format(state, SUN20I_CSI_PAD_SINK);
++		code->code = fmt->code;
++		return 0;
++	}
++
++	if (code->index < nyuv)
++		code->code = sun20i_csi_yuv_codes[code->index];
++	else if (!sd_to_csi(sd)->bt656 &&
++		 code->index - nyuv < ARRAY_SIZE(sun20i_csi_raw_codes))
++		code->code = sun20i_csi_raw_codes[code->index - nyuv];
++	else
++		return -EINVAL;
++
++	return 0;
++}
++
++static int
++sun20i_csi_bridge_enum_frame_size(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_state *state,
++				  struct v4l2_subdev_frame_size_enum *fse)
++{
++	if (fse->index)
++		return -EINVAL;
++
++	if (fse->pad == SUN20I_CSI_PAD_SOURCE) {
++		const struct v4l2_mbus_framefmt *fmt;
++
++		fmt = v4l2_subdev_state_get_format(state, SUN20I_CSI_PAD_SINK);
++		if (fse->code != fmt->code)
++			return -EINVAL;
++		fse->min_width = fmt->width;
++		fse->max_width = fmt->width;
++		fse->min_height = fmt->height;
++		fse->max_height = fmt->height;
++		return 0;
++	}
++
++	if (!sun20i_csi_code_supported(sd_to_csi(sd), fse->code))
++		return -EINVAL;
++
++	fse->min_width = SUN20I_CSI_MIN_SIZE;
++	fse->max_width = SUN20I_CSI_MAX_WIDTH;
++	fse->min_height = SUN20I_CSI_MIN_SIZE;
++	fse->max_height = SUN20I_CSI_MAX_HEIGHT;
++
++	return 0;
++}
++
++static int sun20i_csi_bridge_set_fmt(struct v4l2_subdev *sd,
++				     struct v4l2_subdev_state *state,
++				     struct v4l2_subdev_format *format)
++{
++	struct v4l2_mbus_framefmt *fmt = &format->format;
++
++	if (format->which == V4L2_SUBDEV_FORMAT_ACTIVE &&
++	    v4l2_subdev_is_streaming(sd))
++		return -EBUSY;
++
++	/* The source pad format follows the sink pad format. */
++	if (format->pad == SUN20I_CSI_PAD_SOURCE)
++		return v4l2_subdev_get_fmt(sd, state, format);
++
++	if (!sun20i_csi_code_supported(sd_to_csi(sd), fmt->code))
++		fmt->code = sun20i_csi_default_fmt.code;
++	fmt->width = clamp_t(u32, ALIGN(fmt->width, 8), SUN20I_CSI_MIN_SIZE,
++			     SUN20I_CSI_MAX_WIDTH);
++	fmt->height = clamp_t(u32, ALIGN(fmt->height, 2), SUN20I_CSI_MIN_SIZE,
++			      SUN20I_CSI_MAX_HEIGHT);
++	fmt->field = V4L2_FIELD_NONE;
++	if (fmt->colorspace == V4L2_COLORSPACE_DEFAULT ||
++	    fmt->colorspace > V4L2_COLORSPACE_DCI_P3)
++		fmt->colorspace = V4L2_COLORSPACE_SRGB;
++	if (fmt->ycbcr_enc > V4L2_YCBCR_ENC_SMPTE240M)
++		fmt->ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
++	if (fmt->quantization > V4L2_QUANTIZATION_LIM_RANGE)
++		fmt->quantization = V4L2_QUANTIZATION_DEFAULT;
++	if (fmt->xfer_func > V4L2_XFER_FUNC_SMPTE2084)
++		fmt->xfer_func = V4L2_XFER_FUNC_DEFAULT;
++
++	*v4l2_subdev_state_get_format(state, SUN20I_CSI_PAD_SINK) = *fmt;
++	*v4l2_subdev_state_get_format(state, SUN20I_CSI_PAD_SOURCE) = *fmt;
++
++	return 0;
++}
++
++static int sun20i_csi_bridge_enable_streams(struct v4l2_subdev *sd,
++					    struct v4l2_subdev_state *state,
++					    u32 pad, u64 streams_mask)
++{
++	const struct v4l2_mbus_framefmt *fmt =
++		v4l2_subdev_state_get_format(state, SUN20I_CSI_PAD_SINK);
++	struct sun20i_csi *csi = sd_to_csi(sd);
++	u32 cfg = 0, seq, infmt, width;
++	int ret;
++
++	if (!csi->source)
++		return -ENOLINK;
++
++	if (csi->bt656)
++		cfg = SUN20I_CSI_PRS_IF_BT656_1CH;
++	if (csi->bus.flags & V4L2_MBUS_VSYNC_ACTIVE_LOW)
++		cfg |= SUN20I_CSI_PRS_NCSIC_IF_CFG_VREF_POL;
++	if (csi->bus.flags & V4L2_MBUS_HSYNC_ACTIVE_LOW)
++		cfg |= SUN20I_CSI_PRS_NCSIC_IF_CFG_HREF_POL;
++	if (csi->bus.flags & V4L2_MBUS_PCLK_SAMPLE_RISING)
++		cfg |= SUN20I_CSI_PRS_NCSIC_IF_CFG_CLK_POL;
++	if (fmt->code == MEDIA_BUS_FMT_UYVY8_2X8)
++		seq = SUN20I_CSI_INPUT_SEQ_UYVY;
++	else
++		seq = SUN20I_CSI_INPUT_SEQ_YUYV;
++	cfg |= FIELD_PREP(SUN20I_CSI_PRS_NCSIC_IF_CFG_INPUT_SEQ, seq);
++
++	/* The capture format is fixed while streaming. */
++	infmt = csi->fmt->raw ? SUN20I_CSI_INPUT_FMT_RAW :
++				SUN20I_CSI_INPUT_FMT_YUV422;
++	width = sun20i_csi_line_units(csi->fmt, fmt->width);
++
++	sun20i_csi_write(csi, SUN20I_CSI_PRS_EN_REG,
++			 SUN20I_CSI_PRS_EN_NCSIC_EN |
++			 SUN20I_CSI_PRS_EN_PCLK_EN | SUN20I_CSI_PRS_EN_PRS_EN);
++	sun20i_csi_write(csi, SUN20I_CSI_PRS_NCSIC_IF_CFG_REG, cfg);
++	sun20i_csi_write(csi, SUN20I_CSI_PRS_CH0_INFMT_REG, infmt);
++	sun20i_csi_write(csi, SUN20I_CSI_PRS_CH0_OUTPUT_HSIZE_REG,
++			 FIELD_PREP(SUN20I_CSI_LEN, width));
++	sun20i_csi_write(csi, SUN20I_CSI_PRS_CH0_OUTPUT_VSIZE_REG,
++			 FIELD_PREP(SUN20I_CSI_LEN, fmt->height));
++	sun20i_csi_write(csi, SUN20I_CSI_PRS_CAP_REG,
++			 SUN20I_CSI_PRS_CAP_CH0_VCAP_ON);
++
++	ret = v4l2_subdev_enable_streams(csi->source, csi->source_pad,
++					 BIT_ULL(0));
++	if (ret) {
++		sun20i_csi_write(csi, SUN20I_CSI_PRS_CAP_REG, 0);
++		sun20i_csi_write(csi, SUN20I_CSI_PRS_EN_REG, 0);
++	}
++
++	return ret;
++}
++
++static int sun20i_csi_bridge_disable_streams(struct v4l2_subdev *sd,
++					     struct v4l2_subdev_state *state,
++					     u32 pad, u64 streams_mask)
++{
++	struct sun20i_csi *csi = sd_to_csi(sd);
++	int ret;
++
++	ret = v4l2_subdev_disable_streams(csi->source, csi->source_pad,
++					  BIT_ULL(0));
++
++	sun20i_csi_write(csi, SUN20I_CSI_PRS_CAP_REG, 0);
++	sun20i_csi_write(csi, SUN20I_CSI_PRS_EN_REG, 0);
++
++	return ret;
++}
++
++static const struct v4l2_subdev_pad_ops sun20i_csi_bridge_pad_ops = {
++	.enum_mbus_code		= sun20i_csi_bridge_enum_mbus_code,
++	.enum_frame_size	= sun20i_csi_bridge_enum_frame_size,
++	.get_fmt		= v4l2_subdev_get_fmt,
++	.set_fmt		= sun20i_csi_bridge_set_fmt,
++	.enable_streams		= sun20i_csi_bridge_enable_streams,
++	.disable_streams	= sun20i_csi_bridge_disable_streams,
++};
++
++static const struct v4l2_subdev_ops sun20i_csi_bridge_ops = {
++	.pad			= &sun20i_csi_bridge_pad_ops,
++};
++
++static const struct v4l2_subdev_internal_ops sun20i_csi_bridge_internal_ops = {
++	.init_state		= sun20i_csi_bridge_init_state,
++};
++
++static const struct media_entity_operations sun20i_csi_bridge_entity_ops = {
++	.link_validate		= v4l2_subdev_link_validate,
++};
++
++/* -------------------------------------------------------------------------
++ * Capture video device (the DMA engine)
++ */
++
++static void sun20i_csi_fill_format(struct sun20i_csi *csi, struct v4l2_pix_format *pix)
++{
++	const struct sun20i_csi_format *fmt;
++	u32 size, width, height;
++
++	fmt = sun20i_csi_find_format(csi, pix->pixelformat);
++	if (!fmt)
++		fmt = &sun20i_csi_formats[0];
++
++	width = clamp_t(u32, ALIGN(pix->width, 8), SUN20I_CSI_MIN_SIZE,
++			SUN20I_CSI_MAX_WIDTH);
++	height = clamp_t(u32, ALIGN(pix->height, 2), SUN20I_CSI_MIN_SIZE,
++			 SUN20I_CSI_MAX_HEIGHT);
++
++	pix->pixelformat = fmt->fourcc;
++	pix->width = width;
++	pix->height = height;
++	pix->field = V4L2_FIELD_NONE;
++	pix->bytesperline = width * fmt->bpp;
++
++	size = pix->bytesperline * height;
++	/* Semi-planar: full-width UV lines. Planar: two half-width planes. */
++	if (fmt->planes > 1)
++		size += width * (height / fmt->vsub);
++	pix->sizeimage = size;
++
++	if (fmt->bayer)
++		pix->colorspace = V4L2_COLORSPACE_RAW;
++	else if (csi->bt656)
++		pix->colorspace = height > 576 ? V4L2_COLORSPACE_REC709 :
++						 V4L2_COLORSPACE_SMPTE170M;
++	else
++		pix->colorspace = V4L2_COLORSPACE_SRGB;
++	pix->ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
++	pix->quantization = V4L2_QUANTIZATION_DEFAULT;
++	pix->xfer_func = V4L2_XFER_FUNC_DEFAULT;
++	pix->flags = 0;
++}
++
++static int sun20i_csi_querycap(struct file *file, void *priv,
++			       struct v4l2_capability *cap)
++{
++	strscpy(cap->driver, "sun20i-csi", sizeof(cap->driver));
++	strscpy(cap->card, "Allwinner D1 CSIC", sizeof(cap->card));
++
++	return 0;
++}
++
++static int sun20i_csi_enum_fmt(struct file *file, void *priv,
++			       struct v4l2_fmtdesc *f)
++{
++	struct sun20i_csi *csi = video_drvdata(file);
++	unsigned int i, index = 0;
++
++	for (i = 0; i < ARRAY_SIZE(sun20i_csi_formats); i++) {
++		const struct sun20i_csi_format *fmt = &sun20i_csi_formats[i];
++
++		if (csi->bt656 && fmt->raw)
++			continue;
++		if (f->mbus_code && !sun20i_csi_format_takes(fmt, f->mbus_code))
++			continue;
++		if (index++ == f->index) {
++			f->pixelformat = fmt->fourcc;
++			return 0;
++		}
++	}
++
++	return -EINVAL;
++}
++
++static int sun20i_csi_enum_framesizes(struct file *file, void *priv,
++				      struct v4l2_frmsizeenum *fsize)
++{
++	if (fsize->index || !sun20i_csi_find_format(video_drvdata(file), fsize->pixel_format))
++		return -EINVAL;
++
++	fsize->type = V4L2_FRMSIZE_TYPE_STEPWISE;
++	fsize->stepwise.min_width = SUN20I_CSI_MIN_SIZE;
++	fsize->stepwise.max_width = SUN20I_CSI_MAX_WIDTH;
++	fsize->stepwise.step_width = 8;
++	fsize->stepwise.min_height = SUN20I_CSI_MIN_SIZE;
++	fsize->stepwise.max_height = SUN20I_CSI_MAX_HEIGHT;
++	fsize->stepwise.step_height = 2;
++
++	return 0;
++}
++
++static int sun20i_csi_g_fmt(struct file *file, void *priv,
++			    struct v4l2_format *f)
++{
++	struct sun20i_csi *csi = video_drvdata(file);
++
++	f->fmt.pix = csi->format;
++
++	return 0;
++}
++
++static int sun20i_csi_try_fmt(struct file *file, void *priv,
++			      struct v4l2_format *f)
++{
++	sun20i_csi_fill_format(video_drvdata(file), &f->fmt.pix);
++
++	return 0;
++}
++
++static int sun20i_csi_s_fmt(struct file *file, void *priv,
++			    struct v4l2_format *f)
++{
++	struct sun20i_csi *csi = video_drvdata(file);
++
++	if (vb2_is_busy(&csi->queue))
++		return -EBUSY;
++
++	sun20i_csi_fill_format(video_drvdata(file), &f->fmt.pix);
++	csi->format = f->fmt.pix;
++	csi->fmt = sun20i_csi_find_format(csi, f->fmt.pix.pixelformat);
++
++	return 0;
++}
++
++static const struct v4l2_ioctl_ops sun20i_csi_ioctl_ops = {
++	.vidioc_querycap		= sun20i_csi_querycap,
++	.vidioc_enum_fmt_vid_cap	= sun20i_csi_enum_fmt,
++	.vidioc_enum_framesizes		= sun20i_csi_enum_framesizes,
++	.vidioc_g_fmt_vid_cap		= sun20i_csi_g_fmt,
++	.vidioc_try_fmt_vid_cap		= sun20i_csi_try_fmt,
++	.vidioc_s_fmt_vid_cap		= sun20i_csi_s_fmt,
++
++	.vidioc_reqbufs			= vb2_ioctl_reqbufs,
++	.vidioc_create_bufs		= vb2_ioctl_create_bufs,
++	.vidioc_prepare_buf		= vb2_ioctl_prepare_buf,
++	.vidioc_querybuf		= vb2_ioctl_querybuf,
++	.vidioc_qbuf			= vb2_ioctl_qbuf,
++	.vidioc_dqbuf			= vb2_ioctl_dqbuf,
++	.vidioc_expbuf			= vb2_ioctl_expbuf,
++	.vidioc_streamon		= vb2_ioctl_streamon,
++	.vidioc_streamoff		= vb2_ioctl_streamoff,
++};
++
++static const struct v4l2_file_operations sun20i_csi_fops = {
++	.owner		= THIS_MODULE,
++	.open		= v4l2_fh_open,
++	.release	= vb2_fop_release,
++	.unlocked_ioctl	= video_ioctl2,
++	.mmap		= vb2_fop_mmap,
++	.poll		= vb2_fop_poll,
++};
++
++static int sun20i_csi_queue_setup(struct vb2_queue *queue,
++				  unsigned int *num_buffers,
++				  unsigned int *num_planes,
++				  unsigned int sizes[],
++				  struct device *alloc_devs[])
++{
++	struct sun20i_csi *csi = vb2_get_drv_priv(queue);
++
++	if (*num_planes)
++		return sizes[0] < csi->format.sizeimage ? -EINVAL : 0;
++
++	*num_planes = 1;
++	sizes[0] = csi->format.sizeimage;
++
++	return 0;
++}
++
++static int sun20i_csi_buf_prepare(struct vb2_buffer *vb)
++{
++	struct sun20i_csi *csi = vb2_get_drv_priv(vb->vb2_queue);
++
++	if (vb2_plane_size(vb, 0) < csi->format.sizeimage)
++		return -EINVAL;
++
++	vb2_set_plane_payload(vb, 0, csi->format.sizeimage);
++
++	return 0;
++}
++
++static void sun20i_csi_buf_queue(struct vb2_buffer *vb)
++{
++	struct sun20i_csi *csi = vb2_get_drv_priv(vb->vb2_queue);
++	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
++	struct sun20i_csi_buffer *buf =
++		container_of(vbuf, struct sun20i_csi_buffer, vb);
++	unsigned long flags;
++
++	spin_lock_irqsave(&csi->irqlock, flags);
++	list_add_tail(&buf->list, &csi->queued);
++	spin_unlock_irqrestore(&csi->irqlock, flags);
++}
++
++static void sun20i_csi_return_buffers(struct sun20i_csi *csi,
++				      enum vb2_buffer_state state)
++{
++	struct sun20i_csi_buffer *buf, *tmp;
++	unsigned long flags;
++
++	spin_lock_irqsave(&csi->irqlock, flags);
++
++	if (csi->active)
++		vb2_buffer_done(&csi->active->vb.vb2_buf, state);
++	if (csi->next && csi->next != csi->active)
++		vb2_buffer_done(&csi->next->vb.vb2_buf, state);
++	csi->active = NULL;
++	csi->next = NULL;
++
++	list_for_each_entry_safe(buf, tmp, &csi->queued, list) {
++		list_del(&buf->list);
++		vb2_buffer_done(&buf->vb.vb2_buf, state);
++	}
++
++	spin_unlock_irqrestore(&csi->irqlock, flags);
++}
++
++static void sun20i_csi_dma_start(struct sun20i_csi *csi)
++{
++	const struct sun20i_csi_format *fmt = csi->fmt;
++	u32 width = csi->format.width, height = csi->format.height;
++	u32 line_c = fmt->planes == 3 ? width / 2 : width;
++	unsigned long flags;
++
++	/*
++	 * This relies on two reset values: the CSIC's own clock gates are
++	 * bypassed (CCU_CLK_MODE_REG), and DMA0 takes input 0, "ISP0 CH0",
++	 * which carries the parser's channel 0 (CSIC_DMA0_INPUT_SEL_REG).
++	 */
++	sun20i_csi_write(csi, SUN20I_CSI_TOP_EN_REG,
++			 SUN20I_CSI_TOP_EN_CSIC_TOP_EN);
++
++	sun20i_csi_write(csi, SUN20I_CSI_DMA_CFG_REG,
++			 FIELD_PREP(SUN20I_CSI_DMA_CFG_OUTPUT_FMT,
++				    fmt->output));
++	sun20i_csi_write(csi, SUN20I_CSI_DMA_HSIZE_REG,
++			 FIELD_PREP(SUN20I_CSI_LEN,
++				    sun20i_csi_line_units(fmt, width)));
++	sun20i_csi_write(csi, SUN20I_CSI_DMA_VSIZE_REG,
++			 FIELD_PREP(SUN20I_CSI_LEN, height));
++	sun20i_csi_write(csi, SUN20I_CSI_DMA_BUF_LEN_REG,
++			 FIELD_PREP(SUN20I_CSI_DMA_BUF_LEN_BUF_LEN_C, line_c) |
++			 FIELD_PREP(SUN20I_CSI_DMA_BUF_LEN_BUF_LEN,
++				    csi->format.bytesperline));
++
++	spin_lock_irqsave(&csi->irqlock, flags);
++
++	csi->sequence = 0;
++	csi->errors = 0;
++	csi->active = NULL;
++	/* vb2 makes sure that min_queued_buffers are queued. */
++	csi->next = list_first_entry(&csi->queued, struct sun20i_csi_buffer,
++				     list);
++	list_del(&csi->next->list);
++	sun20i_csi_set_buffer(csi, csi->next);
++
++	spin_unlock_irqrestore(&csi->irqlock, flags);
++
++	/* The line index counts from 0: this fires on the last line. */
++	sun20i_csi_write(csi, SUN20I_CSI_DMA_LINE_CNT_REG,
++			 FIELD_PREP(SUN20I_CSI_DMA_LINE_CNT_LINE_CNT_NUM,
++				    height - 1));
++	sun20i_csi_write(csi, SUN20I_CSI_DMA_INT_STA_REG, ~0);
++	sun20i_csi_write(csi, SUN20I_CSI_DMA_INT_EN_REG,
++			 SUN20I_CSI_DMA_INT_VS | SUN20I_CSI_DMA_INT_LC |
++			 SUN20I_CSI_DMA_INT_FD | SUN20I_CSI_DMA_INT_OF);
++	sun20i_csi_write(csi, SUN20I_CSI_DMA_EN_REG,
++			 SUN20I_CSI_DMA_EN_SW_CFG_MODE |
++			 SUN20I_CSI_DMA_EN_DMA_EN |
++			 SUN20I_CSI_DMA_EN_BK_TOP_EN);
++}
++
++static void sun20i_csi_dma_stop(struct sun20i_csi *csi)
++{
++	sun20i_csi_write(csi, SUN20I_CSI_DMA_INT_EN_REG, 0);
++	sun20i_csi_write(csi, SUN20I_CSI_DMA_EN_REG,
++			 SUN20I_CSI_DMA_EN_SW_CFG_MODE);
++	sun20i_csi_write(csi, SUN20I_CSI_DMA_INT_STA_REG, ~0);
++	sun20i_csi_write(csi, SUN20I_CSI_TOP_EN_REG, 0);
++	synchronize_irq(csi->irq);
++}
++
++static int sun20i_csi_start_streaming(struct vb2_queue *queue,
++				      unsigned int count)
++{
++	struct sun20i_csi *csi = vb2_get_drv_priv(queue);
++	int ret;
++
++	ret = pm_runtime_resume_and_get(csi->dev);
++	if (ret)
++		goto err_return_buffers;
++
++	ret = video_device_pipeline_alloc_start(&csi->vdev);
++	if (ret)
++		goto err_pm_put;
++
++	sun20i_csi_dma_start(csi);
++
++	ret = v4l2_subdev_enable_streams(&csi->subdev, SUN20I_CSI_PAD_SOURCE,
++					 BIT_ULL(0));
++	if (ret)
++		goto err_dma_stop;
++
++	return 0;
++
++err_dma_stop:
++	sun20i_csi_dma_stop(csi);
++	video_device_pipeline_stop(&csi->vdev);
++err_pm_put:
++	pm_runtime_put(csi->dev);
++err_return_buffers:
++	sun20i_csi_return_buffers(csi, VB2_BUF_STATE_QUEUED);
++	return ret;
++}
++
++static void sun20i_csi_stop_streaming(struct vb2_queue *queue)
++{
++	struct sun20i_csi *csi = vb2_get_drv_priv(queue);
++
++	v4l2_subdev_disable_streams(&csi->subdev, SUN20I_CSI_PAD_SOURCE,
++				    BIT_ULL(0));
++	sun20i_csi_dma_stop(csi);
++	video_device_pipeline_stop(&csi->vdev);
++	sun20i_csi_return_buffers(csi, VB2_BUF_STATE_ERROR);
++	pm_runtime_put(csi->dev);
++
++	if (csi->errors)
++		dev_dbg(csi->dev, "%u FIFO overflows in %u frames\n",
++			csi->errors, csi->sequence);
++}
++
++static const struct vb2_ops sun20i_csi_vb2_ops = {
++	.queue_setup		= sun20i_csi_queue_setup,
++	.buf_prepare		= sun20i_csi_buf_prepare,
++	.buf_queue		= sun20i_csi_buf_queue,
++	.start_streaming	= sun20i_csi_start_streaming,
++	.stop_streaming		= sun20i_csi_stop_streaming,
++};
++
++static int sun20i_csi_capture_link_validate(struct media_link *link)
++{
++	struct video_device *vdev =
++		media_entity_to_video_device(link->sink->entity);
++	struct sun20i_csi *csi = video_get_drvdata(vdev);
++	const struct v4l2_mbus_framefmt *fmt;
++	struct v4l2_subdev_state *state;
++	int ret = 0;
++
++	state = v4l2_subdev_lock_and_get_active_state(&csi->subdev);
++	fmt = v4l2_subdev_state_get_format(state, SUN20I_CSI_PAD_SOURCE);
++
++	if (fmt->width != csi->format.width ||
++	    fmt->height != csi->format.height) {
++		dev_dbg(csi->dev, "size mismatch: %ux%u on the bridge, %ux%u on the video device\n",
++			fmt->width, fmt->height,
++			csi->format.width, csi->format.height);
++		ret = -EPIPE;
++	} else if (!sun20i_csi_format_takes(csi->fmt, fmt->code)) {
++		dev_dbg(csi->dev, "%p4cc can't be captured from bus code 0x%04x\n",
++			&csi->format.pixelformat, fmt->code);
++		ret = -EPIPE;
++	}
++
++	v4l2_subdev_unlock_state(state);
++
++	return ret;
++}
++
++static const struct media_entity_operations sun20i_csi_capture_entity_ops = {
++	.link_validate		= sun20i_csi_capture_link_validate,
++};
++
++/* -------------------------------------------------------------------------
++ * Probe
++ */
++
++static int sun20i_csi_notify_bound(struct v4l2_async_notifier *notifier,
++				   struct v4l2_subdev *sd,
++				   struct v4l2_async_connection *asc)
++{
++	struct sun20i_csi *csi = container_of(notifier, struct sun20i_csi,
++					      notifier);
++	struct media_pad *pad = &csi->pads[SUN20I_CSI_PAD_SINK];
++	int ret;
++
++	ret = v4l2_create_fwnode_links_to_pad(sd, pad, MEDIA_LNK_FL_ENABLED |
++					      MEDIA_LNK_FL_IMMUTABLE);
++	if (ret)
++		return ret;
++
++	pad = media_pad_remote_pad_first(pad);
++	if (!pad)
++		return -ENOLINK;
++
++	mutex_lock(&csi->lock);
++	csi->source = sd;
++	csi->source_pad = pad->index;
++	mutex_unlock(&csi->lock);
++
++	return 0;
++}
++
++static void sun20i_csi_notify_unbind(struct v4l2_async_notifier *notifier,
++				     struct v4l2_subdev *sd,
++				     struct v4l2_async_connection *asc)
++{
++	struct sun20i_csi *csi = container_of(notifier, struct sun20i_csi,
++					      notifier);
++
++	mutex_lock(&csi->lock);
++	if (vb2_is_streaming(&csi->queue)) {
++		vb2_queue_error(&csi->queue);
++		vb2_streamoff(&csi->queue, csi->queue.type);
++	}
++	csi->source = NULL;
++	mutex_unlock(&csi->lock);
++}
++
++static int sun20i_csi_notify_complete(struct v4l2_async_notifier *notifier)
++{
++	struct sun20i_csi *csi = container_of(notifier, struct sun20i_csi,
++					      notifier);
++	int ret;
++
++	ret = v4l2_device_register_subdev_nodes(&csi->v4l2_dev);
++	if (ret)
++		return ret;
++
++	if (csi->mdev.devnode)
++		return 0;
++	return media_device_register(&csi->mdev);
++}
++
++static const struct v4l2_async_notifier_operations sun20i_csi_notify_ops = {
++	.bound		= sun20i_csi_notify_bound,
++	.unbind		= sun20i_csi_notify_unbind,
++	.complete	= sun20i_csi_notify_complete,
++};
++
++static int sun20i_csi_parse_dt(struct sun20i_csi *csi)
++{
++	struct v4l2_fwnode_endpoint vep = { };
++	struct v4l2_async_connection *asc;
++	struct fwnode_handle *ep;
++	int ret;
++
++	ep = fwnode_graph_get_endpoint_by_id(dev_fwnode(csi->dev), 0, 0, 0);
++	if (!ep)
++		return dev_err_probe(csi->dev, -ENODEV, "no input endpoint\n");
++
++	if (!fwnode_property_present(ep, "bus-type"))
++		vep.bus_type = V4L2_MBUS_PARALLEL;
++	ret = v4l2_fwnode_endpoint_parse(ep, &vep);
++	if (ret) {
++		dev_err_probe(csi->dev, ret, "invalid input endpoint\n");
++		goto out;
++	}
++	if ((vep.bus_type != V4L2_MBUS_PARALLEL &&
++	     vep.bus_type != V4L2_MBUS_BT656) ||
++	    vep.bus.parallel.bus_width != 8 || vep.bus.parallel.data_shift) {
++		ret = dev_err_probe(csi->dev, -EINVAL,
++				    "only an 8-bit bus is supported\n");
++		goto out;
++	}
++	csi->bus = vep.bus.parallel;
++	csi->bt656 = vep.bus_type == V4L2_MBUS_BT656;
++
++	asc = v4l2_async_nf_add_fwnode_remote(&csi->notifier, ep,
++					      struct v4l2_async_connection);
++	if (IS_ERR(asc))
++		ret = PTR_ERR(asc);
++
++out:
++	fwnode_handle_put(ep);
++	return ret;
++}
++
++static int sun20i_csi_register_bridge(struct sun20i_csi *csi)
++{
++	struct v4l2_subdev *sd = &csi->subdev;
++	int ret;
++
++	v4l2_subdev_init(sd, &sun20i_csi_bridge_ops);
++	sd->internal_ops = &sun20i_csi_bridge_internal_ops;
++	sd->owner = THIS_MODULE;
++	sd->dev = csi->dev;
++	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
++	strscpy(sd->name, "sun20i-csi-bridge", sizeof(sd->name));
++
++	sd->entity.function = MEDIA_ENT_F_VID_IF_BRIDGE;
++	sd->entity.ops = &sun20i_csi_bridge_entity_ops;
++	csi->pads[SUN20I_CSI_PAD_SINK].flags = MEDIA_PAD_FL_SINK |
++					       MEDIA_PAD_FL_MUST_CONNECT;
++	csi->pads[SUN20I_CSI_PAD_SOURCE].flags = MEDIA_PAD_FL_SOURCE |
++						 MEDIA_PAD_FL_MUST_CONNECT;
++	ret = media_entity_pads_init(&sd->entity, SUN20I_CSI_NUM_PADS,
++				     csi->pads);
++	if (ret)
++		return ret;
++
++	ret = v4l2_subdev_init_finalize(sd);
++	if (ret)
++		goto err_entity;
++
++	ret = v4l2_device_register_subdev(&csi->v4l2_dev, sd);
++	if (ret)
++		goto err_subdev;
++
++	return 0;
++
++err_subdev:
++	v4l2_subdev_cleanup(sd);
++err_entity:
++	media_entity_cleanup(&sd->entity);
++	return ret;
++}
++
++static void sun20i_csi_unregister_bridge(struct sun20i_csi *csi)
++{
++	v4l2_device_unregister_subdev(&csi->subdev);
++	v4l2_subdev_cleanup(&csi->subdev);
++	media_entity_cleanup(&csi->subdev.entity);
++}
++
++static int sun20i_csi_register_capture(struct sun20i_csi *csi)
++{
++	struct video_device *vdev = &csi->vdev;
++	struct vb2_queue *queue = &csi->queue;
++	int ret;
++
++	csi->format.pixelformat = sun20i_csi_formats[0].fourcc;
++	csi->format.width = sun20i_csi_default_fmt.width;
++	csi->format.height = sun20i_csi_default_fmt.height;
++	sun20i_csi_fill_format(csi, &csi->format);
++	csi->fmt = &sun20i_csi_formats[0];
++
++	queue->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
++	queue->io_modes = VB2_MMAP | VB2_DMABUF;
++	queue->dev = csi->dev;
++	queue->drv_priv = csi;
++	queue->buf_struct_size = sizeof(struct sun20i_csi_buffer);
++	queue->ops = &sun20i_csi_vb2_ops;
++	queue->mem_ops = &vb2_dma_contig_memops;
++	queue->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
++	queue->min_queued_buffers = 2;
++	queue->lock = &csi->lock;
++	ret = vb2_queue_init(queue);
++	if (ret)
++		return ret;
++
++	csi->vdev_pad.flags = MEDIA_PAD_FL_SINK | MEDIA_PAD_FL_MUST_CONNECT;
++	vdev->entity.ops = &sun20i_csi_capture_entity_ops;
++	ret = media_entity_pads_init(&vdev->entity, 1, &csi->vdev_pad);
++	if (ret)
++		return ret;
++
++	strscpy(vdev->name, "sun20i-csi-capture", sizeof(vdev->name));
++	vdev->v4l2_dev = &csi->v4l2_dev;
++	vdev->fops = &sun20i_csi_fops;
++	vdev->ioctl_ops = &sun20i_csi_ioctl_ops;
++	vdev->release = video_device_release_empty;
++	vdev->lock = &csi->lock;
++	vdev->queue = queue;
++	vdev->device_caps = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING |
++			    V4L2_CAP_IO_MC;
++	video_set_drvdata(vdev, csi);
++
++	ret = video_register_device(vdev, VFL_TYPE_VIDEO, -1);
++	if (ret)
++		goto err_entity;
++
++	ret = media_create_pad_link(&csi->subdev.entity, SUN20I_CSI_PAD_SOURCE,
++				    &vdev->entity, 0, MEDIA_LNK_FL_ENABLED |
++				    MEDIA_LNK_FL_IMMUTABLE);
++	if (ret)
++		goto err_video;
++
++	return 0;
++
++err_video:
++	vb2_video_unregister_device(vdev);
++err_entity:
++	media_entity_cleanup(&vdev->entity);
++	return ret;
++}
++
++static int sun20i_csi_runtime_suspend(struct device *dev)
++{
++	struct sun20i_csi *csi = dev_get_drvdata(dev);
++
++	clk_disable_unprepare(csi->mod_clk);
++	clk_disable_unprepare(csi->ram_clk);
++	clk_disable_unprepare(csi->bus_clk);
++	reset_control_assert(csi->reset);
++
++	return 0;
++}
++
++static int sun20i_csi_runtime_resume(struct device *dev)
++{
++	struct sun20i_csi *csi = dev_get_drvdata(dev);
++	int ret;
++
++	ret = reset_control_deassert(csi->reset);
++	if (ret)
++		return ret;
++
++	ret = clk_prepare_enable(csi->bus_clk);
++	if (ret)
++		goto err_reset;
++
++	ret = clk_prepare_enable(csi->ram_clk);
++	if (ret)
++		goto err_bus_clk;
++
++	ret = clk_prepare_enable(csi->mod_clk);
++	if (ret)
++		goto err_ram_clk;
++
++	return 0;
++
++err_ram_clk:
++	clk_disable_unprepare(csi->ram_clk);
++err_bus_clk:
++	clk_disable_unprepare(csi->bus_clk);
++err_reset:
++	reset_control_assert(csi->reset);
++	return ret;
++}
++
++static int sun20i_csi_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct sun20i_csi *csi;
++	int ret;
++
++	csi = devm_kzalloc(dev, sizeof(*csi), GFP_KERNEL);
++	if (!csi)
++		return -ENOMEM;
++
++	csi->dev = dev;
++	platform_set_drvdata(pdev, csi);
++	spin_lock_init(&csi->irqlock);
++	INIT_LIST_HEAD(&csi->queued);
++
++	ret = devm_mutex_init(dev, &csi->lock);
++	if (ret)
++		return ret;
++
++	csi->regs = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(csi->regs))
++		return PTR_ERR(csi->regs);
++
++	csi->bus_clk = devm_clk_get(dev, "bus");
++	if (IS_ERR(csi->bus_clk))
++		return dev_err_probe(dev, PTR_ERR(csi->bus_clk),
++				     "failed to get the bus clock\n");
++
++	csi->mod_clk = devm_clk_get(dev, "mod");
++	if (IS_ERR(csi->mod_clk))
++		return dev_err_probe(dev, PTR_ERR(csi->mod_clk),
++				     "failed to get the module clock\n");
++
++	csi->ram_clk = devm_clk_get(dev, "ram");
++	if (IS_ERR(csi->ram_clk))
++		return dev_err_probe(dev, PTR_ERR(csi->ram_clk),
++				     "failed to get the DRAM clock\n");
++
++	csi->reset = devm_reset_control_get_exclusive(dev, NULL);
++	if (IS_ERR(csi->reset))
++		return dev_err_probe(dev, PTR_ERR(csi->reset),
++				     "failed to get the reset\n");
++
++	ret = devm_clk_rate_exclusive_get(dev, csi->mod_clk);
++	if (ret)
++		return dev_err_probe(dev, ret,
++				     "failed to lock the module clock rate\n");
++
++	ret = clk_set_rate(csi->mod_clk, SUN20I_CSI_MOD_RATE);
++	if (ret)
++		return dev_err_probe(dev, ret,
++				     "failed to set the module clock rate\n");
++
++	csi->irq = platform_get_irq(pdev, 0);
++	if (csi->irq < 0)
++		return csi->irq;
++
++	ret = devm_request_irq(dev, csi->irq, sun20i_csi_irq, 0,
++			       dev_name(dev), csi);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to request the IRQ\n");
++
++	ret = devm_pm_runtime_enable(dev);
++	if (ret)
++		return ret;
++
++	csi->mdev.dev = dev;
++	strscpy(csi->mdev.model, "Allwinner D1 CSIC", sizeof(csi->mdev.model));
++	media_device_init(&csi->mdev);
++	csi->v4l2_dev.mdev = &csi->mdev;
++
++	ret = v4l2_device_register(dev, &csi->v4l2_dev);
++	if (ret)
++		goto err_media;
++
++	/* Check the DT before any device node is created. */
++	v4l2_async_nf_init(&csi->notifier, &csi->v4l2_dev);
++	csi->notifier.ops = &sun20i_csi_notify_ops;
++
++	ret = sun20i_csi_parse_dt(csi);
++	if (ret)
++		goto err_notifier;
++
++	ret = sun20i_csi_register_bridge(csi);
++	if (ret)
++		goto err_notifier;
++
++	ret = sun20i_csi_register_capture(csi);
++	if (ret)
++		goto err_bridge;
++
++	ret = v4l2_async_nf_register(&csi->notifier);
++	if (ret)
++		goto err_capture;
++
++	return 0;
++
++err_capture:
++	vb2_video_unregister_device(&csi->vdev);
++	media_entity_cleanup(&csi->vdev.entity);
++err_bridge:
++	sun20i_csi_unregister_bridge(csi);
++err_notifier:
++	v4l2_async_nf_cleanup(&csi->notifier);
++	v4l2_device_unregister(&csi->v4l2_dev);
++err_media:
++	media_device_cleanup(&csi->mdev);
++	return ret;
++}
++
++static void sun20i_csi_remove(struct platform_device *pdev)
++{
++	struct sun20i_csi *csi = platform_get_drvdata(pdev);
++
++	/* This stops streaming, which needs the whole pipeline. */
++	vb2_video_unregister_device(&csi->vdev);
++	media_entity_cleanup(&csi->vdev.entity);
++	v4l2_async_nf_unregister(&csi->notifier);
++	v4l2_async_nf_cleanup(&csi->notifier);
++	sun20i_csi_unregister_bridge(csi);
++	media_device_unregister(&csi->mdev);
++	v4l2_device_unregister(&csi->v4l2_dev);
++	media_device_cleanup(&csi->mdev);
++}
++
++/* Runtime PM only: a system sleep must not reset the block while streaming. */
++static const struct dev_pm_ops sun20i_csi_pm_ops = {
++	RUNTIME_PM_OPS(sun20i_csi_runtime_suspend, sun20i_csi_runtime_resume,
++		       NULL)
++};
++
++static const struct of_device_id sun20i_csi_of_match[] = {
++	{ .compatible = "allwinner,sun20i-d1-csi" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, sun20i_csi_of_match);
++
++static struct platform_driver sun20i_csi_driver = {
++	.probe	= sun20i_csi_probe,
++	.remove	= sun20i_csi_remove,
++	.driver	= {
++		.name		= "sun20i-csi",
++		.of_match_table	= sun20i_csi_of_match,
++		.pm		= pm_ptr(&sun20i_csi_pm_ops),
++	},
++};
++module_platform_driver(sun20i_csi_driver);
++
++MODULE_DESCRIPTION("Allwinner D1/T113 CSIC driver");
++MODULE_AUTHOR("Nguyen Minh Tien <tien.nguyenminh@embeddedlinux.blog>");
++MODULE_LICENSE("GPL");

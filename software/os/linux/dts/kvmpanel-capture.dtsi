@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
+#include <dt-bindings/media/video-interfaces.h>
+
+&pio {
+	vcc-pe-supply = <&reg_3v3_main>;
+
+	lt_i2c1_pins: i2c1-pe14-pins {
+		pins = "PE14", "PE15";
+		function = "i2c1";
+	};
+};
+
+&i2c1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&lt_i2c1_pins>;
+	status = "okay";
+
+	hdmi-receiver@32 {
+		compatible = "lontium,lt8619c";
+		reg = <0x32>;
+
+		/* D8-D15 are wired. RESET_N has no software-controlled GPIO. */
+		port {
+			lt8619c_out: endpoint {
+				remote-endpoint = <&csi_in>;
+				bus-type = <MEDIA_BUS_TYPE_BT656>;
+				bus-width = <8>;
+				pclk-sample = <1>;
+			};
+		};
+	};
+};
+
+&csi {
+	status = "okay";
+
+	port {
+		csi_in: endpoint {
+			remote-endpoint = <&lt8619c_out>;
+			bus-type = <MEDIA_BUS_TYPE_BT656>;
+			bus-width = <8>;
+			pclk-sample = <1>;
+		};
+	};
+};
