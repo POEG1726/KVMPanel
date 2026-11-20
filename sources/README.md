@@ -9,6 +9,7 @@
 | Buildroot | 2025.02.20 LTS | https://github.com/buildroot/buildroot |
 | Tina 框架 | master，当日快照 | https://github.com/100askTeam/Tina5-LinuxSDK |
 | T113-i overlay | 当日快照 | https://github.com/DongshanPI/T113i_DevKitF_Tina5SDK |
+| LVGL | v9.6.0（80ca777e，无 D 盘镜像，WSL 目录 `lvgl`） | https://github.com/lvgl/lvgl |
 
 D 盘本地镜像在 `repos/<名称>.git`；Ubuntu WSL 中对应的源码目录在 `~/work/KVMPanel/upstream/<名称>`，名称分别为 `linux`、`u-boot`、`buildroot`、`tina-framework`、`tina-t113i-overlay`。
 
