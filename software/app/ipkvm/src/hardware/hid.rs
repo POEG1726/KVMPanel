@@ -1,28 +1,16 @@
 use serde_json::{json, Value};
 use std::{
-    fs::{self, OpenOptions},
+    collections::HashMap,
+    fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     os::unix::fs::OpenOptionsExt,
-    path::{Path, PathBuf},
+    path::Path,
     thread,
     time::{Duration, Instant},
 };
 
 const FUNCTIONS: &str = "/sys/kernel/config/usb_gadget/kvmpanel/functions";
-fn node(function: &str) -> io::Result<PathBuf> {
-    let dev = fs::read_to_string(Path::new(FUNCTIONS).join(format!("hid.{function}/dev")))?;
-    let minor = dev
-        .trim()
-        .split_once(':')
-        .and_then(|(_, m)| m.parse::<u32>().ok())
-        .ok_or(io::ErrorKind::InvalidData)?;
-    Ok(format!("/dev/hidg{minor}").into())
-}
-fn send(function: &str, report: &[u8]) -> io::Result<()> {
-    let mut f = OpenOptions::new()
-        .write(true)
-        .custom_flags(libc::O_NONBLOCK)
-        .open(node(function)?)?;
+fn send(mut f: &File, report: &[u8]) -> io::Result<()> {
     let start = Instant::now();
     loop {
         match f.write(report) {
@@ -38,11 +26,7 @@ fn send(function: &str, report: &[u8]) -> io::Result<()> {
         }
     }
 }
-fn read(function: &str) -> io::Result<Option<Vec<u8>>> {
-    let mut f = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NONBLOCK)
-        .open(node(function)?)?;
+fn read(mut f: &File) -> io::Result<Option<Vec<u8>>> {
     let mut buf = [0u8; 64];
     match f.read(&mut buf) {
         Ok(0) => Ok(None),
@@ -171,6 +155,7 @@ impl Keyboard {
 }
 #[derive(Default)]
 pub(super) struct Hid {
+    ports: HashMap<&'static str, File>,
     keyboard: Keyboard,
     buttons: u8,
     position: [u16; 2],
@@ -178,15 +163,44 @@ pub(super) struct Hid {
     led: u8,
 }
 impl Hid {
+    pub fn enumerate() -> io::Result<Self> {
+        Self::open(Path::new(FUNCTIONS), Path::new("/dev"))
+    }
+    fn open(functions: &Path, dev_root: &Path) -> io::Result<Self> {
+        let mut hid = Self::default();
+        for name in ["keyboard", "relative", "absolute", "merged", "telemetry"] {
+            let dev = match fs::read_to_string(functions.join(format!("hid.{name}/dev"))) {
+                Ok(dev) => dev,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(e),
+            };
+            let minor = dev
+                .trim()
+                .split_once(':')
+                .and_then(|(_, m)| m.parse::<u32>().ok())
+                .ok_or(io::ErrorKind::InvalidData)?;
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(dev_root.join(format!("hidg{minor}")))?;
+            hid.ports.insert(name, file);
+        }
+        Ok(hid)
+    }
+    fn send(&self, name: &str, report: &[u8]) -> io::Result<()> {
+        let file = self.ports.get(name).ok_or(io::ErrorKind::NotConnected)?;
+        send(file, report)
+    }
     fn key(&mut self, k: u8, down: bool) -> io::Result<()> {
         let mut next = self.keyboard.clone();
         next.change(k, down);
-        send("keyboard", &next.report())?;
+        self.send("keyboard", &next.report())?;
         self.keyboard = next;
         Ok(())
     }
     fn mouse(&mut self, absolute: bool, rel: [i8; 2], wheel: i8) -> io::Result<()> {
-        let merged = node("merged").is_ok();
+        let merged = self.ports.contains_key("merged");
         let name = if merged {
             "merged"
         } else if absolute {
@@ -195,13 +209,7 @@ impl Hid {
             "relative"
         };
         let mut report = Vec::with_capacity(7);
-        if absolute
-            || merged
-            || (!absolute
-                && node("absolute").is_err()
-                && fs::read_to_string(format!("{FUNCTIONS}/hid.relative/report_length"))
-                    .is_ok_and(|l| l.trim() == "64"))
-        {
+        if absolute || merged {
             report.push(if absolute { 2 } else { 1 })
         }
         report.push(self.buttons);
@@ -213,13 +221,13 @@ impl Hid {
             report.extend(rel.map(|v| v as u8))
         }
         report.push(wheel as u8);
-        send(name, &report)
+        self.send(name, &report)
     }
     /// A text stroke may require modifiers different from the user's held keys.
     /// Restore the current keyboard report even if pressing or releasing fails.
     pub fn type_key(&self, modifiers: u8, usage: u8) -> io::Result<()> {
         type_stroke(self.keyboard.report(), modifiers, usage, |report| {
-            send("keyboard", report)
+            self.send("keyboard", report)
         })
     }
 
@@ -228,11 +236,11 @@ impl Hid {
         if self.buttons != 0 {
             return Ok(());
         }
-        if node("relative").is_ok() || node("merged").is_ok() {
+        if self.ports.contains_key("relative") || self.ports.contains_key("merged") {
             self.mouse(false, [1, 0], 0)?;
             return self.mouse(false, [-1, 0], 0);
         }
-        if self.last_abs && node("absolute").is_ok() {
+        if self.last_abs && self.ports.contains_key("absolute") {
             let old = self.position;
             self.position[0] ^= 2; // Bit zero is discarded when converting to the gadget's 15-bit range.
             let moved = self.mouse(true, [0, 0], 0);
@@ -269,7 +277,7 @@ impl Hid {
                     Ok(())
                 })();
                 self.keyboard = old;
-                let restored = send("keyboard", &self.keyboard.report());
+                let restored = self.send("keyboard", &self.keyboard.report());
                 result.and(restored)
             }
             Some("mouse_abs") | Some("mouse_rel") => {
@@ -291,10 +299,10 @@ impl Hid {
                 )
             }
             Some("wheel") => {
-                let abs = if node("merged").is_ok() {
+                let abs = if self.ports.contains_key("merged") {
                     self.last_abs
                 } else {
-                    node("relative").is_err()
+                    !self.ports.contains_key("relative")
                 };
                 self.mouse(abs, [0, 0], m["dy"].as_i64().unwrap_or(0) as i8)
             }
@@ -302,28 +310,35 @@ impl Hid {
         }
     }
     pub fn reset(&mut self) -> io::Result<()> {
+        if self.ports.keys().all(|name| *name == "telemetry") {
+            return Err(io::Error::from_raw_os_error(libc::ENODEV));
+        }
         self.keyboard = Keyboard::default();
         self.buttons = 0;
-        if node("keyboard").is_ok() {
-            send("keyboard", &self.keyboard.report())?
+        if self.ports.contains_key("keyboard") {
+            self.send("keyboard", &self.keyboard.report())?
         }
         for (abs, name) in [(false, "relative"), (true, "absolute")] {
-            if node("merged").is_ok() || node(name).is_ok() {
+            if self.ports.contains_key("merged") || self.ports.contains_key(name) {
                 self.mouse(abs, [0, 0], 0)?
             }
         }
         Ok(())
     }
     pub fn locks(&mut self) -> Value {
-        if let Ok(Some(b)) = read("keyboard") {
+        if let Some(b) = self
+            .ports
+            .get("keyboard")
+            .and_then(|f| read(f).ok().flatten())
+        {
             self.led = b[0]
         }
         json!({"num":self.led&1!=0,"caps":self.led&2!=0,"scroll":self.led&4!=0})
     }
     pub fn telemetry(&self) -> io::Result<Option<Vec<u8>>> {
-        for name in ["merged", "absolute", "telemetry", "relative"] {
-            if node(name).is_ok() {
-                return read(name);
+        for name in ["merged", "absolute", "telemetry"] {
+            if let Some(file) = self.ports.get(name) {
+                return read(file);
             }
         }
         Ok(None)
@@ -351,6 +366,32 @@ fn type_stroke(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reports_use_open_files_until_the_next_enumeration() {
+        let dir = tempfile::tempdir().unwrap();
+        let functions = dir.path().join("functions");
+        let function = functions.join("hid.relative");
+        fs::create_dir_all(&function).unwrap();
+        let devno = function.join("dev");
+        fs::write(&devno, "243:4").unwrap();
+        for n in ["hidg4", "hidg7"] {
+            fs::write(dir.path().join(n), []).unwrap();
+        }
+        let mut hid = Hid::open(&functions, dir.path()).unwrap();
+        // configfs and the device path may change; a bound report still uses its open fd.
+        fs::write(&devno, "243:7").unwrap();
+        fs::rename(dir.path().join("hidg4"), dir.path().join("old")).unwrap();
+        let motion = json!({"t":"mouse_rel","dx":3,"dy":-2,"buttons":1});
+        hid.input(&motion).unwrap();
+        hid.input(&motion).unwrap();
+        assert_eq!(
+            fs::read(dir.path().join("old")).unwrap(),
+            [1, 3, 254, 0, 1, 3, 254, 0]
+        );
+        hid = Hid::open(&functions, dir.path()).unwrap();
+        hid.input(&motion).unwrap();
+        assert_eq!(fs::read(dir.path().join("hidg7")).unwrap(), [1, 3, 254, 0]);
+    }
     #[test]
     fn keyboard_report_and_paste() {
         let mut keys = Keyboard::default();

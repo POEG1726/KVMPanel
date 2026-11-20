@@ -129,15 +129,18 @@ impl Hardware for Board {
         self.hid.lock().unwrap().jiggle()
     }
     fn apply_usb(&self, usb: &Value, media: &[(OsString, OsString)]) -> io::Result<()> {
-        let mut hid = self.hid.lock().unwrap();
+        // Release old device file descriptions before configfs unbind. Input during
+        // re-enumeration observes absent ports without waiting on the external script.
+        *self.hid.lock().unwrap() = Hid::default();
         let script = "/usr/sbin/kvmpanel-gadget";
         run(Command::new(script).arg("stop"))?;
-        *hid = Hid::default();
         if crate::usb_budget(usb)["in"] != 0 {
             run(Command::new(script)
                 .arg("start")
                 .envs(usb_args(usb))
                 .envs(media.iter().map(|(k, v)| (k, v))))?;
+            let fresh = Hid::enumerate()?;
+            *self.hid.lock().unwrap() = fresh;
         }
         Ok(())
     }
