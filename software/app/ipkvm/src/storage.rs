@@ -138,12 +138,12 @@ impl Storage {
     pub fn with_gadget_args(
         &self,
         enable_storage: bool,
-        apply: impl FnOnce(Vec<(OsString, OsString)>) -> io::Result<()>,
-    ) -> io::Result<()> {
+        apply: impl FnOnce(Vec<(OsString, OsString)>) -> Result<(), ApiError>,
+    ) -> Result<(), ApiError> {
         let _gate = self.lun_gate.lock().unwrap();
         let state = self.state.lock().unwrap();
         if !enable_storage && (state.exported || state.mount.is_some()) {
-            return Err(io::Error::from_raw_os_error(libc::EBUSY));
+            return Err(ApiError::new(409, "in_use"));
         }
         let args = self.lun.args(
             state.mount.as_ref(),
@@ -168,7 +168,9 @@ impl Storage {
         let _gate = self.lun_gate.lock().unwrap();
         let mut state = self.state.lock().unwrap();
         if let Some(m) = &state.mount {
-            self.lun.bind(None, &m.mode, true)?;
+            self.lun
+                .bind(None, &m.mode, true)
+                .map_err(ApiError::device)?;
         }
         state.mount = None;
         Ok(())
@@ -662,7 +664,7 @@ async fn set_share(State(app): State<App>, h: HeaderMap, JsonBody(b): JsonBody) 
             {
                 return Err(ApiError::new(409, "share_busy"));
             }
-            s.lun.share(export)?;
+            s.lun.share(export).map_err(ApiError::device)?;
             state.exported = export;
         }
         Ok(ok(json!({"exported_to_host":export})))
@@ -711,7 +713,9 @@ async fn mount(State(app): State<App>, h: HeaderMap, JsonBody(b): JsonBody) -> R
             return Err(ApiError::new(422, "bad_image"));
         }
         let readonly = mode == "cdrom" || b["readonly"].as_bool().unwrap_or(true);
-        s.lun.bind(Some(&fd_path(&f)), mode, readonly)?;
+        s.lun
+            .bind(Some(&fd_path(&f)), mode, readonly)
+            .map_err(ApiError::device)?;
         state.mount = Some(Mount {
             path: t.path,
             mode: mode.into(),
@@ -733,4 +737,27 @@ async fn eject(State(app): State<App>, h: HeaderMap) -> Reply {
         Ok(StatusCode::NO_CONTENT.into_response())
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn absent_lun_surfaces_device_error_and_preserves_mounted_state() {
+        let d = tempfile::tempdir().unwrap();
+        let mut s = Storage::new(d.path(), true).unwrap();
+        s.lun = Box::new(lun::BoardLun {
+            function: d.path().join("absent"),
+            share_root: d.path().join("share"),
+            share_image: d.path().join("share.img"),
+        });
+        s.state.lock().unwrap().mount = Some(Mount {
+            path: "images/image.iso".into(),
+            mode: "cdrom".into(),
+            readonly: true,
+        });
+        let e = s.eject().unwrap_err();
+        assert_eq!((e.status, e.code.as_str()), (503, "device_unavailable"));
+        assert_eq!(s.status()["mounted"], "image.iso");
+    }
 }
