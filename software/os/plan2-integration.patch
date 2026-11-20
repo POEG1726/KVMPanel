@@ -70,7 +70,7 @@ diff --git a/docs/linux-6.18.md b/docs/linux-6.18.md
 +
 +## LT8619C 和并行 CSI
 +
-+U26 的 D8–D15 接到 CSI_D0–7，控制 I²C 使用 PE14/PE15、七位地址 0x32。LT8619C 子设备从 Rockchip GPL 驱动移植接收器寄存器操作，使用标准 V4L2 DV timings 和 EDID 接口，默认 EDID 声明 VGA。寄存器 0x6089 选择内部参考，REXT 可按 LT8619C R1.7 §6.2 接 1.8 V。U26.24 的 LT_RESET_N 低有效，当前网表只有 R302（10 kΩ）下拉到地。请在制板前确认释放路径，否则 I²C 探测和视频采集均可能失败。[Rockchip 源码](https://github.com/rockchip-linux/kernel/blob/develop-6.1/drivers/media/i2c/lt8619c.c) · [Lontium R1.7 数据手册](https://datasheet4u.com/pdf/1556811/LT8619C.pdf)
++U26 的 D8–D15 接到 CSI_D0–7，控制 I²C 使用 PE14/PE15、七位地址 0x32。LT8619C 子设备从 Rockchip GPL 驱动移植接收器寄存器操作，使用标准 V4L2 DV timings 和 EDID 接口，默认 EDID 1.3 首选 1080p30，另有 720p60 DTD 和 VGA established timing，0xFD 给出显示范围。寄存器 0x6089 选择内部参考，REXT 可按 LT8619C R1.7 §6.2 接 1.8 V。U26.24 的 LT_RESET_N 低有效，当前网表只有 R302（10 kΩ）下拉到地。请在制板前确认释放路径，否则 I²C 探测和视频采集均可能失败。[Rockchip 源码](https://github.com/rockchip-linux/kernel/blob/develop-6.1/drivers/media/i2c/lt8619c.c) · [Lontium R1.7 数据手册](https://datasheet4u.com/pdf/1556811/LT8619C.pdf)
 +
 +独立的 sun20i-csi 采用社区 D1 CSIC 驱动，经 Tina VIN 和手册核对 TOP、parser、DMA、IRQ；DMA0/1 的 GIC SPI 为 95/96，parser0 为 100。板级链路用单通道 BT.656 嵌入同步、8 位 SDR 和 UYVY8_2X8，捕获队列使用 VB2 DMA 连续缓冲。开始上板验证时可从 CMA 32 MiB、4 个 VGA 缓冲起步。[CSIC 原补丁系列](https://lore.kernel.org/linux-media/20260930154835.402684-1-tien.nguyenminh@embeddedlinux.blog/) · [寄存器手册 §6.1](https://dl.linux-sunxi.org/T113-S3/T113-S3_User_manual_v1.1_20210830.pdf)
 +
