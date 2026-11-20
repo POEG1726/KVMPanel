@@ -1,0 +1,17 @@
+config BR2_PACKAGE_KVMD
+	bool "kvmd"
+	depends on BR2_cortex_a7 && BR2_ARM_EABIHF && BR2_TOOLCHAIN_USES_MUSL
+	depends on !BR2_SHARED_LIBS # static libturbojpeg
+	depends on BR2_TOOLCHAIN_HEADERS_AT_LEAST_4_8 && BR2_TOOLCHAIN_GCC_AT_LEAST_4_8
+	depends on BR2_TOOLCHAIN_HAS_THREADS && BR2_INSTALL_LIBSTDCPP
+	select BR2_PACKAGE_DROPBEAR
+	select BR2_PACKAGE_MDNSD
+	select BR2_PACKAGE_LIBV4L
+	select BR2_PACKAGE_LIBV4L_UTILS
+	select BR2_PACKAGE_JPEG
+	select BR2_PACKAGE_JPEG_TURBO
+	select BR2_PACKAGE_LIBGPIOD
+	select BR2_PACKAGE_LIBGPIOD_TOOLS
+	help
+	  KVMPanel HTTP, WebSocket and panel-socket service. The host needs
+	  Rust stable and the armv7-unknown-linux-musleabihf standard library.
