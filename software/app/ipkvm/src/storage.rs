@@ -695,6 +695,9 @@ async fn mount(State(app): State<App>, h: HeaderMap, JsonBody(b): JsonBody) -> R
         let s = &app.storage;
         let _gate = s.lun_gate.lock().unwrap();
         let mut state = s.state.lock().unwrap();
+        if !app.storage_enabled() {
+            return Err(ApiError::new(409, "in_use"));
+        }
         if state.mount.is_some() {
             return Err(ApiError::new(409, "already_mounted"));
         }

@@ -572,3 +572,36 @@ async fn jobs_keep_running_work_and_only_the_twenty_latest_completions() {
         .collect::<Vec<_>>();
     assert_eq!(ids, keep);
 }
+
+#[tokio::test]
+async fn mounting_uses_the_applied_storage_switch() {
+    let a = Api::new().await;
+    let iso = json!({"root":"sd","mode":"cdrom","path":"/images/ubuntu-24.04.iso"});
+    assert_eq!(
+        a.s.call(
+            "PATCH",
+            "/api/config",
+            &a.cookie,
+            Some(json!({"usb":{"storage":false}}))
+        )
+        .await
+        .status(),
+        200
+    );
+    check(
+        a.post("/api/media/mount", iso.clone()).await,
+        "mountMedia",
+        200,
+    )
+    .await;
+    check(
+        a.post("/api/media/eject", Value::Null).await,
+        "ejectMedia",
+        204,
+    )
+    .await;
+    assert_eq!(a.post("/api/usb/apply", Value::Null).await.status(), 202);
+    let rejected = check(a.post("/api/media/mount", iso).await, "mountMedia", 409).await;
+    assert_eq!(rejected["error"], "in_use");
+    assert_eq!(a.s.app.storage.status()["mounted"], Value::Null);
+}
