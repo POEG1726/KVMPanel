@@ -42,6 +42,10 @@ impl ApiError {
             detail: None,
         }
     }
+    pub fn device(error: io::Error) -> Self {
+        eprintln!("kvmd device: {error}");
+        Self::new(503, "device_unavailable")
+    }
     pub fn with_detail(mut self, v: Value) -> Self {
         self.detail = Some(v);
         self

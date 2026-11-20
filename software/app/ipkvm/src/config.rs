@@ -158,7 +158,7 @@ async fn applied(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>, ApiE
     a.require(&h, "")?;
     let cfg = a.cfg.lock().unwrap();
     let mut actual = cfg.applied.clone();
-    if !a.hw.usb_bound()? {
+    if !a.hw.usb_bound().map_err(ApiError::device)? {
         for key in [
             "keyboard",
             "mouse_rel",
