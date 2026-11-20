@@ -246,11 +246,11 @@ describe('Panel page', () => {
     fireEvent.change(screen.getByLabelText(t('settings.panel.thresholdNew')), { target: { value: '80' } });
     fireEvent.click(screen.getByRole('button', { name: t('settings.panel.thresholdAdd') }));
     const remove = await screen.findByRole('button', { name: t('settings.panel.thresholdDelete', { key: 'gpu.temp' }) });
-    expect(patches()).toContainEqual({ panel: { thresholds: { 'gpu.temp': 80 } } });
+    await waitFor(() => expect(patches()).toContainEqual({ panel: { thresholds: { 'gpu.temp': 80 } } }));
 
     fireEvent.click(remove);
     await waitFor(() => expect(screen.queryByRole('button', { name: t('settings.panel.thresholdDelete', { key: 'gpu.temp' }) })).not.toBeInTheDocument());
-    expect(patches()).toContainEqual({ panel: { thresholds: { 'gpu.temp': null } } });
+    await waitFor(() => expect(patches()).toContainEqual({ panel: { thresholds: { 'gpu.temp': null } } }));
     // The prefix pattern is a normal row too.
     expect(screen.getByRole('button', { name: t('settings.panel.thresholdDelete', { key: 'mem.dimm.*' }) })).toBeInTheDocument();
   });
@@ -353,9 +353,75 @@ describe('Update job progress', () => {
 });
 
 describe('MCP page', () => {
+  it('waits for the current key state and allows a single confirmed rotation at a time', async () => {
+    const old = await (await jar.fetch(new Request(mock.url + '/api/mcp/regenerate', { method: 'POST' }))).json();
+    let read!: () => void;
+    let rotate!: () => void;
+    const readGate = new Promise<void>((resolve) => { read = resolve; });
+    const rotateGate = new Promise<void>((resolve) => { rotate = resolve; });
+    let posts = 0;
+    configureApi({ fetch: async (input, init) => {
+      const req = new Request(input, init);
+      const path = new URL(req.url).pathname;
+      if (path === '/api/mcp') await readGate;
+      if (path === '/api/mcp/regenerate') { posts++; await rotateGate; }
+      return jar.fetch(req);
+    } });
+    const qc = client();
+    mount('mcp', qc);
+    const button = await screen.findByRole('button', { name: t('settings.mcp.regenerate') });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(posts).toBe(0);
+    read();
+    await screen.findByText(t('settings.mcp.keyHint', { hint: old.key.slice(-4) }));
+    fireEvent.click(button);
+    const dlg = await screen.findByRole('dialog', { name: t('settings.mcp.regenerateTitle') });
+    expect(posts).toBe(0);
+    fireEvent.click(within(dlg).getByRole('button', { name: t('settings.mcp.regenerate') }));
+    await waitFor(() => expect(posts).toBe(1));
+    expect(button).toBeDisabled();
+    cleanup();
+    mount('mcp', qc);
+    expect(await screen.findByRole('button', { name: t('settings.mcp.regenerate') })).toBeDisabled();
+    rotate();
+    await waitFor(() => expect(screen.getByRole('button', { name: t('settings.mcp.regenerate') })).toBeEnabled());
+  });
+
+  it('disables key rotation and displays the server error when the key state could not be read', async () => {
+    configureApi({ fetch: async (input, init) => {
+      const req = new Request(input, init);
+      return new URL(req.url).pathname === '/api/mcp'
+        ? Response.json({ error: 'forbidden' }, { status: 403 }) : jar.fetch(req);
+    } });
+    mount('mcp');
+    expect(await screen.findByRole('alert')).toHaveTextContent(t('error.forbidden'));
+    expect(screen.getByRole('button', { name: t('settings.mcp.regenerate') })).toBeDisabled();
+  });
+
+  it('selects and copies the revealed key on HTTP without the Clipboard API', async () => {
+    mount('mcp');
+    const button = await screen.findByRole('button', { name: t('settings.mcp.regenerate') });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    const key = await screen.findByTestId('mcp-key');
+    let copied = '';
+    const copy = vi.fn(() => { copied = window.getSelection()?.toString() ?? ''; return true; });
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: copy });
+    try {
+      fireEvent.click(screen.getByRole('button', { name: t('settings.mcp.copy') }));
+      await waitFor(() => expect(copy).toHaveBeenCalledWith('copy'));
+      expect(copied).toBe(key.textContent);
+    } finally {
+      Reflect.deleteProperty(document, 'execCommand');
+    }
+  });
+
   it('shows the full key once after regenerating; a fresh mount only has the hint', async () => {
     mount('mcp');
-    fireEvent.click(await screen.findByRole('button', { name: t('settings.mcp.regenerate') }));
+    const button = await screen.findByRole('button', { name: t('settings.mcp.regenerate') });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
     const key = (await screen.findByTestId('mcp-key')).textContent!;
     expect(key.length).toBeGreaterThanOrEqual(32);
     expect(screen.getByRole('button', { name: t('settings.mcp.copy') })).toBeInTheDocument();

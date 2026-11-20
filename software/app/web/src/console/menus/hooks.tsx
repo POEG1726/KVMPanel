@@ -2,7 +2,8 @@ import { useCallback, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { api, ApiError, errorKey, patchConfig, unwrap, type Config, type DeepPartial } from '../../api/client';
+import { api, ApiError, errorKey, unwrap, type Config, type DeepPartial } from '../../api/client';
+import { writeConfig } from '../../api/configWrites';
 import { CONFIG_KEY } from '../../session/useSession';
 import s from './menus.module.css';
 
@@ -39,7 +40,7 @@ export function usePatchConfig() {
   const qc = useQueryClient();
   const { error, run } = useRun();
   const patch = useCallback(
-    (body: DeepPartial<Config>) => run(async () => qc.setQueryData(CONFIG_KEY, await patchConfig(body))),
+    (body: DeepPartial<Config>) => run(() => writeConfig(qc, body)),
     [qc, run],
   );
   return { patch, error };

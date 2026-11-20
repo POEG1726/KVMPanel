@@ -442,7 +442,7 @@
       "showOnce": "Copy this key now. It is shown only once.",
       "copy": "Copy",
       "copied": "Key copied.",
-      "copyFailed": "Could not copy the key.",
+      "copyFailed": "Use your browser’s Copy command on the selected key.",
       "hide": "Hide",
       "regenerate": "Generate new key",
       "regenerateTitle": "Generate a new key?",
