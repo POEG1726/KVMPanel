@@ -1,3 +1,4 @@
+mod trial;
 use super::{bad_body, missing, VERSION};
 use crate::{validate, ApiError, App, JsonBody};
 use axum::{
@@ -14,13 +15,29 @@ use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::{self, Seek},
-    os::unix::fs::{symlink, PermissionsExt},
+    os::unix::fs::PermissionsExt,
     path::{Component, Path, PathBuf},
     time::Duration,
 };
 use tempfile::NamedTempFile;
 use tokio::io::AsyncWriteExt;
+pub use trial::verify_update;
 use uuid::Uuid;
+
+pub(super) fn recover_jobs(
+    data: &Path,
+    jobs: &mut std::collections::BTreeMap<String, Value>,
+) -> io::Result<bool> {
+    let mut changed = trial::settle_jobs(data, jobs)?;
+    let pending = trial::pending_job(data)?;
+    for (id, job) in jobs.iter_mut() {
+        if job["state"] == "running" && pending.as_ref() != Some(id) {
+            job["state"] = json!("failed");
+            changed = true;
+        }
+    }
+    Ok(changed)
+}
 
 pub(super) fn routes() -> Router<App> {
     Router::new()
@@ -186,7 +203,8 @@ async fn job(
     Param(id): Param<String>,
 ) -> Result<Json<Value>, ApiError> {
     app.require(&h, "updates")?;
-    let state = app.system.settings.lock().unwrap();
+    let mut state = app.system.settings.lock().unwrap();
+    trial::settle_jobs(&app.data_dir, &mut state.jobs)?;
     Ok(Json(
         json!({"job":state.jobs.get(&id).ok_or_else(missing)?}),
     ))
@@ -196,8 +214,9 @@ fn start(app: App, file: Option<NamedTempFile>) -> Result<(StatusCode, Json<Valu
     let id = Uuid::new_v4().to_string();
     let job = json!({"id":id,"state":"running","progress":0});
     app.system.change(|s| {
-        if !app.sim && s.jobs.values().any(|j| j["state"] == "running") {
-            return Err(ApiError::new(409, "in_use"));
+        trial::settle_jobs(&app.data_dir, &mut s.jobs)?;
+        if trial::is_pending(&app.data_dir) || s.jobs.values().any(|j| j["state"] == "running") {
+            return Err(ApiError::new(409, "busy"));
         }
         s.jobs.insert(id.clone(), job.clone());
         Ok(())
@@ -206,13 +225,18 @@ fn start(app: App, file: Option<NamedTempFile>) -> Result<(StatusCode, Json<Valu
         let result = if app.sim {
             Ok(())
         } else {
-            install(&app, file).await
+            install(&app, file, &id).await
         };
         if let Err(e) = &result {
             eprintln!("app update {id}: {e}");
         }
         let succeeded = result.is_ok();
-        let saved = app.system.change(|s| {
+        if succeeded && !app.sim {
+            // The immutable init helper completes the job after checking the running release.
+            let _ = super::device_action(&app, "restart_kvm");
+            return;
+        }
+        let _ = app.system.change(|s| {
             let state = s.jobs.get_mut(&id).ok_or_else(missing)?;
             state["state"] = json!(if succeeded { "done" } else { "failed" });
             if succeeded {
@@ -220,13 +244,10 @@ fn start(app: App, file: Option<NamedTempFile>) -> Result<(StatusCode, Json<Valu
             }
             Ok(())
         });
-        if succeeded && !app.sim && saved.is_ok() {
-            let _ = super::device_action(&app, "restart_kvm");
-        }
     });
     Ok((StatusCode::ACCEPTED, Json(json!({"job":job}))))
 }
-async fn install(app: &App, file: Option<NamedTempFile>) -> io::Result<()> {
+async fn install(app: &App, file: Option<NamedTempFile>, id: &str) -> io::Result<()> {
     let file = match file {
         Some(f) => f,
         None => {
@@ -244,15 +265,16 @@ async fn install(app: &App, file: Option<NamedTempFile>) -> io::Result<()> {
         }
     };
     let apps = app.data_dir.join("apps");
-    tokio::task::spawn_blocking(move || activate(&apps, file))
+    let job = id.to_owned();
+    tokio::task::spawn_blocking(move || activate(&apps, file, &job))
         .await
         .map_err(io::Error::other)?
 }
 
-fn activate(apps: &Path, mut file: NamedTempFile) -> io::Result<()> {
+fn activate(apps: &Path, mut file: NamedTempFile, id: &str) -> io::Result<()> {
     fs::create_dir_all(apps)?;
     let stage = tempfile::Builder::new()
-        .prefix("release-")
+        .prefix(".incoming-")
         .tempdir_in(apps)?;
     file.rewind()?;
     let mut archive = tar::Archive::new(file.as_file_mut());
@@ -304,15 +326,7 @@ fn activate(apps: &Path, mut file: NamedTempFile) -> io::Result<()> {
             return Err(io::Error::other(format!("missing {required}")));
         }
     }
-    let next = apps.join(format!(".next-{}", Uuid::new_v4()));
-    symlink(stage.path().file_name().unwrap(), &next)?;
-    if let Err(e) = fs::rename(&next, apps.join("current")) {
-        let _ = fs::remove_file(next);
-        return Err(e);
-    }
-    let _ = stage.keep();
-    fs::File::open(apps)?.sync_all()?;
-    Ok(())
+    trial::activate(apps, stage, id)
 }
 
 #[cfg(test)]
@@ -336,7 +350,12 @@ mod tests {
     #[test]
     fn activates_complete_application_only() {
         let dir = tempfile::tempdir().unwrap();
-        activate(dir.path(), bundle(&["kvmd", "panel", "web/index.html"])).unwrap();
+        activate(
+            dir.path(),
+            bundle(&["kvmd", "panel", "web/index.html"]),
+            "1",
+        )
+        .unwrap();
         let link = fs::read_link(dir.path().join("current")).unwrap();
         assert_eq!(fs::read(dir.path().join("current/kvmd")).unwrap(), b"abc");
         assert_eq!(
@@ -347,8 +366,8 @@ mod tests {
                 & 0o777,
             0o755
         );
-        assert!(activate(dir.path(), bundle(&["kvmd", "etc/passwd"])).is_err());
-        assert!(activate(dir.path(), bundle(&["kvmd"])).is_err());
+        assert!(activate(dir.path(), bundle(&["kvmd", "etc/passwd"]), "2").is_err());
+        assert!(activate(dir.path(), bundle(&["kvmd"]), "2").is_err());
         assert_eq!(fs::read_link(dir.path().join("current")).unwrap(), link);
     }
 }

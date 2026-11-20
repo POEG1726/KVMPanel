@@ -25,6 +25,7 @@ use std::{
     sync::Mutex,
     time::Duration,
 };
+pub use update::verify_update;
 use uuid::Uuid;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -68,14 +69,7 @@ impl System {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Settings::default(),
             Err(e) => return Err(e),
         };
-        let mut changed = false;
-        for job in settings.jobs.values_mut() {
-            if job["state"] == "running" {
-                job["state"] = json!("failed");
-                changed = true;
-            }
-        }
-        if changed {
+        if update::recover_jobs(data_dir, &mut settings.jobs)? {
             atomic_write(&path, &serde_json::to_vec(&settings)?)?;
         }
         Ok(Self {

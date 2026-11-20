@@ -5,6 +5,8 @@ use std::{io, path::PathBuf};
 struct Args {
     #[arg(long)]
     sim: bool,
+    #[arg(long, hide = true)]
+    verify_update: bool,
     #[arg(long)]
     listen: Option<std::net::SocketAddr>,
     #[arg(long)]
@@ -24,6 +26,13 @@ async fn main() -> io::Result<()> {
             "/data/kvmd".into()
         }
     });
+    if args.verify_update {
+        return kvmd::system::verify_update(
+            &dir,
+            args.panel.as_deref().unwrap_or("/run/kvmd/panel.sock"),
+        )
+        .await;
+    }
     std::fs::create_dir_all(&dir)?;
     let directory_lock = std::fs::File::open(&dir)?;
     directory_lock
