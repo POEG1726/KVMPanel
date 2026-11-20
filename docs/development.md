@@ -91,7 +91,7 @@ bout="$work/build/buildroot-kvmpanel"
 
 ## 在 QEMU 验证启动
 
-QEMU 使用 `virt` 和两个 Cortex-A7，加载同一份 Buildroot initramfs。测试脚本通过串口登录，检查两核、通过 DHCP 获取虚拟网段地址、探测网关、读取只读 USB 磁盘，最后关机。虚拟网络启用了 `restrict=on`。
+QEMU 使用 `virt` 和两个 Cortex-A7，加载同一份 Buildroot initramfs。测试脚本通过串口登录，检查两核、通过 DHCP 获取虚拟网段地址、探测网关、读取只读 USB 磁盘，启动模拟模式的 kvmd，并在来宾用 curl 请求 /api/health，最后关机。虚拟网络启用了 `restrict=on`。
 
 ```sh
 sudo apt-get install --no-install-recommends qemu-system-arm
@@ -111,6 +111,44 @@ python3 "$project/software/os/linux/qemu-smoke.py" \
 ```
 
 QEMU 的串口、网卡和 USB 控制器使用 PL011、VirtIO 和 xHCI。T113-i 的 DDR 训练、FEL、RTL8211F、MUSB/EHCI/OHCI 和 SPI NAND 需要在实板验证。
+
+## 构建 kvmd 与验证镜像
+
+`kvmpanel_defconfig` 启用本地包 `package/kvmd` 并安装 curl。WSL 用户目录需安装 Rust stable 和目标标准库。包使用应用的 `Cargo.lock`，从对应的 `software/app/api/` 读取契约。C 依赖由 Buildroot 的 Bootlin 工具链编译，最终静态链接目标 sysroot 中的 musl 和 libjpeg-turbo。
+
+```bash
+project=/mnt/d/MyProj/KVMPanel
+work="$HOME/work/KVMPanel"
+br="$work/upstream/buildroot"
+bout="$work/build/buildroot-plan2"
+qout="$work/build/linux-kvmpanel-qemu"
+"$HOME/.cargo/bin/rustup" target add --toolchain stable armv7-unknown-linux-musleabihf
+(
+    unset ARCH CROSS_COMPILE LD_LIBRARY_PATH
+    export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    make -C "$br" O="$bout" BR2_EXTERNAL="$project/software/os/buildroot" kvmpanel_defconfig
+    make -C "$bout" -j12
+)
+mkdir -p "$work/logs"
+python3 "$project/software/os/linux/qemu-smoke.py" \
+    "$qout/arch/arm/boot/zImage" "$bout/images/rootfs.cpio.gz" \
+    --log "$work/logs/kvmd-qemu.log"
+
+# 使用下面“组合验证”里的 dummy_hcd/ACM 内核复测同一镜像。
+sh "$project/software/os/linux/qemu-gadget-smoke.sh" \
+    "$work/build/linux-plan2-qemu/arch/arm/boot/zImage" "$bout/images/rootfs.cpio.gz" \
+    "$work/logs/kvmd-qemu-gadget.log"
+```
+
+更换了应用源码或契约后，在上述子 shell 内执行 `make -C "$bout" kvmd-reconfigure`，然后 `make -C "$bout"` 重新生成镜像。包默认使用 `~/.cargo/bin/cargo` 和同目录下的 rustc，其他安装位置可通过 make 的 `KVMD_CARGO`、`KVMD_RUSTC` 变量指定。这一版 Rust 目标标准库使用自带的 libunwind；包仅取其静态 unwind 库，其余启动文件和 C 库来自 Bootlin。
+
+板上由 `/etc/init.d/S95kvmd` 启动服务。将持久分区挂到 `/data` 后即可启动；若开机时挂载还未完成，完成后再执行 `/etc/init.d/S95kvmd start`。升级后的程序从 `/data/kvmd/apps/current/kvmd` 加载，随包网页位于同目录的 `web/`。基础镜像中的程序位于 `/usr/sbin/kvmd`，网页目录为 `/usr/share/kvmd/web`。板级路径和 GPIO 参数可在 `/etc/default/kvmd` 设置。
+
+Dropbear 和 mdnsd 的启动脚本位于 `/usr/libexec/kvmd/`，由 kvmd 读取设置后调用；SSH 主机私钥保存在 `/data/kvmd/ssh/`。
+
+QEMU 冒烟脚本在临时目录启动 `kvmd --sim`，从来宾访问 `http://127.0.0.1:18800/api/health` 并记录实际 JSON。共享盘需要内核 loop 驱动；Tailscale 需要 TUN、IPv4/IPv6 策略路由和 nftables。基础内核片段已启用这些选项，脚本会在来宾挂载一个临时 loop 镜像、验证本地只读切换和恢复写入，检查 TUN 设备和两套路由规则。
+
+2026-11-20 的镜像在双核 Cortex-A7 来宾返回 `{"ok":true,"version":"0.1.0"}`。包内 kvmd 是 ARMv7 EABI5 静态 ELF，使用 VFP 寄存器传参。相同镜像在 dummy_hcd 下通过三 LUN 读回、EP0 遥测、相对或绝对鼠标共享遥测、端点超预算拒绝和 ACM 枚举测试。
 
 ## 构建诊断 initramfs
 

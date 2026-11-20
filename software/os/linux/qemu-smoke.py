@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Boot the KVMPanel initramfs and check login, networking, and USB storage."""
+"""Boot the KVMPanel initramfs and check login, networking, USB storage and kvmd."""
 
 import argparse
 import os
@@ -32,10 +32,10 @@ def send(guest, command):
     guest.stdin.flush()
 
 
-def check(guest, log, label, command):
+def check(guest, log, label, command, timeout=15):
     # Split the marker in the printf arguments so the serial echo cannot match it.
     send(guest, command + "; printf '\\n%s%s:%d\\n' KVM_ CHECK \"$?\"")
-    status = read_until(guest, log, rb"\r?\nKVM_CHECK:(\d+)\r?\n", 15)
+    status = read_until(guest, log, rb"\r?\nKVM_CHECK:(\d+)\r?\n", timeout)
     if status[1] != b"0":
         raise RuntimeError(f"{label} failed in the guest (exit {status[1].decode()})")
     print(f"PASS {label}")
@@ -72,6 +72,31 @@ def boot(kernel, initramfs, log, diagnostics):
                 wait_for_disk = "for n in 1 2 3 4 5; do test -b /dev/sda && break; sleep 1; done"
                 read_marker = f"test \"$(head -c {len(marker)} /dev/sda)\" = '{marker.decode().strip()}'"
                 check(guest, log, "USB mass-storage read", f"{wait_for_disk}; {read_marker}")
+                check(guest, log, "loop-backed share with read-only export and write recovery",
+                      "dd if=/dev/zero of=/tmp/share-test.img bs=1M count=4 2>/dev/null "
+                      "&& mke2fs -F /tmp/share-test.img >/dev/null 2>&1 "
+                      "&& loop=$(losetup -f) && losetup \"$loop\" /tmp/share-test.img "
+                      "&& test \"$(cat /sys/block/${loop##*/}/loop/backing_file)\" = /tmp/share-test.img "
+                      "&& mkdir /tmp/share-test && mount -t ext4 \"$loop\" /tmp/share-test "
+                      "&& mount -o remount,ro /tmp/share-test && ! touch /tmp/share-test/test "
+                      "&& mount -o remount,rw /tmp/share-test && touch /tmp/share-test/test "
+                      "&& umount /tmp/share-test && losetup -d \"$loop\"")
+                check(guest, log, "TUN and policy routing",
+                      "test -c /dev/net/tun && ip rule list && ip -6 rule list")
+                check(guest, log, "SSH and mDNS wait for kvmd configuration",
+                      "test -x /usr/sbin/dropbear && test -x /usr/sbin/mdnsd "
+                      "&& test -x /usr/libexec/kvmd/dropbear && test -x /usr/libexec/kvmd/mdnsd "
+                      "&& test ! -e /etc/init.d/S50dropbear && test ! -e /etc/init.d/S50mdnsd "
+                      "&& test -z \"$(pidof dropbear mdnsd)\"")
+                check(guest, log, "kvmd --sim health from guest curl",
+                      "kvmd --sim --listen 127.0.0.1:18800 --data-dir /tmp/kvmd-smoke "
+                      ">/tmp/kvmd-smoke.log 2>&1 & kvmd_pid=$!; "
+                      "for n in $(seq 1 30); do "
+                      "  health=$(curl -fsS --max-time 1 http://127.0.0.1:18800/api/health 2>/dev/null) && break; "
+                      "  kill -0 $kvmd_pid 2>/dev/null || break; sleep 1; "
+                      "done; cat /tmp/kvmd-smoke.log; echo \"$health\"; "
+                      "kill $kvmd_pid && echo \"$health\" | grep -q '\"ok\":true' "
+                      "&& echo \"$health\" | grep -q '\"version\":\"'", timeout=40)
                 if diagnostics:
                     check(guest, log, "diagnostic commands",
                           "ethtool -i eth0 && lsusb && mtdinfo --version && lsmtd --version")

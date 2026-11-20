@@ -1,0 +1,55 @@
+#!/bin/sh
+
+pidfile=/run/kvmd/kvmd.pid
+data=/data/kvmd
+
+running() {
+	test -s "$pidfile" || return 1
+	pid=$(cat "$pidfile")
+	case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+	[ "$(cat "/proc/$pid/comm" 2>/dev/null)" = kvmd ]
+}
+
+start() {
+	running && return 0
+	if [ -r /etc/default/kvmd ]; then
+		set -a
+		. /etc/default/kvmd
+		set +a
+	fi
+	# The initramfs can boot before the board's permanent data partition
+	# has been mounted. Never initialize accounts on that temporary root.
+	if ! awk '$2 == "/data" { found=1 } END { exit !found }' /proc/self/mounts; then
+		echo "kvmd: waiting for /data (start again after mounting it)"
+		return 0
+	fi
+	mkdir -p /run/kvmd "$data/ssh" || return 1
+	chmod 0700 "$data/ssh" || return 1
+	binary=/usr/sbin/kvmd
+	web=/usr/share/kvmd/web
+	if [ -x "$data/apps/current/kvmd" ]; then
+		binary="$data/apps/current/kvmd"
+	fi
+	if [ -d "$data/apps/current/web" ]; then
+		web="$data/apps/current/web"
+	fi
+	start-stop-daemon -S -b -m -p "$pidfile" -x "$binary" -- --data-dir "$data" --web-dir "$web"
+}
+
+stop() {
+	running || { rm -f "$pidfile"; return 0; }
+	start-stop-daemon -K -n kvmd -p "$pidfile" || return 1
+	for delay in 1 2 3 4 5; do
+		kill -0 "$pid" 2>/dev/null || break
+		sleep 1
+	done
+	kill -0 "$pid" 2>/dev/null && return 1
+	rm -f "$pidfile"
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart) stop && start ;;
+	*) echo "Usage: $0 {start|stop|restart}" >&2; exit 1 ;;
+esac

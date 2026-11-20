@@ -41,7 +41,11 @@ export function registerStream(app: FastifyInstance, state: State) {
       try {
         const m = JSON.parse(data.toString());
         if (m?.t === 'pause') paused = true;
-        if (m?.t === 'resume') paused = false;
+        if (m?.t === 'resume') {
+          paused = false;
+          // Contract: resume always pushes the current frame at once, regardless of frame_diff.
+          if (state.hdmi.signal && socket.readyState === 1) socket.send(mockFrame(frame), { binary: true });
+        }
       } catch { /* ignore */ }
     });
   });

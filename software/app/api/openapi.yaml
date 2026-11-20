@@ -344,7 +344,7 @@ paths:
   /api/video/edid/reset:
     post:
       operationId: resetEdid
-      summary: Restore the built-in 1080p60 EDID (device permission)
+      summary: Restore the board's built-in EDID (device permission). preset '1080p' means this board default — preferred 1920×1080@30 (the capture bus cannot carry 1080p60), plus 1280×720@60 and 640×480@60.
       responses:
         '200':
           description: Restored
@@ -948,6 +948,7 @@ paths:
                   running: { type: boolean }
                   ip: { type: string }
                   login_url: { type: string, description: Present while waiting for the user to authorise the device }
+                  error: { type: string, description: Reason the last asynchronous action failed (cleared by the next action) }
         '401': *unauthenticated
         '403': *forbidden
   /api/tailscale/{action}:
@@ -1000,6 +1001,7 @@ paths:
   /api/update/apply:
     post:
       operationId: applyUpdate
+      summary: Install the latest package from the update server (channel JSON manifest → tar ≤ 256 MiB → switch apps/current). 409 busy while another install runs.
       responses:
         '202':
           description: Update started; kvmd restarts when done
@@ -1029,6 +1031,16 @@ paths:
         '400': *badRequest
         '401': *unauthenticated
         '403': *forbidden
+        '409':
+          description: Another install is running (error=busy)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413':
+          description: Package larger than 256 MiB (error=too_large)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '422':
           description: error=checksum_mismatch
           content:
@@ -1135,6 +1147,11 @@ paths:
         '403': *forbidden
         '413':
           description: error=too_large
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '415':
+          description: Not PNG or SVG (error=unsupported_type)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -1419,7 +1436,7 @@ components:
       additionalProperties: false
       properties:
         hex: { type: string, pattern: '^00ffffffffffff00([0-9a-f]{240}|[0-9a-f]{496})$', description: 128 or 256 bytes, lowercase hex }
-        preset: { type: string, enum: ['1080p', custom] }
+        preset: { type: string, enum: ['1080p', custom], description: "'1080p' = board default EDID (preferred 1080p30)" }
     PowerState:
       type: object
       required: [on, hdd]

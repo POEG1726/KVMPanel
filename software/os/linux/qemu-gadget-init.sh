@@ -61,7 +61,7 @@ check_interfaces() {
 			case "$(cat "$ep")" in in) inputs=$((inputs+1)) ;; out) outputs=$((outputs+1)) ;; esac
 		done
 	done
-	[ "$hids:$stores:$inputs:$outputs" = 3:1:4:1 ]
+	[ "$hids:$stores:$inputs:$outputs" = "${expected_interfaces:-3:1:4:1}" ]
 }
 wait_for check_interfaces
 echo "PASS 3 host HID interfaces and 1 host storage interface, 4 IN / 1 OUT"
@@ -126,14 +126,16 @@ check_absolute_input
 echo "PASS absolute mouse Input report ID 0x02 with and without telemetry"
 stop_gadget
 
+expected_interfaces=2:1:3:1
 ABS_MOUSE=0 kvmpanel-gadget start
 wait_for configured
 wait_for find_device
 wait_for check_interfaces
 [ -L "$g/configs/c.1/hid.relative" ]
-[ -L "$g/configs/c.1/hid.telemetry" ]
-check_telemetry telemetry
-echo "PASS ABS_MOUSE=0: separate boot mouse and EP0 telemetry, 4 IN / 1 OUT"
+[ ! -e "$g/configs/c.1/hid.telemetry" ]
+check_telemetry relative
+unset expected_interfaces
+echo "PASS relative mouse and EP0 telemetry share one IN, 3 IN / 1 OUT"
 stop_gadget
 
 KEYBOARD=0 REL_MOUSE=0 ABS_MOUSE=0 STORAGE=0 TELEMETRY=0 ACM=1 kvmpanel-gadget start
