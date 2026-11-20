@@ -1,0 +1,5 @@
+{
+  "app": { "title": "KVMPanel" },
+  "login": { "title": "Sign in" },
+  "dev": { "enOnly": "English only" }
+}
