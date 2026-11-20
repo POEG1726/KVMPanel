@@ -1,0 +1,193 @@
+#!/bin/sh
+# Assemble one configfs configuration for USB0; call as root on the board.
+set -eu
+
+fail() { echo "kvmpanel-gadget: $*" >&2; exit 1; }
+
+usage() {
+	cat <<'HELP'
+kvmpanel-gadget [start|stop|budget]
+Set environment variables to select the functions (0 or 1).
+  KEYBOARD=1 REL_MOUSE=1 ABS_MOUSE=1 MERGE_MICE=0 TELEMETRY=1 STORAGE=1
+  NETWORK=off|ncm|rndis (default off)  ACM=0
+  CDROM_IMAGE= DISK_IMAGE= SHARE_IMAGE=    absolute paths; empty = no media
+  DISK_RO=1 SHARE_RO=1   unmount locally before exporting a writable image
+  UDC=                   required only when several controllers are present
+  USB_VID=0x1d6b USB_PID=0x0104 USB_SERIAL=kvmpanel
+Stop before changing an active configuration. Only this gadget is removed.
+HELP
+}
+
+action=${1:-start}
+case "$action" in start|stop|budget) ;; -h|--help) usage; exit 0 ;; *) usage >&2; exit 1 ;; esac
+[ "$#" -le 1 ] || fail "too many arguments"
+
+g=/sys/kernel/config/usb_gadget/kvmpanel
+c=$g/configs/c.1
+f=$g/functions
+remove_gadget() {
+	[ -d "$g" ] || return 0
+	if [ -n "$(cat "$g/UDC")" ]; then printf '\n' > "$g/UDC"; fi
+	[ ! -L "$g/os_desc/c.1" ] || rm "$g/os_desc/c.1"
+	for link in "$c"/*; do
+		[ ! -L "$link" ] || rm "$link"
+	done
+	for dir in "$c/strings/0x409" "$c" "$f/mass_storage.media/lun.2" "$f/mass_storage.media/lun.1" "$f"/* "$g/strings/0x409"; do
+		[ ! -d "$dir" ] || rmdir "$dir"
+	done
+	rmdir "$g"
+}
+
+if [ "$action" != budget ]; then
+	exec 9>/run/kvmpanel-gadget.lock
+	flock -x 9
+fi
+if [ "$action" = stop ]; then remove_gadget; exit; fi
+
+keyboard=${KEYBOARD:-1}
+relative=${REL_MOUSE:-1}
+absolute=${ABS_MOUSE:-1}
+merge=${MERGE_MICE:-0}
+telemetry=${TELEMETRY:-1}
+storage=${STORAGE:-1}
+network=${NETWORK:-off}
+acm=${ACM:-0}
+disk_ro=${DISK_RO:-1}
+share_ro=${SHARE_RO:-1}
+for switch in "$keyboard" "$relative" "$absolute" "$merge" "$telemetry" "$storage" "$acm" "$disk_ro" "$share_ro"; do
+	case "$switch" in 0|1) ;; *) fail "invalid switch '$switch' (use 0 or 1)" ;; esac
+done
+merged=$((relative * absolute * merge))
+standalone=$((telemetry * (1-relative) * (1-absolute)))
+case "$network" in off) net=0 ;; ncm|rndis) net=1 ;; *) fail "invalid NETWORK" ;; esac
+inputs=$((keyboard + relative + absolute - merged + standalone + storage + 2 * (net + acm)))
+outputs=$((storage + net + acm))
+echo "USB0 endpoints: IN $inputs/5, OUT $outputs/5"
+[ "$inputs" -le 5 ] && [ "$outputs" -le 5 ] || fail "endpoint budget exceeded"
+[ "$inputs" -gt 0 ] || fail "empty USB configuration"
+[ "$action" = start ] || exit 0
+[ ! -e "$g" ] || fail "gadget exists; stop it before applying new settings"
+if [ "$storage" = 1 ]; then
+	for media in "${CDROM_IMAGE:-}" "${DISK_IMAGE:-}" "${SHARE_IMAGE:-}"; do
+		case "$media" in '') continue ;; /*) ;; *) fail "image needs an absolute path: $media" ;; esac
+		[ -f "$media" ] && [ -r "$media" ] || fail "unreadable image: $media"
+	done
+fi
+if [ -z "${UDC:-}" ]; then
+	set -- /sys/class/udc/*
+	[ "$#" = 1 ] && [ -d "$1" ] || fail "select a registered controller using UDC"
+	UDC=${1##*/}
+fi
+[ -d "/sys/class/udc/$UDC" ] || fail "unknown UDC: $UDC"
+[ -d /sys/kernel/config/usb_gadget ] || mount -t configfs none /sys/kernel/config
+mkdir "$g"
+trap 'remove_gadget' EXIT
+trap 'exit 1' HUP INT TERM
+
+printf '%s\n' "${USB_VID:-0x1d6b}" > "$g/idVendor"
+printf '%s\n' "${USB_PID:-0x0104}" > "$g/idProduct"
+echo 0x0200 > "$g/bcdUSB"
+echo high-speed > "$g/max_speed"
+mkdir "$g/strings/0x409" "$c" "$c/strings/0x409"
+echo KVMPanel > "$g/strings/0x409/manufacturer"
+echo KVMPanel > "$g/strings/0x409/product"
+printf '%s\n' "${USB_SERIAL:-kvmpanel}" > "$g/strings/0x409/serialnumber"
+echo KVMPanel > "$c/strings/0x409/configuration"
+
+link_function() { ln -s "$f/$1" "$c/"; }
+
+if [ "$net" = 1 ]; then
+	# IAD composite class; put RNDIS first for Windows' composite driver.
+	echo 0xef > "$g/bDeviceClass"
+	echo 2 > "$g/bDeviceSubClass"
+	echo 1 > "$g/bDeviceProtocol"
+	eth=$f/$network.usb0
+	mkdir "$eth"
+	echo 02:4b:56:4d:00:01 > "$eth/dev_addr"
+	echo 02:4b:56:4d:00:02 > "$eth/host_addr"
+	if [ "$network" = rndis ]; then
+		echo 1 > "$g/os_desc/use"
+		echo 0xcd > "$g/os_desc/b_vendor_code"
+		echo MSFT100 > "$g/os_desc/qw_sign"
+		echo RNDIS > "$eth/os_desc/interface.rndis/compatible_id"
+		echo 5162001 > "$eth/os_desc/interface.rndis/sub_compatible_id"
+		ln -s "$c" "$g/os_desc/"
+	fi
+	link_function "$network.usb0"
+fi
+
+# All bytes below are USB HID short items. Keep the boot keyboard and
+# unmerged relative mouse unnumbered so their input bytes match BIOS format.
+keyboard_desc='05 01 09 06 a1 01 05 07 19 e0 29 e7 15 00 25 01 75 01 95 08 81 02
+	95 01 75 08 81 01 05 08 19 01 29 05 95 05 75 01 91 02
+	95 01 75 03 91 01 05 07 19 00 29 65 15 00 25 65 75 08 95 06 81 00 c0'
+mouse_header='05 01 09 02 a1 01 09 01 a1 00'
+buttons='05 09 19 01 29 03 15 00 25 01 75 01 95 03 81 02 75 05 95 01 81 01'
+rel_xy='05 01 09 30 09 31 15 81 25 7f 75 08 95 02 81 06'
+abs_xy='05 01 09 30 09 31 15 00 26 ff 7f 75 10 95 02 81 02'
+# Wheel is the fourth relative byte, after the boot mouse's three-byte prefix.
+wheel='05 01 09 38 15 81 25 7f 75 08 95 01 81 06'
+vendor_header='06 00 ff 09 01 a1 01'
+vendor_output='09 02 15 00 26 ff 00 75 08 95 3f 91 02 c0'
+
+hid() {
+	name=hid.$1
+	mkdir "$f/$name"
+	echo "$2" > "$f/$name/subclass"
+	echo "$3" > "$f/$name/protocol"
+	echo "$4" > "$f/$name/report_length"
+	echo 1 > "$f/$name/no_out_endpoint"
+	printf '%s\n' "$5" | xxd -r -p > "$f/$name/report_desc"
+	link_function "$name"
+}
+
+if [ "$keyboard" = 1 ]; then hid keyboard 1 1 8 "$keyboard_desc"; fi
+if [ "$merged" = 1 ]; then
+	desc="$mouse_header 85 01 $buttons $rel_xy $wheel c0 c0
+		$mouse_header 85 02 $buttons $abs_xy $wheel c0 c0"
+	length=7
+	if [ "$telemetry" = 1 ]; then
+		desc="$desc $vendor_header 85 03 $vendor_output"
+		length=64
+	fi
+	hid merged 0 0 "$length" "$desc"
+else
+	if [ "$relative" = 1 ]; then
+		desc="$mouse_header $buttons $rel_xy $wheel c0 c0"
+		length=4
+		if [ "$absolute" = 0 ] && [ "$telemetry" = 1 ]; then
+			desc="$desc $vendor_header $vendor_output"
+			length=63
+		fi
+		hid relative 1 2 "$length" "$desc"
+	fi
+	if [ "$absolute" = 1 ]; then
+		desc="$mouse_header $buttons $abs_xy $wheel c0 c0"
+		length=6
+		if [ "$telemetry" = 1 ]; then
+			desc="$mouse_header 85 02 $buttons $abs_xy $wheel c0 c0
+				$vendor_header 85 03 $vendor_output"
+			length=64
+		fi
+		hid absolute 0 0 "$length" "$desc"
+	fi
+fi
+if [ "$standalone" = 1 ]; then hid telemetry 0 0 64 "$vendor_header 85 03 $vendor_output"; fi
+
+if [ "$storage" = 1 ]; then
+	media=$f/mass_storage.media
+	mkdir "$media" "$media/lun.1" "$media/lun.2"
+	# lun.0 is created by configfs. All slots can enumerate without an image.
+	for lun in "$media"/lun.*; do echo 1 > "$lun/removable"; done
+	echo 1 > "$media/lun.0/cdrom"
+	echo 1 > "$media/lun.0/ro"
+	echo "$disk_ro" > "$media/lun.1/ro"
+	echo "$share_ro" > "$media/lun.2/ro"
+	[ -z "${CDROM_IMAGE:-}" ] || printf '%s\n' "$CDROM_IMAGE" > "$media/lun.0/file"
+	[ -z "${DISK_IMAGE:-}" ] || printf '%s\n' "$DISK_IMAGE" > "$media/lun.1/file"
+	[ -z "${SHARE_IMAGE:-}" ] || printf '%s\n' "$SHARE_IMAGE" > "$media/lun.2/file"
+	link_function mass_storage.media
+fi
+if [ "$acm" = 1 ]; then mkdir "$f/acm.console"; link_function acm.console; fi
+printf '%s\n' "$UDC" > "$g/UDC"
+trap - EXIT HUP INT TERM
