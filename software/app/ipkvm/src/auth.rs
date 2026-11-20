@@ -6,9 +6,15 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use tokio::sync::Semaphore;
 use tokio::time::{Duration, Instant};
 use uuid::Uuid;
+
+// bcrypt cost matches newly created accounts. A missing account still takes one verify.
+const DUMMY_HASH: &str = "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+const MAX_GUARDS: usize = 1024;
+static VERIFY_SLOTS: Semaphore = Semaphore::const_new(2);
 
 const PERMISSIONS: [&str; 12] = [
     "console",
@@ -66,7 +72,8 @@ struct Guard {
 pub struct Auth {
     accounts: BTreeMap<String, Account>,
     sessions: HashMap<String, String>,
-    guards: HashMap<String, Guard>,
+    guards: HashMap<[u8; 32], Guard>,
+    guard_order: VecDeque<[u8; 32]>,
 }
 impl Auth {
     pub fn open(dir: &Path) -> io::Result<Self> {
@@ -87,7 +94,31 @@ impl Auth {
             accounts,
             sessions: HashMap::new(),
             guards: HashMap::new(),
+            guard_order: VecDeque::new(),
         })
+    }
+    fn check_lock(&mut self, key: &[u8; 32]) -> Result<(), ApiError> {
+        if let Some(guard) = self.guards.get_mut(key) {
+            locked(guard, Instant::now())?;
+        }
+        Ok(())
+    }
+    fn record_failure(&mut self, key: [u8; 32]) -> u32 {
+        if !self.guards.contains_key(&key) {
+            if self.guard_order.len() == MAX_GUARDS {
+                let oldest = self.guard_order.pop_front().unwrap();
+                self.guards.remove(&oldest);
+            }
+            self.guard_order.push_back(key);
+        }
+        let guard = self.guards.entry(key).or_default();
+        guard.failures += 1;
+        guard.failures
+    }
+    fn clear_failures(&mut self, key: &[u8; 32]) {
+        if self.guards.remove(key).is_some() {
+            self.guard_order.retain(|k| k != key);
+        }
     }
     fn issue(&mut self, name: &str) -> String {
         let token = Uuid::new_v4().simple().to_string() + &Uuid::new_v4().simple().to_string();
@@ -159,9 +190,17 @@ async fn encode(p: &str) -> Result<String, ApiError> {
 }
 async fn verify(p: &str, hash: String) -> Result<bool, ApiError> {
     let p = p.to_owned();
-    tokio::task::spawn_blocking(move || matches(&p, &hash))
+    let slot = VERIFY_SLOTS
+        .acquire()
         .await
-        .map_err(|_| ApiError::new(500, "internal"))
+        .map_err(|_| ApiError::new(500, "internal"))?;
+    tokio::task::spawn_blocking(move || {
+        // Keep the permit until bcrypt finishes even if its HTTP future is canceled.
+        let _slot = slot;
+        matches(&p, &hash)
+    })
+    .await
+    .map_err(|_| ApiError::new(500, "internal"))
 }
 fn locked(guard: &mut Guard, now: Instant) -> Result<(), ApiError> {
     if guard.failures >= 5 {
@@ -181,20 +220,21 @@ fn locked(guard: &mut Guard, now: Instant) -> Result<(), ApiError> {
 async fn login(State(a): State<App>, JsonBody(v): JsonBody) -> Result<Response, ApiError> {
     validate("login", &v)?;
     let name = text(&v, "username");
+    let guard_key: [u8; 32] = Sha256::digest(name.as_bytes()).into();
     let stored = {
         let mut auth = a.auth.lock().unwrap();
-        locked(auth.guards.entry(name.into()).or_default(), Instant::now())?;
+        auth.check_lock(&guard_key)?;
         auth.accounts.get(name).map(|acc| acc.hash.clone())
     };
-    let valid = if let Some(h) = stored.clone() {
-        verify(text(&v, "password"), h).await?
-    } else {
-        false
-    };
+    let valid = verify(
+        text(&v, "password"),
+        stored.clone().unwrap_or_else(|| DUMMY_HASH.to_owned()),
+    )
+    .await?;
     let delay = {
         let mut auth = a.auth.lock().unwrap();
         // Recheck after bcrypt: simultaneous attempts cannot bypass a lock or password change.
-        locked(auth.guards.entry(name.into()).or_default(), Instant::now())?;
+        auth.check_lock(&guard_key)?;
         if valid {
             if let Some(acc) = auth
                 .accounts
@@ -202,7 +242,7 @@ async fn login(State(a): State<App>, JsonBody(v): JsonBody) -> Result<Response, 
                 .filter(|acc| Some(&acc.hash) == stored.as_ref())
             {
                 let user = public(acc);
-                auth.guards.remove(name);
+                auth.clear_failures(&guard_key);
                 if user["disabled"] == true {
                     return Err(ApiError::new(403, "user_disabled"));
                 }
@@ -211,9 +251,7 @@ async fn login(State(a): State<App>, JsonBody(v): JsonBody) -> Result<Response, 
                 );
             }
         }
-        let guard = auth.guards.get_mut(name).unwrap();
-        guard.failures += 1;
-        guard.failures >= 3
+        auth.record_failure(guard_key) >= 3
     };
     if delay {
         tokio::time::sleep(Duration::from_secs(1)).await
@@ -355,4 +393,43 @@ async fn password(
     auth.revoke(name);
     a.emit("sessions_changed");
     Ok((StatusCode::NO_CONTENT, [(SET_COOKIE, auth.issue(name))]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn failed_names_are_bounded_and_evicted_in_insertion_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut auth = Auth::open(dir.path()).unwrap();
+        let key = |i: usize| -> [u8; 32] { Sha256::digest(i.to_le_bytes()).into() };
+        for i in 0..MAX_GUARDS {
+            auth.record_failure(key(i));
+        }
+        auth.record_failure(key(0));
+        auth.clear_failures(&key(1));
+        auth.record_failure(key(MAX_GUARDS));
+        auth.record_failure(key(MAX_GUARDS + 1));
+        assert_eq!(auth.guards.len(), MAX_GUARDS);
+        assert_eq!(auth.guard_order.len(), MAX_GUARDS);
+        assert!(!auth.guards.contains_key(&key(0)));
+        assert!(auth.guards.contains_key(&key(2)));
+        assert!(!bcrypt::verify("unused password", DUMMY_HASH).unwrap());
+    }
+    #[tokio::test]
+    async fn unknown_and_known_logins_both_wait_for_a_bcrypt_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = App::new(dir.path(), true).unwrap();
+        let occupied = VERIFY_SLOTS.acquire_many(2).await.unwrap();
+        for name in ["missing", "admin"] {
+            let attempt = login(
+                State(app.clone()),
+                JsonBody(json!({"username":name,"password":"wrong"})),
+            );
+            assert!(tokio::time::timeout(Duration::from_millis(30), attempt)
+                .await
+                .is_err());
+        }
+        drop(occupied);
+    }
 }
