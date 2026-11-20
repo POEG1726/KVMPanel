@@ -36,7 +36,8 @@ export function FileManager({ onOpenTerminal }: { onOpenTerminal?: (path: string
   const files = useQuery({ queryKey: ['files', root, path], queryFn: () => unwrap(api.GET('/api/files', { params: { query: { root, path } } })) });
   const storage = useQuery({ queryKey: ['storage'], queryFn: () => unwrap(api.GET('/api/storage')) });
   const volume = storage.data?.find(v => v.root === root);
-  const roots: Root[] = user?.role === 'admin' ? ['sd', 'share', 'system'] : ['sd', 'share'];
+  const isAdmin = user?.role === 'admin';
+  const roots: Root[] = isAdmin ? ['sd', 'share', 'system'] : ['sd', 'share'];
   const rootName = (r: Root) => t(r === 'system' ? 'files.system' : 'settings.storage.root.' + r);
   const parts = path.split('/').filter(Boolean);
   const closeMenu = useCallback(() => setContext(null), []);
@@ -116,7 +117,7 @@ export function FileManager({ onOpenTerminal }: { onOpenTerminal?: (path: string
   const entry = context?.entry;
   const selected = entry ? childPath(path, entry.name) : path;
   const shellDirectory = shellRoots[root] + (entry?.type === 'dir' ? selected : path);
-  const mayOpenTerminal = onOpenTerminal && user?.permissions.includes('terminal') && !/[\x00-\x1f\x7f]/.test(shellDirectory);
+  const mayOpenTerminal = onOpenTerminal && (isAdmin || user?.permissions.includes('terminal')) && !/[\x00-\x1f\x7f]/.test(shellDirectory);
   const currentError = files.error ?? storage.error;
 
   return <section className={s.pane} ref={pane} aria-label={t('files.title')}
@@ -172,7 +173,7 @@ export function FileManager({ onOpenTerminal }: { onOpenTerminal?: (path: string
     {context && entry && <FileActionMenu {...context} label={entry.name} onClose={closeMenu}>
       {entry.type === 'file' && <button role="menuitem" onClick={download}>{t('files.download')}</button>}
       <button role="menuitem" onClick={() => edit(entry.name)}>{t('files.rename')}</button>
-      {entry.type === 'file' && root === 'sd' && /\.iso$/i.test(entry.name) && !entry.mounted && user?.permissions.includes('media') &&
+      {entry.type === 'file' && root === 'sd' && /\.iso$/i.test(entry.name) && !entry.mounted && (isAdmin || user?.permissions.includes('media')) &&
         <button role="menuitem" onClick={() => selectAction('mount')}>{t('files.mount')}</button>}
       {mayOpenTerminal && <button role="menuitem" onClick={() => { closeMenu(); onOpenTerminal(shellDirectory); }}>{t('files.openTerminal')}</button>}
       <button role="menuitem" className={s.danger} onClick={() => selectAction('delete')}>{t('common.delete')}</button>

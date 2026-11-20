@@ -10,6 +10,7 @@ import { api, configureApi, unwrap } from '../api/client';
 import i18n from '../i18n';
 import { ToastHost, useToasts } from '../ui/Toast';
 import { browserFetch, loginAs, startMock } from '../../test/mock';
+import { ME_KEY } from '../session/useSession';
 import { FileManager } from './FileManager';
 
 let mock: Awaited<ReturnType<typeof startMock>>;
@@ -129,6 +130,17 @@ describe('file browser', () => {
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: t('common.delete') }));
     expect(await screen.findByText(t('error.in_use'))).toBeVisible();
     expect((await entries()).some(e => e.name === 'images')).toBe(true);
+  });
+
+  it('gives an admin all file actions even without explicit permission entries', async () => {
+    const { user } = await unwrap(api.GET('/api/auth/me'));
+    const client = new QueryClient();
+    client.setQueryData(ME_KEY, { ...user, permissions: [] });
+    render(<QueryClientProvider client={client}><FileManager onOpenTerminal={vi.fn()} /></QueryClientProvider>);
+    fireEvent.click(await screen.findByRole('button', { name: 'images' }));
+    const actions = await menu('ubuntu-24.04.iso');
+    expect(actions.getByText(t('files.mount'))).toBeVisible();
+    expect(actions.getByText(t('files.openTerminal'))).toBeVisible();
   });
 
   it('hides the system root and media/terminal actions for a files-only user', async () => {
