@@ -33,8 +33,9 @@ export function usbBudget(u: UsbConfig): UsbBudget {
     inEp += 2;
     outEp += 1;
   }
-  // Telemetry rides EP0 SET_REPORT on a mouse interface; standalone it needs its own interrupt IN.
-  if (u.telemetry && !u.mouse_rel && !u.mouse_abs) inEp += 1;
+  // Telemetry rides EP0 SET_REPORT on the absolute mouse; the relative mouse must stay a plain boot mouse,
+  // so without the absolute mouse telemetry needs its own interrupt IN.
+  if (u.telemetry && !u.mouse_abs) inEp += 1;
   const in_missing = Math.max(0, inEp - EP_IN);
   const out_missing = Math.max(0, outEp - EP_OUT);
   return { in: inEp, out: outEp, fits: in_missing === 0 && out_missing === 0, in_missing, out_missing };

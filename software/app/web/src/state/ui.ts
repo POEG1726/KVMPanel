@@ -39,7 +39,7 @@ export const useUi = create<UiState>((set) => ({
   settingsOpen: false,
   settingsPage: 'general',
   openSettings: (page) => set((st) => ({ floatingOpen: true, settingsOpen: true, settingsPage: page ?? st.settingsPage })),
-  closeSettings: () => set({ settingsOpen: false }),
+  closeSettings: () => set({ settingsOpen: false, floatingOpen: false }),
   cursor: loadCursor(),
   setCursor: (cursor) => {
     try {

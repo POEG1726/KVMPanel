@@ -23,6 +23,7 @@ export function UpdatePage() {
   const { error, run } = useRun();
   const [jobId, setJobId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [offlineFile, setOfflineFile] = useState<File | null>(null);
   const job = useQuery({
     queryKey: ['update', 'job', jobId],
     queryFn: async () => (await unwrap(api.GET('/api/update/jobs/{id}', { params: { path: { id: jobId! } } }))).job,
@@ -50,10 +51,11 @@ export function UpdatePage() {
     run(async () => {
       setJobId((await unwrap(api.POST('/api/update/apply'))).job.id);
     });
-  const upload = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const pick = (e: ChangeEvent<HTMLInputElement>) => {
+    setOfflineFile(e.target.files?.[0] ?? null);
     e.target.value = '';
-    if (!file) return;
+  };
+  const upload = async (file: File) => {
     await run(async () => {
       const sha = await sha256Hex(file);
       const r = await unwrap(
@@ -94,7 +96,7 @@ export function UpdatePage() {
           </div>
           <Group title={t('settings.update.offline')}>
             <Row label={t('settings.update.offlineFile')} hint={t('settings.update.offlineHint')}>
-              <input type="file" aria-label={t('settings.update.offlineFile')} accept=".tar,application/x-tar" onChange={(e) => void upload(e)} />
+              <input type="file" aria-label={t('settings.update.offlineFile')} accept=".tar,application/x-tar" onChange={pick} />
             </Row>
           </Group>
         </>
@@ -108,6 +110,19 @@ export function UpdatePage() {
         </Group>
       )}
       <Alert message={error} />
+      {offlineFile && (
+        <ConfirmDialog
+          title={t('settings.update.installTitle')}
+          message={t('settings.update.installMessage')}
+          confirmLabel={t('settings.update.install')}
+          onCancel={() => setOfflineFile(null)}
+          onConfirm={() => {
+            const file = offlineFile;
+            setOfflineFile(null);
+            void upload(file);
+          }}
+        />
+      )}
       {confirming && (
         <ConfirmDialog
           title={t('settings.update.installTitle')}

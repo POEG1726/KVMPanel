@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '../../api/client';
 import type { components } from '../../api/schema';
 import { useRun } from '../../console/menus/hooks';
-import { Button, Select, Switch, toast } from '../../ui';
+import { Button, ConfirmDialog, Select, Switch, toast } from '../../ui';
 import { Alert, Group, Row } from '../fields';
 import s from '../settings.module.css';
 
@@ -65,6 +65,7 @@ export function NetworkPage() {
   const network = useQuery({ queryKey: NETWORK_KEY, queryFn: () => unwrap(api.GET('/api/network')) });
   const { error, run, clear } = useRun();
   const [form, setForm] = useState<Form | null>(null);
+  const [confirming, setConfirming] = useState(false);
   useEffect(() => network.data && setForm(toForm(network.data)), [network.data]);
   if (!form) return null;
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => f && { ...f, [k]: v });
@@ -75,8 +76,7 @@ export function NetworkPage() {
     </Row>
   );
 
-  const save = (e: FormEvent) => {
-    e.preventDefault();
+  const save = () => {
     clear();
     void run(async () => {
       qc.setQueryData(NETWORK_KEY, await unwrap(api.PUT('/api/network', { body: toBody(form) })));
@@ -86,7 +86,12 @@ export function NetworkPage() {
 
   const isStatic = form.mode === 'static';
   return (
-    <form onSubmit={save}>
+    <form
+      onSubmit={(e: FormEvent) => {
+        e.preventDefault();
+        setConfirming(true);
+      }}
+    >
       <Group title={t('settings.network.address')}>
         <Row label={t('settings.network.mode')}>
           <Select
@@ -139,6 +144,19 @@ export function NetworkPage() {
           {t('settings.network.save')}
         </Button>
       </div>
+      {confirming && (
+        <ConfirmDialog
+          title={t('settings.network.confirmTitle')}
+          message={t('settings.network.confirmMessage')}
+          confirmLabel={t('settings.network.save')}
+          danger
+          onCancel={() => setConfirming(false)}
+          onConfirm={() => {
+            setConfirming(false);
+            save();
+          }}
+        />
+      )}
     </form>
   );
 }

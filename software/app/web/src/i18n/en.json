@@ -366,7 +366,9 @@
       "cert": "Certificate path",
       "key": "Private key path",
       "save": "Save",
-      "saved": "Network settings saved."
+      "saved": "Network settings saved.",
+      "confirmTitle": "Save the network settings?",
+      "confirmMessage": "If the address is wrong you lose remote access to this page, and only the panel can fix it."
     },
     "tailscale": {
       "installed": "Installed",

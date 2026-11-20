@@ -21,7 +21,8 @@ describe('usbBudget (spec 4.5)', () => {
     expect(usbBudget({ ...DEFAULT, mouse_merge: true, net: true })).toMatchObject({ in: 5, fits: true });
   });
 
-  it('telemetry costs one IN only when both mice are off', () => {
+  it('telemetry costs one IN only when the absolute mouse is off', () => {
+    expect(usbBudget({ ...DEFAULT, mouse_abs: false })).toMatchObject({ in: 4, out: 1, fits: true });
     const only = { ...DEFAULT, mouse_rel: false, mouse_abs: false, storage: false };
     expect(usbBudget(only)).toMatchObject({ in: 2, out: 0, fits: true });
     expect(usbBudget({ ...only, telemetry: false })).toMatchObject({ in: 1 });
@@ -33,6 +34,6 @@ describe('usbBudget (spec 4.5)', () => {
   });
 
   it('merge has no effect unless both mice are on', () => {
-    expect(usbBudget({ ...DEFAULT, mouse_abs: false, mouse_merge: true })).toMatchObject({ in: 3 });
+    expect(usbBudget({ ...DEFAULT, mouse_abs: false, mouse_merge: true })).toMatchObject({ in: 4 });
   });
 });

@@ -363,7 +363,9 @@
       "cert": "证书路径",
       "key": "私钥路径",
       "save": "保存",
-      "saved": "网络设置已保存。"
+      "saved": "网络设置已保存。",
+      "confirmTitle": "保存网络设置？",
+      "confirmMessage": "如果地址不对，你将无法再从网页访问，只能在副屏上修复。"
     },
     "tailscale": {
       "installed": "已安装",

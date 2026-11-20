@@ -15,7 +15,7 @@ import type { SettingsPageId } from './registry';
 let mock: Awaited<ReturnType<typeof startMock>>;
 let jar: ReturnType<typeof browserFetch>;
 /** Every HTTP request the app made: `METHOD /path` plus the parsed JSON body. */
-let requests: { key: string; body: unknown }[];
+let requests: { key: string; body: unknown; sha?: string | null }[];
 let connections = 0;
 
 const t = (k: string, o: Record<string, unknown> = {}) => i18n.t(k, o) as string;
@@ -54,7 +54,7 @@ beforeEach(async () => {
     fetch: async (input, init) => {
       const req = new Request(input, init);
       const text = await req.clone().text();
-      requests.push({ key: `${req.method} ${new URL(req.url).pathname}`, body: text && text.startsWith('{') ? JSON.parse(text) : undefined });
+      requests.push({ key: `${req.method} ${new URL(req.url).pathname}`, body: text && text.startsWith('{') ? JSON.parse(text) : undefined, sha: req.headers.get('x-sha256') });
       return jar.fetch(req);
     },
   });
@@ -93,6 +93,18 @@ describe('SettingsWindow', () => {
     );
     fireEvent.keyDown(await screen.findByRole('dialog'), { key: 'Escape' });
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('takes focus on open, so Escape works at once', async () => {
+    mount('about');
+    expect(await screen.findByRole('dialog', { name: t('menu.settings') })).toHaveFocus();
+  });
+
+  it('closeSettings also clears floatingOpen', () => {
+    useUi.getState().openSettings('usb');
+    expect(useUi.getState()).toMatchObject({ settingsOpen: true, floatingOpen: true });
+    useUi.getState().closeSettings();
+    expect(useUi.getState()).toMatchObject({ settingsOpen: false, floatingOpen: false });
   });
 
   it('applies the language at once after saving it', async () => {
@@ -134,6 +146,18 @@ describe('USB functions page', () => {
     expect(screen.getByTestId('usb-tip')).toBeInTheDocument();
     act(() => void vi.advanceTimersByTime(100));
     expect(screen.queryByTestId('usb-tip')).not.toBeInTheDocument();
+    expect(patches()).toHaveLength(0);
+  });
+
+  it('refuses turning the merge off when that would overflow: tip, no PATCH, greyed switch', async () => {
+    await jar.fetch(new Request(`${mock.url}/api/config`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ usb: { mouse_merge: true, net: true } }) }));
+    mount('usb');
+    const merge = await sw('mouse_merge');
+    await waitFor(() => expect(screen.getByRole('img', { name: 'IN 5/5' })).toBeInTheDocument());
+    expect(merge).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(merge);
+    expect(screen.getByTestId('usb-tip')).toHaveTextContent(t('error.endpoints_full', { in_missing: 1, out_missing: 0 }));
+    expect(merge).toHaveAttribute('aria-checked', 'true');
     expect(patches()).toHaveLength(0);
   });
 
@@ -201,9 +225,39 @@ describe('Network page', () => {
     mount('network');
     fireEvent.change(await screen.findByLabelText(t('settings.network.mode')), { target: { value: 'static' } });
     fireEvent.click(screen.getByRole('button', { name: t('settings.network.save') }));
+    const title = t('settings.network.confirmTitle');
+    fireEvent.click(within(await screen.findByRole('dialog', { name: title })).getByRole('button', { name: t('settings.network.save') }));
     expect(await screen.findByRole('alert')).toHaveTextContent(t('error.invalid_body'));
     expect(screen.getByRole('heading', { name: t('settings.page.network') })).toBeInTheDocument();
     expect(screen.getByLabelText(t('settings.network.mode'))).toHaveValue('static');
+  });
+});
+
+describe('Network confirm', () => {
+  it('sends nothing when the save confirmation is cancelled', async () => {
+    mount('network');
+    fireEvent.click(await screen.findByRole('button', { name: t('settings.network.save') }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: t('settings.network.confirmTitle') })).getByRole('button', { name: t('common.cancel') }));
+    expect(requests.some((r) => r.key === 'PUT /api/network')).toBe(false);
+  });
+});
+
+describe('Update page offline upload', () => {
+  const pick = async () => {
+    mount('update');
+    const input = await screen.findByLabelText(t('settings.update.offlineFile'));
+    fireEvent.change(input, { target: { files: [new File(['pkg'], 'u.tar')] } });
+    return screen.findByRole('dialog', { name: t('settings.update.installTitle') });
+  };
+
+  it('asks first; cancel uploads nothing', async () => {
+    fireEvent.click(within(await pick()).getByRole('button', { name: t('common.cancel') }));
+    expect(requests.some((r) => r.key === 'PUT /api/update/offline')).toBe(false);
+  });
+
+  it('uploads with the SHA-256 header after confirming', async () => {
+    fireEvent.click(within(await pick()).getByRole('button', { name: t('settings.update.install') }));
+    await waitFor(() => expect(requests.find((r) => r.key === 'PUT /api/update/offline')?.sha).toMatch(/^[0-9a-f]{64}$/));
   });
 });
 
@@ -234,7 +288,7 @@ describe('Device page', () => {
 
     fireEvent.click(restart);
     fireEvent.click(within(await screen.findByRole('dialog', { name: title })).getByRole('button', { name: t('settings.device.action.restart_kvm') }));
-    await waitFor(() => expect(requests).toContainEqual({ key: 'POST /api/device/action', body: { action: 'restart_kvm' } }));
+    await waitFor(() => expect(requests).toContainEqual(expect.objectContaining({ key: 'POST /api/device/action', body: { action: 'restart_kvm' } })));
   });
 
   it('warns that only the panel can turn the KVM service on again before switching it off', async () => {
@@ -255,10 +309,23 @@ describe('Accounts page', () => {
     fireEvent.change(screen.getByLabelText(t('settings.accounts.newUserPassword')), { target: { value: 'secret1' } });
     fireEvent.click(screen.getByRole('button', { name: t('settings.accounts.create') }));
     const disable = await screen.findByRole('switch', { name: `viewer: ${t('settings.accounts.disabled')}` });
-    expect(requests).toContainEqual({ key: 'POST /api/users', body: { name: 'viewer', password: 'secret1', role: 'user', permissions: ['console'], view_only: false } });
+    expect(requests).toContainEqual(expect.objectContaining({ key: 'POST /api/users', body: { name: 'viewer', password: 'secret1', role: 'user', permissions: ['console'], view_only: false } }));
 
     fireEvent.click(disable);
     await waitFor(() => expect(screen.getByRole('switch', { name: `viewer: ${t('settings.accounts.disabled')}` })).toHaveAttribute('aria-checked', 'true'));
+  });
+});
+
+describe('own password change flag', () => {
+  it('has no timer until the request has succeeded', async () => {
+    const a = await import('../api/authEvents');
+    vi.useFakeTimers();
+    a.beginOwnPasswordChange();
+    vi.advanceTimersByTime(60_000);
+    expect(a.ownPasswordChangeActive()).toBe(true);
+    a.settleOwnPasswordChange();
+    vi.advanceTimersByTime(5000);
+    expect(a.ownPasswordChangeActive()).toBe(false);
   });
 });
 

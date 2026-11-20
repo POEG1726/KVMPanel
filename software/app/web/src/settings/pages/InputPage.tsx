@@ -1,4 +1,6 @@
+import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { ME_KEY, fetchMe } from '../../session/useSession';
 import { Select, Slider, Switch } from '../../ui';
 import { Group, Row, TextField } from '../fields';
 import { useConfigSection } from '../useConfigSection';
@@ -13,7 +15,9 @@ export function InputPage() {
   const { t } = useTranslation();
   const { value: hid, patch } = useConfigSection('hid');
   const { value: serial, patch: patchSerial } = useConfigSection('serial');
+  const me = useQuery({ queryKey: ME_KEY, queryFn: fetchMe, retry: false, staleTime: Infinity }).data;
   if (!hid || !serial) return null;
+  const canSerial = !me || me.role === 'admin' || me.permissions.includes('terminal');
 
   const withCurrent = (list: string[], cur: string) => (list.includes(cur) ? list : [...list, cur]);
   const leader = hid.leader_key ?? '';
@@ -68,6 +72,7 @@ export function InputPage() {
           <Switch label={t('mouse.jiggler')} checked={hid.jiggler} onChange={(jiggler) => void patch({ jiggler })} />
         </Row>
       </Group>
+      {canSerial && (
       <Group title={t('settings.input.serial')}>
         <Row label={t('settings.input.serialDevice')} hint={t('settings.input.serialDeviceHint')}>
           <TextField
@@ -86,6 +91,7 @@ export function InputPage() {
           />
         </Row>
       </Group>
+      )}
     </>
   );
 }

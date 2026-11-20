@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ComponentType } from 'react';
+import { useEffect, useId, useRef, useState, type ComponentType } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -50,6 +50,8 @@ interface Props {
 export function SettingsWindow({ page = 'general', onClose }: Props) {
   const { t } = useTranslation();
   const titleId = useId();
+  const win = useRef<HTMLDivElement>(null);
+  useEffect(() => win.current?.focus(), []);
   const [current, setCurrent] = useState<SettingsPageId>(page);
   useEffect(() => setCurrent(page), [page]);
   const me = useQuery({ queryKey: ME_KEY, queryFn: fetchMe, retry: false, staleTime: Infinity });
@@ -70,7 +72,7 @@ export function SettingsWindow({ page = 'general', onClose }: Props) {
       // A dialog on top (confirm) has already used its Escape.
       onKeyDown={(e) => e.key === 'Escape' && !e.defaultPrevented && onClose?.()}
     >
-      <div role="dialog" aria-modal="true" aria-labelledby={titleId} className={s.window}>
+      <div ref={win} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className={s.window}>
         <div className={s.titlebar}>
           <h2 id={titleId}>{t('menu.settings')}</h2>
           <Button aria-label={t('common.close')} onClick={onClose}>

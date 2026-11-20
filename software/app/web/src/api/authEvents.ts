@@ -12,9 +12,14 @@ const OWN_CHANGE_MS = 5000;
 let ownChange = false;
 let ownTimer: ReturnType<typeof setTimeout> | undefined;
 
-/** Call before POST /api/users/me/password: for 5 s, 4401 closes and 401s are not treated as session loss (sockets reconnect). */
+/** Call before POST /api/users/me/password: 4401 closes and 401s are not treated as session loss (sockets reconnect). No timer yet, so a slow request cannot outlive the flag. */
 export function beginOwnPasswordChange(): void {
   ownChange = true;
+  clearTimeout(ownTimer);
+}
+
+/** Call once the POST succeeded: the flag lasts 5 s more, then clears. */
+export function settleOwnPasswordChange(): void {
   clearTimeout(ownTimer);
   ownTimer = setTimeout(endOwnPasswordChange, OWN_CHANGE_MS);
 }

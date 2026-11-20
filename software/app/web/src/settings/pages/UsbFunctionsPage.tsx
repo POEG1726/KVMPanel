@@ -28,6 +28,13 @@ export const TIP_MS = 2500;
 const APPLIED_KEY = ['usb', 'applied'] as const;
 const BUDGET_KEY = ['usb', 'budget'] as const;
 
+/** True when flipping `key` to `on` overflows the budget and uses more endpoints than now (turning merge off can, turning anything off otherwise cannot). */
+function worsens(usb: UsbConfig, key: Feature, on: boolean): boolean {
+  const cur = usbBudget(usb);
+  const next = usbBudget({ ...usb, [key]: on });
+  return !next.fits && next.in + next.out > cur.in + cur.out;
+}
+
 function Bar({ label, used, max }: { label: string; used: number; max: number }) {
   return (
     <div className={s.barRow}>
@@ -73,8 +80,7 @@ export function UsbFunctionsPage() {
 
   const toggle = (key: Feature, on: boolean) => {
     // Turning something on may not fit; turning off always does. Predict with the board's rule.
-    const next = usbBudget({ ...usb, [key]: on });
-    if (on && !next.fits) return showTip(next);
+    if (worsens(usb, key, on)) return showTip(usbBudget({ ...usb, [key]: on }));
     void change({ [key]: on } as Partial<UsbConfig>);
   };
 
@@ -115,7 +121,7 @@ export function UsbFunctionsPage() {
             <Switch
               label={t(`settings.usb.feature.${f.key}`)}
               checked={usb[f.key]}
-              unavailable={!usb[f.key] && !usbBudget({ ...usb, [f.key]: true }).fits}
+              unavailable={worsens(usb, f.key, !usb[f.key])}
               onChange={(on) => toggle(f.key, on)}
             />
           </Row>

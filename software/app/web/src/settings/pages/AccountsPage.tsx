@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '../../api/client';
-import { beginOwnPasswordChange, endOwnPasswordChange } from '../../api/authEvents';
+import { beginOwnPasswordChange, endOwnPasswordChange, settleOwnPasswordChange } from '../../api/authEvents';
 import type { components } from '../../api/schema';
 import { useRun } from '../../console/menus/hooks';
 import { ME_KEY } from '../../session/useSession';
@@ -63,6 +63,7 @@ function OwnPassword() {
         endOwnPasswordChange();
         throw err;
       }
+      settleOwnPasswordChange();
       setOld('');
       setNext('');
       setConfirm('');
