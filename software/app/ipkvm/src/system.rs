@@ -22,7 +22,7 @@ use std::{
     collections::BTreeMap,
     fs, io,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex, RwLock},
     time::Duration,
 };
 pub use update::verify_update;
@@ -52,9 +52,13 @@ impl Default for Settings {
         }
     }
 }
-pub struct System {
+struct Store {
     path: PathBuf,
-    settings: Mutex<Settings>,
+    writer: Mutex<()>,
+    current: RwLock<Arc<Settings>>,
+}
+pub struct System {
+    store: Arc<Store>,
     tail: tokio::sync::Mutex<tailscale::Service>,
     tail_action: Mutex<tailscale::ActionResult>,
     net_apply: tokio::sync::Mutex<()>,
@@ -73,28 +77,42 @@ impl System {
             atomic_write(&path, &serde_json::to_vec(&settings)?)?;
         }
         Ok(Self {
-            path,
-            settings: Mutex::new(settings),
+            store: Arc::new(Store {
+                path,
+                writer: Mutex::new(()),
+                current: RwLock::new(Arc::new(settings)),
+            }),
             tail: Default::default(),
             tail_action: Default::default(),
             net_apply: Default::default(),
             latest: Default::default(),
         })
     }
-    fn change<T>(
+    fn snapshot(&self) -> Arc<Settings> {
+        self.store.current.read().unwrap().clone()
+    }
+    async fn change<T: Send + 'static>(
         &self,
-        f: impl FnOnce(&mut Settings) -> Result<T, ApiError>,
+        f: impl FnOnce(&mut Settings) -> Result<T, ApiError> + Send + 'static,
     ) -> Result<T, ApiError> {
-        let mut settings = self.settings.lock().unwrap();
-        let mut next = settings.clone();
-        let result = f(&mut next)?;
-        let bytes = serde_json::to_vec(&next).map_err(io::Error::other)?;
-        atomic_write(&self.path, &bytes)?;
-        *settings = next;
-        Ok(result)
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let _writer = store.writer.lock().unwrap();
+            let before = store.current.read().unwrap().clone();
+            let mut next = (*before).clone();
+            let result = f(&mut next)?;
+            atomic_write(
+                &store.path,
+                &serde_json::to_vec(&next).map_err(io::Error::other)?,
+            )?;
+            *store.current.write().unwrap() = Arc::new(next);
+            Ok(result)
+        })
+        .await
+        .map_err(io::Error::other)?
     }
     pub fn network(&self) -> Value {
-        self.settings.lock().unwrap().network.clone()
+        self.snapshot().network.clone()
     }
 }
 
@@ -168,7 +186,11 @@ pub fn device_info(app: &App) -> Value {
 }
 async fn device(State(app): State<App>, h: HeaderMap) -> Result<Json<Value>, ApiError> {
     app.require(&h, "device")?;
-    Ok(Json(device_info(&app)))
+    Ok(Json(
+        tokio::task::spawn_blocking(move || device_info(&app))
+            .await
+            .map_err(io::Error::other)?,
+    ))
 }
 pub fn device_action(app: &App, action: &str) -> Result<(), ApiError> {
     match action {
@@ -207,7 +229,9 @@ async fn action(
 ) -> Result<StatusCode, ApiError> {
     app.require(&h, "device")?;
     validate("deviceAction", &body)?;
-    device_action(&app, body["action"].as_str().unwrap())?;
+    tokio::task::spawn_blocking(move || device_action(&app, body["action"].as_str().unwrap()))
+        .await
+        .map_err(io::Error::other)??;
     Ok(StatusCode::ACCEPTED)
 }
 async fn about() -> Json<Value> {
@@ -219,7 +243,7 @@ fn mcp(s: &Settings) -> Value {
 }
 async fn mcp_state(State(app): State<App>, h: HeaderMap) -> Result<Json<Value>, ApiError> {
     app.require(&h, "mcp")?;
-    Ok(Json(mcp(&app.system.settings.lock().unwrap())))
+    Ok(Json(mcp(&app.system.snapshot())))
 }
 async fn set_mcp(
     State(app): State<App>,
@@ -228,32 +252,38 @@ async fn set_mcp(
 ) -> Result<Json<Value>, ApiError> {
     app.require(&h, "mcp")?;
     validate("putMcp", &body)?;
-    app.system.change(|s| {
-        s.mcp_enabled = body["enabled"] == true;
-        if s.mcp_enabled && s.key_hash.is_none() {
-            return Err(ApiError::new(409, "no_key"));
-        }
-        Ok(Json(mcp(s)))
-    })
+    app.system
+        .change(move |s| {
+            s.mcp_enabled = body["enabled"] == true;
+            if s.mcp_enabled && s.key_hash.is_none() {
+                return Err(ApiError::new(409, "no_key"));
+            }
+            Ok(Json(mcp(s)))
+        })
+        .await
 }
 async fn revoke(State(app): State<App>, h: HeaderMap) -> Result<StatusCode, ApiError> {
     app.require(&h, "mcp")?;
-    app.system.change(|s| {
-        s.mcp_enabled = false;
-        s.key_hash = None;
-        s.key_hint = None;
-        Ok(StatusCode::NO_CONTENT)
-    })
+    app.system
+        .change(move |s| {
+            s.mcp_enabled = false;
+            s.key_hash = None;
+            s.key_hint = None;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 async fn regenerate(State(app): State<App>, h: HeaderMap) -> Result<Json<Value>, ApiError> {
     app.require(&h, "mcp")?;
     let key = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
-    app.system.change(|s| {
-        s.mcp_enabled = true;
-        s.key_hash = Some(hex::encode(Sha256::digest(key.as_bytes())));
-        s.key_hint = Some(key[key.len() - 4..].into());
-        Ok(Json(json!({"key":key})))
-    })
+    app.system
+        .change(move |s| {
+            s.mcp_enabled = true;
+            s.key_hash = Some(hex::encode(Sha256::digest(key.as_bytes())));
+            s.key_hint = Some(key[key.len() - 4..].into());
+            Ok(Json(json!({"key":key})))
+        })
+        .await
 }
 fn bearer(app: &App, h: &HeaderMap) -> Result<(), ApiError> {
     let denied = || ApiError::new(401, "unauthenticated");
@@ -262,7 +292,7 @@ fn bearer(app: &App, h: &HeaderMap) -> Result<(), ApiError> {
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or_else(denied)?;
-    let settings = app.system.settings.lock().unwrap();
+    let settings = app.system.snapshot();
     if settings.mcp_enabled
         && settings.key_hash.as_deref() == Some(&hex::encode(Sha256::digest(key.as_bytes())))
     {
@@ -317,7 +347,9 @@ async fn put_logo(
     if oversized {
         return Err(ApiError::new(413, "too_large"));
     }
-    atomic_write(&app.data_dir.join("logo"), &record)?;
+    tokio::task::spawn_blocking(move || atomic_write(&app.data_dir.join("logo"), &record))
+        .await
+        .map_err(io::Error::other)??;
     Ok(StatusCode::NO_CONTENT)
 }
 async fn logo(State(app): State<App>) -> Result<Response, ApiError> {
@@ -359,5 +391,33 @@ pub fn start_services(app: App) {
         tokio::spawn(async move {
             tailscale::restore(&app).await;
         });
+    }
+}
+
+#[cfg(test)]
+mod store_tests {
+    use super::*;
+    #[tokio::test(flavor = "current_thread")]
+    async fn settings_readers_remain_responsive_until_durable_commit() {
+        let data = tempfile::tempdir().unwrap();
+        let system = Arc::new(System::new(data.path()).unwrap());
+        let worker = system.clone();
+        let (started, working) = tokio::sync::oneshot::channel();
+        let (resume, held) = std::sync::mpsc::channel();
+        let saving = tokio::spawn(async move {
+            worker
+                .change(move |s| {
+                    s.network["http_port"] = json!(8181);
+                    started.send(()).unwrap();
+                    held.recv_timeout(Duration::from_secs(2)).unwrap();
+                    Ok(())
+                })
+                .await
+        });
+        working.await.unwrap();
+        assert_eq!(system.network()["http_port"], 80);
+        resume.send(()).unwrap();
+        saving.await.unwrap().unwrap();
+        assert_eq!(system.network()["http_port"], 8181);
     }
 }

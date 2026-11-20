@@ -120,6 +120,16 @@ pub(super) fn is_pending(data: &Path) -> bool {
 pub(super) fn pending_job(data: &Path) -> io::Result<Option<String>> {
     Ok(read::<Trial>(&data.join("apps").join(PENDING))?.map(|trial| trial.job))
 }
+impl Outcome {
+    fn job_state(&self) -> Value {
+        json!({"id":self.job,"state":if self.healthy{"done"}else{"failed"},"progress":if self.healthy{100}else{0}})
+    }
+}
+pub(super) fn settled_job(data: &Path, id: &str) -> io::Result<Option<Value>> {
+    Ok(read::<Outcome>(&data.join("apps").join(RESULT))?
+        .filter(|r| r.job == id)
+        .map(|r| r.job_state()))
+}
 pub(super) fn settle_jobs(data: &Path, jobs: &mut BTreeMap<String, Value>) -> io::Result<bool> {
     let Some(result) = read::<Outcome>(&data.join("apps").join(RESULT))? else {
         return Ok(false);
@@ -127,7 +137,7 @@ pub(super) fn settle_jobs(data: &Path, jobs: &mut BTreeMap<String, Value>) -> io
     let Some(job) = jobs.get_mut(&result.job) else {
         return Ok(false);
     };
-    let completed = json!({"id":result.job,"state":if result.healthy{"done"}else{"failed"},"progress":if result.healthy{100}else{0}});
+    let completed = result.job_state();
     let changed = *job != completed;
     *job = completed;
     Ok(changed)

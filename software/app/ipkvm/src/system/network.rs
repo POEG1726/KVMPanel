@@ -75,18 +75,7 @@ fn ifconfig(cfg: &Value) -> String {
     )
 }
 
-pub(super) async fn apply(app: &App, cfg: &Value) -> io::Result<()> {
-    let _lock = app.system.net_apply.lock().await;
-    if &app.system.network() != cfg {
-        return Ok(());
-    }
-    let path = app.data_dir.join("interfaces");
-    // With the board's BusyBox init, ifupdown also manages the udhcpc process.
-    let mut down = Command::new("ifdown");
-    if path.exists() {
-        down.arg("-i").arg(&path);
-    }
-    let _ = down.arg("eth0").status().await?;
+fn write_interfaces(path: &Path, cfg: &Value) -> io::Result<()> {
     if cfg["mode"] == "dhcp" && cfg["dns"]["mode"] == "manual" {
         let servers = cfg["dns"]["servers"]
             .as_array()
@@ -110,7 +99,26 @@ pub(super) async fn apply(app: &App, cfg: &Value) -> io::Result<()> {
         atomic_write(hook, script.as_bytes())?;
         fs::set_permissions(hook, fs::Permissions::from_mode(0o700))?;
     }
-    atomic_write(&path, ifconfig(cfg).as_bytes())?;
+    atomic_write(path, ifconfig(cfg).as_bytes())
+}
+
+pub(super) async fn apply(app: &App, cfg: &Value) -> io::Result<()> {
+    let _lock = app.system.net_apply.lock().await;
+    if &app.system.network() != cfg {
+        return Ok(());
+    }
+    let path = app.data_dir.join("interfaces");
+    // With the board's BusyBox init, ifupdown also manages the udhcpc process.
+    let mut down = Command::new("ifdown");
+    if path.exists() {
+        down.arg("-i").arg(&path);
+    }
+    let _ = down.arg("eth0").status().await?;
+    let files = path.clone();
+    let settings = cfg.clone();
+    tokio::task::spawn_blocking(move || write_interfaces(&files, &settings))
+        .await
+        .map_err(io::Error::other)??;
     let rc = Command::new("ifup")
         .arg("-f")
         .arg("-i")
@@ -126,9 +134,13 @@ pub(super) async fn apply(app: &App, cfg: &Value) -> io::Result<()> {
         for addr in cfg["dns"]["servers"].as_array().into_iter().flatten() {
             dns.push_str(&format!("nameserver {} # eth0\n", addr.as_str().unwrap()));
         }
-        let resolv =
-            fs::canonicalize("/etc/resolv.conf").unwrap_or_else(|_| "/etc/resolv.conf".into());
-        atomic_write(&resolv, dns.as_bytes())?;
+        tokio::task::spawn_blocking(move || {
+            let resolv =
+                fs::canonicalize("/etc/resolv.conf").unwrap_or_else(|_| "/etc/resolv.conf".into());
+            atomic_write(&resolv, dns.as_bytes())
+        })
+        .await
+        .map_err(io::Error::other)??;
     }
     Ok(())
 }
@@ -160,10 +172,19 @@ pub(super) async fn put(
             return Err(bad_body("/dns/servers"));
         }
     }
-    app.system.change(|s| {
-        s.network = body.clone();
-        Ok(())
-    })?;
+    // Reconfigure the interface even if the HTTP client leaves during fsync.
+    tokio::spawn(store_and_apply(app, body))
+        .await
+        .map_err(io::Error::other)?
+}
+async fn store_and_apply(app: App, body: Value) -> Result<Json<Value>, ApiError> {
+    let saved = body.clone();
+    app.system
+        .change(move |s| {
+            s.network = saved;
+            Ok(())
+        })
+        .await?;
     if !app.sim {
         let cfg = body.clone();
         tokio::spawn(async move {
