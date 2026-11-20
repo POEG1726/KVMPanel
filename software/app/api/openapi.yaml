@@ -796,6 +796,82 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+  /api/scripts:
+    get:
+      operationId: listScripts
+      summary: Custom scripts runnable from the web (terminal permission)
+      responses:
+        '200':
+          description: Stored scripts
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ScriptInfo' }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/scripts/{name}:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: putScript
+      summary: Create or replace a script; body is the script text (text/plain). name must match [A-Za-z0-9._-]{1,64}.
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema: { type: string }
+      responses:
+        '201':
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScriptInfo' }
+        '400':
+          description: Invalid name (error=bad_name)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+    delete:
+      operationId: deleteScript
+      responses:
+        '204': *noContent
+        '400':
+          description: error=bad_name
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+  /api/scripts/{name}/run:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: runScript
+      summary: Run with /bin/sh on the board (60 s timeout) and return combined stdout/stderr
+      responses:
+        '200':
+          description: Finished
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [exit_code, output]
+                additionalProperties: false
+                properties:
+                  exit_code: { type: integer }
+                  output: { type: string }
+        '400':
+          description: error=bad_name
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
 components:
   securitySchemes:
     session:
@@ -1048,3 +1124,10 @@ components:
         state: { type: string, enum: [running, paused, done, failed, canceled] }
         received: { type: number, minimum: 0 }
         total: { type: number, minimum: 0, description: 0 when the server sent no length }
+    ScriptInfo:
+      type: object
+      required: [name, size]
+      additionalProperties: false
+      properties:
+        name: { type: string, pattern: '^[A-Za-z0-9._-]{1,64}$' }
+        size: { type: integer, minimum: 0 }

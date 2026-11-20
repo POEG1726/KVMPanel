@@ -84,3 +84,15 @@ Mock 的测试会对照 `openapi.yaml` 校验每一个响应。初始账号为 `
 - `config.video.frame_diff` 为 true 时，画面没变就不发。客户端不能把“一段时间没收到帧”当成断线，判断连接状态请看 `/api/ws`。
 - 上一帧还没发完时，新帧直接丢弃（背压），所以慢速网络下帧率会自动降下来。
 - 截图：`GET /api/stream/snapshot.jpg`。EDID：`/api/video/edid`。详见 `openapi.yaml`。
+
+## 终端：`/api/terminal`
+
+- 地址是 `/api/terminal?kind=local` 或 `?kind=serial`，要求有 `terminal` 权限。
+- 关闭码：
+  - 4401：未登录。
+  - 4403：没有 `terminal` 权限。
+  - 4404：`kind=serial` 但 `config.serial.device` 为 null，这时前端不显示串口标签页。
+- 二进制消息双向传原始终端字节，直接交给 xterm.js。
+- 文本消息只有一种：`{"t":"resize","cols":120,"rows":40}`。
+- 服务端可能在握手完成后立刻发出第一段输出，客户端要在连接建立前就挂好消息监听。
+- 自定义脚本用 `/api/scripts` 管理，详见 `openapi.yaml`。

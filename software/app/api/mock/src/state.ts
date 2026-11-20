@@ -73,6 +73,7 @@ export interface State {
   mediaMount: MediaMount | null;
   jobs: DownloadJob[];
   share: { exported_to_host: boolean };
+  scripts: Map<string, string>;
 }
 
 export function hashPassword(password: string, salt = randomBytes(16).toString('hex')): { salt: string; hash: string } {
@@ -108,5 +109,6 @@ export function createState(opts: { now?: () => number; sleep?: (ms: number) => 
     mediaMount: null,
     jobs: [],
     share: { exported_to_host: false },
+    scripts: new Map(),
   };
 }

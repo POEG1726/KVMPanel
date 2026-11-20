@@ -9,6 +9,7 @@ import { registerStream } from './routes/stream.js';
 import { registerPower } from './routes/power.js';
 import { registerFiles } from './routes/files.js';
 import { registerMedia } from './routes/media.js';
+import { registerTerminal } from './routes/terminal.js';
 
 export interface ServerOptions {
   now?: () => number;
@@ -37,6 +38,7 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
   registerPower(app, state);
   registerFiles(app, state);
   registerMedia(app, state);
+  registerTerminal(app, state);
 
   return app;
 }
