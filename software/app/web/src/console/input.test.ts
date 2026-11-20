@@ -20,8 +20,38 @@ describe('input messages', () => {
 
   it('clamps relative motion and wheel to +-127', () => {
     expect(relMessage(500, -500, 1)).toEqual({ t: 'mouse_rel', dx: 127, dy: -127, buttons: 1 });
-    expect(wheelMessage(-900)).toEqual({ t: 'wheel', dy: -127 });
-    expect(wheelMessage(3)).toEqual({ t: 'wheel', dy: 3 });
+  });
+
+  describe('wheel', () => {
+    it('turns 100 px into one notch and clamps to +-127', () => {
+      expect(wheelMessage(100)).toEqual({ t: 'wheel', dy: 1 });
+      expect(wheelMessage(-300)).toEqual({ t: 'wheel', dy: -3 });
+      expect(wheelMessage(-100000)).toEqual({ t: 'wheel', dy: -127 });
+      expect(wheelMessage(3)).toEqual({ t: 'wheel', dy: 0 });
+    });
+
+    it('normalises line and page deltas to pixels first (x40, x800)', () => {
+      const LINE = 1;
+      const PAGE = 2;
+      expect(wheelMessage(3, { deltaMode: LINE })).toEqual({ t: 'wheel', dy: 1 }); // 120 px -> 1.2 -> 1
+      expect(wheelMessage(5, { deltaMode: LINE })).toEqual({ t: 'wheel', dy: 2 }); // 200 px
+      expect(wheelMessage(1, { deltaMode: PAGE })).toEqual({ t: 'wheel', dy: 8 }); // 800 px
+      expect(wheelMessage(-1, { deltaMode: PAGE })).toEqual({ t: 'wheel', dy: -8 });
+    });
+
+    it('negates for reverse and multiplies by the speed before clamping', () => {
+      expect(wheelMessage(200, { dir: 'reverse' })).toEqual({ t: 'wheel', dy: -2 });
+      expect(wheelMessage(-200, { dir: 'reverse' })).toEqual({ t: 'wheel', dy: 2 });
+      expect(wheelMessage(200, { dir: 'normal', speed: 5 })).toEqual({ t: 'wheel', dy: 10 });
+      expect(wheelMessage(200, { dir: 'reverse', speed: 10 })).toEqual({ t: 'wheel', dy: -20 });
+      expect(wheelMessage(1, { deltaMode: 2, speed: 10 })).toEqual({ t: 'wheel', dy: 80 });
+      expect(wheelMessage(-2, { deltaMode: 2, speed: 10 })).toEqual({ t: 'wheel', dy: -127 });
+    });
+
+    it('never produces negative zero', () => {
+      expect(Object.is((wheelMessage(-3) as { dy: number }).dy, 0)).toBe(true);
+      expect(Object.is((wheelMessage(3, { dir: 'reverse' }) as { dy: number }).dy, 0)).toBe(true);
+    });
   });
 
   it('uses the contract bit mask', () => {

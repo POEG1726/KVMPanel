@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StrictMode, type ReactNode } from 'react';
 import { EventsProvider } from '../api/EventsProvider';
 import { configureSockets, type SocketFactory, type WebSocketLike } from '../api/socket';
+import type { Config } from '../api/client';
+import { CONFIG_KEY } from '../session/useSession';
 import { loginCookie, mockUrl, wsFactory } from '../../test/mock';
 import { VideoCanvas } from './VideoCanvas';
 import { useStream } from './useStream';
@@ -163,5 +165,27 @@ describe('VideoCanvas', () => {
     await act(async () => resolvers[1]({ width: 8, height: 8, close() {} }));
     await waitFor(() => expect(drawImage).toHaveBeenCalled());
     expect(decoded).toEqual([1, 3]);
+  });
+
+  it('applies config.hid wheel_dir, wheel_speed and deltaMode to wheel events', async () => {
+    const f = fakeFactory();
+    configureSockets({ base: 'http://x', create: f.create });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(CONFIG_KEY, { hid: { mouse_mode: 'abs', wheel_dir: 'reverse', wheel_speed: 3 } } as Config);
+    const seen: unknown[] = [];
+    render(
+      <QueryClientProvider client={qc}>
+        <EventsProvider>
+          <VideoCanvas scale="fit" onPointer={(m) => seen.push(m)} />
+        </EventsProvider>
+      </QueryClientProvider>,
+    );
+    const canvas = screen.getByRole('application');
+    fireEvent.wheel(canvas, { deltaY: 200, deltaMode: 0 });
+    fireEvent.wheel(canvas, { deltaY: 1, deltaMode: 2 });
+    expect(seen).toEqual([
+      { t: 'wheel', dy: -6 },
+      { t: 'wheel', dy: -24 },
+    ]);
   });
 });

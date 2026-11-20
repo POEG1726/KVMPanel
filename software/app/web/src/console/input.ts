@@ -18,8 +18,25 @@ export function relMessage(dx: number, dy: number, buttons: number): ClientMessa
   return { t: 'mouse_rel', dx: clamp127(dx), dy: clamp127(dy), buttons };
 }
 
-export function wheelMessage(deltaY: number): ClientMessage {
-  return { t: 'wheel', dy: clamp127(deltaY) };
+const PX_PER_LINE = 40;
+const PX_PER_PAGE = 800;
+const PX_PER_NOTCH = 100;
+
+export interface WheelOptions {
+  /** WheelEvent.deltaMode: 0 pixels, 1 lines, 2 pages. */
+  deltaMode?: number;
+  /** config.hid.wheel_dir: 'reverse' negates. */
+  dir?: 'normal' | 'reverse';
+  /** config.hid.wheel_speed, 1-10. */
+  speed?: number;
+}
+
+/** Wheel delta -> notches: normalise to pixels, 100 px per notch, scale by speed, clamp to +-127. */
+export function wheelMessage(deltaY: number, { deltaMode = 0, dir = 'normal', speed = 1 }: WheelOptions = {}): ClientMessage {
+  const px = deltaY * (deltaMode === 1 ? PX_PER_LINE : deltaMode === 2 ? PX_PER_PAGE : 1);
+  const notches = Math.round(px / PX_PER_NOTCH) * speed * (dir === 'reverse' ? -1 : 1);
+  // `|| 0` turns -0 into 0 so the JSON and equality checks never see a negative zero.
+  return { t: 'wheel', dy: clamp127(notches) || 0 };
 }
 
 /** Contract bit mask (1 left, 2 right, 4 middle, 8 back, 16 forward); MouseEvent.buttons uses the same bits. */

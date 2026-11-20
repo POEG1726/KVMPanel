@@ -20,14 +20,18 @@ interface Props {
   scale: VideoScale;
   /** Called with every pointer/wheel message that was sent. */
   onPointer?: (m: ClientMessage) => void;
+  /** CSS cursor over the remote screen (the local cursor style setting). */
+  cursor?: string;
 }
 
 /** Draws the newest decoded stream frame and turns focused keyboard and pointer input into HID messages. */
-export function VideoCanvas({ scale, onPointer }: Props) {
+export function VideoCanvas({ scale, onPointer, cursor }: Props) {
   const { t } = useTranslation();
   const { send } = useEventsContext();
   const config = useQuery({ queryKey: CONFIG_KEY, queryFn: () => unwrap(api.GET('/api/config')), staleTime: Infinity });
   const relative = config.data?.hid.mouse_mode === 'rel';
+  const wheelDir = config.data?.hid.wheel_dir;
+  const wheelSpeed = config.data?.hid.wheel_speed;
 
   const canvas = useRef<HTMLCanvasElement>(null);
   const latest = useRef<ImageBitmap | null>(null);
@@ -126,11 +130,11 @@ export function VideoCanvas({ scale, onPointer }: Props) {
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      emit(wheelMessage(e.deltaY));
+      emit(wheelMessage(e.deltaY, { deltaMode: e.deltaMode, dir: wheelDir, speed: wheelSpeed }));
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [emit]);
+  }, [emit, wheelDir, wheelSpeed]);
 
   const releaseKeys = () => {
     pressed.current.forEach((code) => send({ t: 'key', code, down: false }));
@@ -172,7 +176,7 @@ export function VideoCanvas({ scale, onPointer }: Props) {
       tabIndex={0}
       role="application"
       aria-label={t('console.screen')}
-      style={{ display: 'block', margin: 'auto', outline: 'none', ...SCALE_STYLE[scale] }}
+      style={{ display: 'block', margin: 'auto', outline: 'none', cursor, ...SCALE_STYLE[scale] }}
       onKeyDown={onKey}
       onKeyUp={onKey}
       onBlur={releaseKeys}
