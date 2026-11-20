@@ -537,3 +537,15 @@ describe('own password change', () => {
     expect(ownPasswordChangeActive()).toBe(false);
   });
 });
+
+it('keeps keyboard focus inside the settings dialog at both ends of the tab order', async () => {
+  mount('about');
+  const dialog = screen.getByRole('dialog');
+  const close = within(dialog).getByRole('button', { name: t('common.close') });
+  const link = await within(dialog).findByRole('link');
+  close.focus();
+  fireEvent.keyDown(close, { key: 'Tab', shiftKey: true });
+  expect(link).toHaveFocus();
+  fireEvent.keyDown(link, { key: 'Tab' });
+  expect(close).toHaveFocus();
+});

@@ -45,6 +45,42 @@ describe('MenuBar', () => {
     expect(names).toEqual([t('menu.video'), t('menu.keyboard'), t('menu.mouse'), t('menu.media'), t('menu.workspace'), t('menu.power'), t('menu.wol'), t('menu.settings'), t('menu.fullscreen')]);
   });
 
+  it('keeps the bar and the open panel in view after a drag and a viewport shrink', () => {
+    vi.stubGlobal('innerWidth', 900);
+    vi.stubGlobal('innerHeight', 600);
+    const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute('role') === 'toolbar' ? 320 : 280;
+    });
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(48);
+    const anchor = vi.spyOn(HTMLElement.prototype, 'offsetLeft', 'get').mockReturnValue(290);
+    try {
+      mount('pinned');
+      const bar = screen.getByRole('toolbar');
+      const handle = screen.getByTitle(t('menu.drag'));
+      fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 20, clientY: 10 });
+      fireEvent.pointerMove(handle, { pointerId: 1, clientX: 5000, clientY: 5000 });
+      fireEvent.pointerUp(handle, { pointerId: 1 });
+      expect(bar).toHaveStyle({ left: '576px', top: '548px' });
+
+      fireEvent.click(screen.getByRole('button', { name: t('menu.power') }));
+      const panel = screen.getByRole('button', { name: t('menu.power') }).nextElementSibling as HTMLElement;
+      expect(panel.style.bottom).toContain('100%');
+      expect(parseFloat(bar.style.left) + parseFloat(panel.style.left) + 280).toBeLessThanOrEqual(900);
+
+      vi.stubGlobal('innerWidth', 400);
+      vi.stubGlobal('innerHeight', 260);
+      fireEvent(window, new Event('resize'));
+      expect(bar).toHaveStyle({ left: '76px', top: '208px' });
+      expect(parseFloat(bar.style.left) + parseFloat(panel.style.left) + 280).toBeLessThanOrEqual(400);
+      expect(parseFloat(panel.style.maxHeight)).toBeLessThanOrEqual(208);
+    } finally {
+      width.mockRestore();
+      height.mockRestore();
+      anchor.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('hides itself after 3 seconds in auto_hide mode and returns on hover', () => {
     mount('auto_hide');
     const bar = screen.getByRole('toolbar');

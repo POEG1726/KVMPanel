@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useMemo, useState, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useEventsContext } from '../../api/EventsProvider';
 import type { ClientMessage } from '../../api/ws-types';
@@ -6,13 +6,11 @@ import { Button, Select, toast } from '../../ui';
 import { ErrorLine, useConfig, usePatchConfig } from './hooks';
 import { ScreenKeyboard } from './ScreenKeyboard';
 import { loadShortcuts, MAX_SHORTCUT_KEYS, saveShortcuts, type Shortcut } from './shortcuts';
+import { usePaste } from './PasteProvider';
 import s from './menus.module.css';
 
 /** The contract's `paste.text` limit: 64 KiB of UTF-8. */
 export const MAX_PASTE = 65536;
-/** How long to wait for the server to reject a paste (`unmappable`) before calling it sent. */
-export const PASTE_ACK_MS = 1000;
-
 const LAYOUTS = ['us', 'uk', 'de', 'fr', 'es', 'it', 'jp', 'ru'];
 const CAD = ['ControlLeft', 'AltLeft', 'Delete'];
 
@@ -23,29 +21,15 @@ const shortcutMessage = (keys: string[]): ClientMessage => ({ t: 'shortcut', key
 
 export function KeyboardMenu() {
   const { t } = useTranslation();
-  const { send, onServerError } = useEventsContext();
+  const { send, connected } = useEventsContext();
   const hid = useConfig()?.hid;
   const { patch, error } = usePatchConfig();
   const [section, setSection] = useState<Section | null>(null);
   const toggle = (next: Section) => setSection((cur) => (cur === next ? null : next));
 
-  const [text, setText] = useState('');
+  const paste = usePaste();
+  const { text, setText } = paste;
   const bytes = useMemo(() => new TextEncoder().encode(text).length, [text]);
-  const [pasteError, setPasteError] = useState<string | null>(null);
-  const ack = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => void (ack.current && clearTimeout(ack.current)), []);
-  useEffect(
-    () =>
-      onServerError((code) => {
-        // The server answers a bad paste with an error message; that cancels the pending "sent".
-        if (ack.current) clearTimeout(ack.current);
-        ack.current = null;
-        const message = t(`error.${code}`, t('error.unknown'));
-        setPasteError(message);
-        toast(message, 'error');
-      }),
-    [onServerError, t],
-  );
   const [shortcuts, setShortcuts] = useState<Shortcut[]>(loadShortcuts);
   const [name, setName] = useState('');
   const [keys, setKeys] = useState<string[]>([]);
@@ -56,8 +40,8 @@ export function KeyboardMenu() {
   };
 
   const record = (e: KeyboardEvent<HTMLInputElement>) => {
-    // Tab keeps moving focus; every other key is recorded, and Escape must not also close the panel.
-    if (e.code === 'Tab') return;
+    // Plain Tab leaves the recorder. Modified Tab can be part of a remote shortcut.
+    if (e.code === 'Tab' && !(e.ctrlKey || e.altKey || e.metaKey || e.shiftKey)) return;
     e.preventDefault();
     if (e.nativeEvent.repeat || !e.code) return;
     setKeys((cur) => (cur.includes(e.code) || cur.length >= MAX_SHORTCUT_KEYS ? cur : [...cur, e.code]));
@@ -83,21 +67,12 @@ export function KeyboardMenu() {
           <span className={`${s.count} ${bytes > MAX_PASTE ? s.countOver : ''}`}>{t('keyboard.pasteCount', { n: bytes, max: MAX_PASTE })}</span>
           <Button
             variant="primary"
-            disabled={bytes === 0 || bytes > MAX_PASTE}
-            onClick={() => {
-              setPasteError(null);
-              send({ t: 'paste', text });
-              if (ack.current) clearTimeout(ack.current);
-              ack.current = setTimeout(() => {
-                ack.current = null;
-                setText('');
-                toast(t('keyboard.pasteSent'));
-              }, PASTE_ACK_MS);
-            }}
+            disabled={!connected || paste.pending || bytes === 0 || bytes > MAX_PASTE}
+            onClick={paste.submit}
           >
             {t('keyboard.pasteSend')}
           </Button>
-          <ErrorLine message={pasteError} />
+          <ErrorLine message={paste.error && t('error.' + paste.error)} />
         </div>
       )}
 

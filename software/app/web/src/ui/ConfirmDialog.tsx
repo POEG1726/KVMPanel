@@ -18,7 +18,12 @@ export function ConfirmDialog({ title, message, confirmLabel, danger, onConfirm,
   const { t } = useTranslation();
   const id = useId();
   const cancel = useRef<HTMLButtonElement>(null);
-  useEffect(() => cancel.current?.focus(), []);
+  const confirm = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement;
+    cancel.current?.focus();
+    return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
+  }, []);
   // Portalled to <body>: ancestors with transform/backdrop-filter would otherwise clip position: fixed.
   // data-keep-open tells the menu bar that clicks in here are not outside clicks.
   return createPortal(
@@ -26,6 +31,10 @@ export function ConfirmDialog({ title, message, confirmLabel, danger, onConfirm,
       className={s.mask}
       data-keep-open
       onKeyDown={(e) => {
+        if (e.key === 'Tab') {
+          e.preventDefault();
+          (document.activeElement === cancel.current ? confirm : cancel).current?.focus();
+        }
         if (e.key !== 'Escape') return;
         e.preventDefault();
         onCancel();
@@ -38,7 +47,7 @@ export function ConfirmDialog({ title, message, confirmLabel, danger, onConfirm,
           <Button ref={cancel} onClick={onCancel}>
             {t('common.cancel')}
           </Button>
-          <Button variant={danger ? 'danger' : 'primary'} onClick={onConfirm}>
+          <Button ref={confirm} variant={danger ? 'danger' : 'primary'} onClick={onConfirm}>
             {confirmLabel}
           </Button>
         </div>

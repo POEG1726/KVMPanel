@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useEventsContext } from '../api/EventsProvider';
 import { useUi } from '../state/ui';
@@ -90,12 +90,38 @@ const PANELS: Record<MenuId, ComponentType> = {
 /** Left of the workspace button; the rest follow it. */
 const BEFORE_WORKSPACE: MenuId[] = ['video', 'keyboard', 'mouse', 'media'];
 const AFTER_WORKSPACE: MenuId[] = ['power', 'wol'];
-/** Panels near the right end open leftwards so they stay on screen. */
-const ALIGN_RIGHT = new Set<MenuId>(['power', 'wol']);
+const EDGE = 4;
+const PANEL_GAP = 6;
+type Position = { x: number; y: number };
+
+function keepInView(value: number, size: number, available: number) {
+  return Math.max(EDGE, Math.min(value, available - size - EDGE));
+}
+
+// Use the wrapped toolbar's actual size and the open button as the panel's anchor.
+function placeBar(bar: HTMLElement, panel: HTMLElement | null, preferred: Position | null) {
+  const x = keepInView(preferred?.x ?? (innerWidth - bar.offsetWidth) / 2, bar.offsetWidth, innerWidth);
+  const y = keepInView(preferred?.y ?? 10, bar.offsetHeight, innerHeight);
+  bar.style.left = x + 'px';
+  bar.style.top = y + 'px';
+  if (!panel) return;
+
+  const trigger = panel.previousElementSibling as HTMLElement;
+  const left = keepInView(x + bar.clientLeft + trigger.offsetLeft, panel.offsetWidth, innerWidth);
+  panel.style.left = (left - x - bar.clientLeft) + 'px';
+  const above = y - EDGE - PANEL_GAP;
+  const below = innerHeight - y - bar.offsetHeight - EDGE - PANEL_GAP;
+  const opensUp = above > below && below < panel.scrollHeight + 2;
+  const edge = `calc(100% + ${PANEL_GAP}px)`;
+  panel.style.top = opensUp ? 'auto' : edge;
+  panel.style.bottom = opensUp ? edge : 'auto';
+  panel.style.maxHeight = Math.max(0, opensUp ? above : below) + 'px';
+}
 
 export function MenuBar() {
   const { t } = useTranslation();
-  const { status } = useEventsContext();
+  const { status, latencyMs } = useEventsContext();
+  const logoRevision = useUi(st => st.logoRevision);
   const web = useConfig()?.web;
   const autoHide = web?.menubar === 'auto_hide';
   const openWorkspace = useUi((u) => u.openWorkspace);
@@ -103,21 +129,42 @@ export function MenuBar() {
 
   const [open, setOpen] = useState<MenuId | null>(null);
   const [hidden, setHidden] = useState(false);
+  const [focused, setFocused] = useState(false);
   const [hover, setHover] = useState(false);
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const preferred = useRef<Position | null>(null);
+  const panel = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ px: number; py: number; ox: number; oy: number } | null>(null);
+  const drag = useRef<{ pointer: number; dx: number; dy: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const bar = root.current!;
+    const dropdown = panel.current;
+    const place = () => placeBar(bar, dropdown, preferred.current);
+    place();
+    // A language, status, logo or panel change can alter dimensions independently of the viewport.
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(place) : null;
+    observer?.observe(bar);
+    if (dropdown) {
+      observer?.observe(dropdown);
+      if (dropdown.firstElementChild) observer?.observe(dropdown.firstElementChild);
+    }
+    window.addEventListener('resize', place);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', place);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!autoHide || open) {
       setHidden(false);
       return;
     }
-    if (hover || hidden) return;
+    if (hover || focused || hidden) return;
     const timer = setTimeout(() => setHidden(true), AUTO_HIDE_MS);
     return () => clearTimeout(timer);
-  }, [autoHide, open, hover, hidden]);
+  }, [autoHide, open, hover, focused, hidden]);
 
   useEffect(() => {
     if (!open) return;
@@ -165,7 +212,7 @@ export function MenuBar() {
           {t(`menu.${id}`)}
         </button>
         {open === id && (
-          <div className={`${s.dd} ${ALIGN_RIGHT.has(id) ? s.ddRight : ''}`}>
+          <div className={s.dd} ref={panel}>
             <Panel />
           </div>
         )}
@@ -175,14 +222,25 @@ export function MenuBar() {
 
   return (
     <>
-      <div className={s.hotzone} data-testid="menubar-hotzone" onPointerEnter={() => setHidden(false)} />
+      <div className={s.hotzone} data-testid="menubar-hotzone" role={hidden ? 'button' : undefined}
+        aria-label={hidden ? t('menu.bar') : undefined} tabIndex={hidden ? 0 : -1}
+        onPointerEnter={() => setHidden(false)} onClick={() => setHidden(false)}
+        onKeyDown={e => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
+          // Remove inert before moving focus into the revealed toolbar.
+          root.current?.removeAttribute('inert');
+          setHidden(false);
+          root.current?.querySelector('button')?.focus();
+        }} />
       <div
         ref={root}
         role="toolbar"
         aria-label={t('menu.bar')}
-        data-hidden={hidden}
+        data-hidden={hidden} {...(hidden ? { inert: '' } : {})}
+        onFocus={() => setFocused(true)}
+        onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false); }}
         className={`${s.bar} ${hidden ? s.hidden : ''}`}
-        style={{ transform: `translate(calc(-50% + ${offset.x}px), ${hidden ? '-120%' : `${offset.y}px`})` }}
         onPointerEnter={() => setHover(true)}
         onPointerLeave={() => setHover(false)}
       >
@@ -190,16 +248,23 @@ export function MenuBar() {
           className={s.logo}
           title={t('menu.drag')}
           onPointerDown={(e) => {
+            if (e.button !== 0 || drag.current) return;
+            const bounds = root.current!.getBoundingClientRect();
+            drag.current = { pointer: e.pointerId, dx: e.clientX - bounds.left, dy: e.clientY - bounds.top };
             e.currentTarget.setPointerCapture?.(e.pointerId);
-            drag.current = { px: e.clientX, py: e.clientY, ox: offset.x, oy: offset.y };
           }}
           onPointerMove={(e) => {
             const d = drag.current;
-            if (d) setOffset({ x: d.ox + e.clientX - d.px, y: Math.max(0, d.oy + e.clientY - d.py) });
+            if (!d || d.pointer !== e.pointerId) return;
+            preferred.current = { x: e.clientX - d.dx, y: e.clientY - d.dy };
+            placeBar(root.current!, panel.current, preferred.current);
           }}
-          onPointerUp={() => (drag.current = null)}
-          onPointerCancel={() => (drag.current = null)}
+          onPointerUp={(e) => { if (drag.current?.pointer === e.pointerId) drag.current = null; }}
+          onPointerCancel={(e) => { if (drag.current?.pointer === e.pointerId) drag.current = null; }}
+          onLostPointerCapture={(e) => { if (drag.current?.pointer === e.pointerId) drag.current = null; }}
         >
+          <img key={logoRevision} src={'/api/branding/logo?v=' + logoRevision} alt="" hidden
+            onLoad={e => { e.currentTarget.hidden = false; }} onError={e => { e.currentTarget.hidden = true; }} />
           KVM<i>Panel</i>
         </span>
         <span className={s.sep} />
@@ -210,7 +275,7 @@ export function MenuBar() {
         </button>
         {AFTER_WORKSPACE.map(menuButton)}
         <span className={s.sep} />
-        <span className={s.status}>{hdmi?.signal ? `${hdmi.width}×${hdmi.height} · ${status?.stream.fps ?? 0} fps` : t('menu.noSignal')}</span>
+        <span className={s.status}>{hdmi?.signal ? `${hdmi.width}×${hdmi.height} · ${status?.stream.fps ?? 0} fps` : t('menu.noSignal')}{latencyMs !== null && ` · ${latencyMs} ms`}</span>
         <span className={s.locks} aria-hidden="true">
           <span className={locks?.num ? s.lockOn : undefined}>NUM</span>
           <span className={locks?.caps ? s.lockOn : undefined}>CAPS</span>

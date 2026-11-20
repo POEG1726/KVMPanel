@@ -109,6 +109,62 @@ describe('VideoCanvas', () => {
     expect(f.sentOn('/api/ws').map((m) => JSON.parse(m).down)).toEqual([true, false]);
   });
 
+  it('sends held keys once and releases the held mouse button and keys when the browser loses focus', () => {
+    const f = fakeFactory();
+    configureSockets({ base: 'http://x', create: f.create });
+    render(wrap(<VideoCanvas scale="fit" />));
+    const canvas = screen.getByRole('application');
+    fireEvent.pointerDown(canvas, { buttons: 1, clientX: 10, clientY: 20 });
+    fireEvent.keyDown(canvas, { code: 'KeyA' });
+    fireEvent.keyDown(canvas, { code: 'KeyA', repeat: true });
+    fireEvent(window, new Event('blur'));
+    fireEvent.blur(canvas);
+    const messages = f.sentOn('/api/ws').map(m => JSON.parse(m));
+    expect(messages.filter(m => m.t === 'key').map(m => m.down)).toEqual([true, false]);
+    expect(messages.filter(m => m.t === 'mouse_abs').map(m => m.buttons)).toEqual([1, 0]);
+  });
+
+  it('only forwards relative movement while locked and releases buttons on lock loss', async () => {
+    const f = fakeFactory();
+    configureSockets({ base: 'http://x', create: f.create });
+    const qc = new QueryClient();
+    qc.setQueryData(CONFIG_KEY, { hid: { mouse_mode: 'rel' } } as Config);
+    render(<QueryClientProvider client={qc}><EventsProvider><VideoCanvas scale="fit" /></EventsProvider></QueryClientProvider>);
+    const canvas = screen.getByRole('application');
+    const move = () => {
+      const event = new PointerEvent('pointermove', { bubbles: true, buttons: 1 });
+      Object.defineProperty(event, 'movementX', { value: 4 });
+      fireEvent(canvas, event);
+    };
+    move();
+    expect(f.sentOn('/api/ws')).toEqual([]);
+    Object.defineProperty(document, 'pointerLockElement', { configurable: true, value: canvas });
+    try {
+      move();
+      await waitFor(() => expect(f.sentOn('/api/ws')).toContain(JSON.stringify({ t: 'mouse_rel', dx: 4, dy: 0, buttons: 1 })));
+    } finally {
+      Reflect.deleteProperty(document, 'pointerLockElement');
+    }
+    fireEvent(document, new Event('pointerlockchange'));
+    expect(JSON.parse(f.sentOn('/api/ws').at(-1)!)).toEqual({ t: 'mouse_rel', dx: 0, dy: 0, buttons: 0 });
+  });
+
+  it('closes a bitmap decoded after unmount without drawing it', async () => {
+    const f = fakeFactory();
+    configureSockets({ base: 'http://x', create: f.create });
+    let finish!: (bitmap: unknown) => void;
+    const close = vi.fn();
+    const drawImage = vi.fn();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage } as never);
+    vi.stubGlobal('createImageBitmap', () => new Promise(resolve => { finish = resolve; }));
+    const view = render(wrap(<VideoCanvas scale="fit" />));
+    f.socks.find(sock => sock.url.endsWith('/api/stream'))!.onmessage?.({ data: new ArrayBuffer(2) });
+    view.unmount();
+    await act(async () => finish({ width: 1, height: 1, close }));
+    expect(close).toHaveBeenCalledOnce();
+    expect(drawImage).not.toHaveBeenCalled();
+  });
+
   it('draws a frame from the mock stream within 2 seconds', async () => {
     vi.unstubAllGlobals();
     const cookie = await loginCookie();

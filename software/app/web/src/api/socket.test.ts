@@ -127,6 +127,39 @@ describe('connectSocket', () => {
     expect(FakeSocket.all).toHaveLength(1);
   });
 
+  it('treats a trailing base slash as an origin and drops callbacks after closing while connecting', () => {
+    configureSockets({ base: 'https://kvm.test/', create: url => new FakeSocket(url) });
+    const onOpen = vi.fn();
+    const onMessage = vi.fn();
+    const handle = connectSocket('/api/ws', { onOpen, onMessage });
+    const sock = FakeSocket.all[0];
+    expect(sock.url).toBe('wss://kvm.test/api/ws');
+    const lateOpen = sock.onopen;
+    handle.close();
+    sock.open();
+    expect(sock.readyState).toBe(3);
+    lateOpen?.({});
+    sock.onmessage?.({ data: 'stale frame' });
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(onMessage).not.toHaveBeenCalled();
+  });
+
+  it.each([[1011, 'device_unavailable'], [4400, 'bad_kind']] as const)('stops automatic terminal retries on %i', (code, policy) => {
+    const onClosed = vi.fn();
+    connectSocket('/api/terminal?kind=local', { onClosed, onMessage() {} });
+    FakeSocket.all[0].drop(code);
+    expect(onClosed).toHaveBeenCalledWith(policy);
+    vi.advanceTimersByTime(10000);
+    expect(FakeSocket.all).toHaveLength(1);
+  });
+
+  it('a consumer can close the handle inside its disconnect callback', () => {
+    const handle = connectSocket('/api/ws', { onMessage() {}, onClosed() { handle.close(); } });
+    FakeSocket.all[0].drop(1012);
+    vi.advanceTimersByTime(2000);
+    expect(FakeSocket.all).toHaveLength(1);
+  });
+
   it('forwards messages and sends only while open', () => {
     const got: unknown[] = [];
     const s = connectSocket('/api/ws', { onMessage: (d) => got.push(d) });

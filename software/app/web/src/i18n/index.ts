@@ -13,6 +13,7 @@ export function pickLanguage(setting: LanguageSetting, navigatorLanguages: reado
   return first.startsWith('zh') ? 'zh' : 'en';
 }
 
+i18n.on('languageChanged', (language) => { document.documentElement.lang = language; });
 void i18n.use(initReactI18next).init({
   resources: { en: { translation: en }, zh: { translation: zh } },
   lng: pickLanguage('auto', typeof navigator === 'undefined' ? [] : navigator.languages),

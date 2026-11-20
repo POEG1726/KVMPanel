@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, errorKey, unwrap } from '../api/client';
-import { ME_KEY } from './useSession';
+import { CONFIG_KEY, ME_KEY } from './useSession';
 
 const MIN_LENGTH = 6;
 
@@ -24,6 +24,7 @@ export function ChangePasswordDialog() {
     setError(null);
     try {
       await unwrap(api.POST('/api/users/me/password', { body: { old, new: next } }));
+      await qc.invalidateQueries({ queryKey: CONFIG_KEY });
       await qc.invalidateQueries({ queryKey: ME_KEY });
     } catch (err) {
       setError(err instanceof ApiError ? t(errorKey(err), t('error.unknown')) : t('error.unknown'));

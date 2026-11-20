@@ -32,7 +32,9 @@ export function LoginPage() {
       navigate('/', { replace: true });
     } catch (err) {
       if (err instanceof ApiError && err.code === 'login_locked') {
-        setLockedFor(Number(err.detail?.retry_after_s ?? 0));
+        const seconds = Number(err.detail?.retry_after_s);
+        if (Number.isFinite(seconds) && seconds > 0) setLockedFor(Math.ceil(seconds));
+        else setErrorText(t(errorKey(err)));
       } else {
         setErrorText(err instanceof ApiError ? t(errorKey(err), t('error.unknown')) : t('error.unknown'));
       }

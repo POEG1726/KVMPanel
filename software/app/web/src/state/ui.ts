@@ -18,7 +18,8 @@ function loadCursor(): CursorStyle {
 interface UiState {
   /** True while either the workspace or settings is floating above the console. */
   floatingOpen: boolean;
-  setFloatingOpen(open: boolean): void;
+  logoRevision: number;
+  refreshLogo(): void;
   workspaceOpen: boolean;
   openWorkspace(mode?: 'float' | 'tab'): void;
   closeWorkspace(): void;
@@ -35,7 +36,8 @@ interface UiState {
 
 export const useUi = create<UiState>((set) => ({
   floatingOpen: false,
-  setFloatingOpen: (open) => set({ floatingOpen: open }),
+  logoRevision: 0,
+  refreshLogo: () => set(st => ({ logoRevision: st.logoRevision + 1 })),
   workspaceOpen: false,
   openWorkspace: (mode) => {
     if (mode === 'tab') window.open('/workspace');

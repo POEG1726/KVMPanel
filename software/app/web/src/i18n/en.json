@@ -26,6 +26,15 @@
     "title": "Console",
     "screen": "Remote screen"
   },
+  "float": {
+    "move": "Move with the arrow keys",
+    "popOut": "Open in a new tab",
+    "newTab": "New tab",
+    "minimize": "Minimize",
+    "maximize": "Maximize",
+    "restore": "Restore",
+    "resize": "Resize with the arrow keys"
+  },
   "workspace": {
     "title": "Workspace",
     "terminal": "Terminal",
@@ -39,6 +48,7 @@
     "popupBlocked": "Allow pop-ups to open the workspace."
   },
   "error": {
+    "bad_message": "The input message was invalid.",
     "unknown": "Something went wrong.",
     "invalid_credentials": "Wrong username or password.",
     "login_locked": "Too many failed attempts.",
@@ -72,7 +82,12 @@
     "bad_action": "Unknown action.",
     "no_signal": "There is no HDMI signal.",
     "is_dir": "A folder already has that name.",
-    "no_space": "There is not enough free space."
+    "no_space": "There is not enough free space.",
+    "bad_name": "The name is not valid.",
+    "user_exists": "An account with that name already exists.",
+    "device_exists": "A device with that MAC address already exists.",
+    "internal": "The device encountered an internal error.",
+    "invalid_json": "The request contained invalid JSON."
   },
   "common": {
     "cancel": "Cancel",
@@ -543,15 +558,6 @@
       "licenses": "Licenses",
       "open": "Open"
     }
-  },
-  "float": {
-    "move": "Move with the arrow keys",
-    "popOut": "Open in a new tab",
-    "newTab": "New tab",
-    "minimize": "Minimize",
-    "maximize": "Maximize",
-    "restore": "Restore",
-    "resize": "Resize with the arrow keys"
   },
   "connection": {
     "forbidden": "Console permission denied.",

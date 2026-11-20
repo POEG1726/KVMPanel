@@ -22,6 +22,8 @@ let jar: ReturnType<typeof browserFetch>;
 let requests: { key: string; body: unknown }[];
 /** Messages the app sent over the shared /api/ws. */
 let sent: unknown[];
+let eventsReady: Promise<void>;
+let markReady: () => void;
 
 const t = (k: string, o: Record<string, unknown> = {}) => i18n.t(k, o) as string;
 
@@ -30,6 +32,7 @@ const factory: SocketFactory = (url) => {
   // A socket still connecting when the test ends gets refused by the closing mock; that is not a failure.
   ws.on('error', () => undefined);
   if (url.endsWith('/api/ws')) {
+    ws.once('open', markReady);
     const send = ws.send.bind(ws);
     (ws as unknown as WebSocketLike).send = (d) => {
       sent.push(JSON.parse(String(d)));
@@ -52,6 +55,7 @@ beforeEach(async () => {
   mock = await startMock();
   jar = browserFetch(mock.url, await loginAs(mock.url, 'admin', 'admin'));
   requests = [];
+  eventsReady = new Promise(resolve => { markReady = resolve; });
   sent = [];
   configureApi({
     fetch: async (input, init) => {
@@ -141,6 +145,44 @@ describe('MediaMenu', () => {
     await waitFor(() => expect(requests.filter((r) => r.key.startsWith('POST /api/media/jobs/')).map((r) => r.key.split('/').pop())).toEqual(['pause', 'resume', 'cancel']));
   });
 
+  it('shows API query failures', async () => {
+    configureApi({ fetch: (input, init) => {
+      const req = new Request(input, init);
+      if (new URL(req.url).pathname === '/api/files') return Promise.resolve(Response.json({ error: 'forbidden' }, { status: 403 }));
+      return jar.fetch(req);
+    } });
+    mount(<MediaMenu />);
+    expect(await screen.findByRole('alert')).toHaveTextContent(t('error.forbidden'));
+  });
+
+  it('shows a completed URL download in the mount list', async () => {
+    mount(<MediaMenu />);
+    await screen.findByText('ubuntu-24.04.iso');
+    fireEvent.change(screen.getByLabelText(t('media.url')), { target: { value: 'https://example.test/complete.iso' } });
+    fireEvent.click(screen.getByRole('button', { name: t('media.download') }));
+    expect(await screen.findByRole('button', { name: t('media.mountAs', { mode: t('media.cdrom'), name: 'complete.iso' }) }, { timeout: 6000 })).toBeVisible();
+  });
+
+  it('reads sibling folders concurrently with a small upper bound on active requests', async () => {
+    let busy = 0;
+    let peak = 0;
+    configureApi({ fetch: async (input, init) => {
+      const req = new Request(input, init);
+      const url = new URL(req.url);
+      if (url.pathname !== '/api/files') return jar.fetch(req);
+      if (url.searchParams.get('path') === '/') return Response.json({ entries:
+        Array.from({ length: 9 }, (_, i) => ({ type: 'dir', name: String(i), size: 0 })) });
+      peak = Math.max(peak, ++busy);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      busy--;
+      return Response.json({ entries: [] });
+    } });
+    mount(<MediaMenu />);
+    await screen.findByText(t('media.none'));
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(4);
+  });
+
   it('toggles the share through POST /api/share', async () => {
     mount(<MediaMenu />);
     const sw = await screen.findByRole('switch', { name: t('media.share') });
@@ -160,7 +202,7 @@ describe('KeyboardMenu', () => {
     expect(send).toBeDisabled();
     fireEvent.change(box, { target: { value: 'a'.repeat(65536) } });
     expect(screen.getByText(t('keyboard.pasteCount', { n: 65536, max: 65536 }))).toBeInTheDocument();
-    expect(send).toBeEnabled();
+    await waitFor(() => expect(send).toBeEnabled());
     fireEvent.change(box, { target: { value: 'a'.repeat(65537) } });
     expect(screen.getByText(t('keyboard.pasteCount', { n: 65537, max: 65536 }))).toBeInTheDocument();
     expect(send).toBeDisabled();
@@ -168,8 +210,7 @@ describe('KeyboardMenu', () => {
 
   it('sends paste, Ctrl+Alt+Del and screen keyboard keys as WebSocket messages', async () => {
     mount(<KeyboardMenu />);
-    await waitFor(() => expect(sent).toBeDefined());
-    await new Promise((r) => setTimeout(r, 300)); // let /api/ws open
+    await eventsReady;
 
     fireEvent.click(screen.getByRole('button', { name: t('keyboard.paste') }));
     fireEvent.change(screen.getByLabelText(t('keyboard.pasteText')), { target: { value: 'hello' } });
@@ -187,7 +228,7 @@ describe('KeyboardMenu', () => {
 
   it('saves a custom shortcut in localStorage and sends it', async () => {
     mount(<KeyboardMenu />);
-    await new Promise((r) => setTimeout(r, 300));
+    await eventsReady;
     fireEvent.click(screen.getByRole('button', { name: t('keyboard.shortcuts') }));
     fireEvent.change(screen.getByLabelText(t('keyboard.shortcutName')), { target: { value: 'Task Manager' } });
     const rec = screen.getByLabelText(t('keyboard.shortcutKeys'));

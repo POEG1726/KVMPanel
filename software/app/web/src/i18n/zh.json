@@ -23,6 +23,15 @@
     "title": "控制台",
     "screen": "远程画面"
   },
+  "float": {
+    "move": "使用方向键移动窗口",
+    "popOut": "在新标签页打开",
+    "newTab": "新标签页",
+    "minimize": "最小化",
+    "maximize": "最大化",
+    "restore": "还原",
+    "resize": "使用方向键调整大小"
+  },
   "workspace": {
     "title": "工作区",
     "terminal": "终端",
@@ -36,6 +45,7 @@
     "popupBlocked": "请允许弹出窗口以打开工作台。"
   },
   "error": {
+    "bad_message": "输入消息格式无效。",
     "unknown": "出错了。",
     "invalid_credentials": "用户名或密码错误。",
     "login_locked": "失败次数过多。",
@@ -69,7 +79,12 @@
     "bad_action": "未知的操作。",
     "no_signal": "没有 HDMI 信号。",
     "is_dir": "已有同名文件夹。",
-    "no_space": "剩余空间不足。"
+    "no_space": "剩余空间不足。",
+    "bad_name": "名称格式无效。",
+    "user_exists": "已存在同名账号。",
+    "device_exists": "已存在使用此 MAC 地址的设备。",
+    "internal": "设备发生内部错误。",
+    "invalid_json": "请求中的 JSON 格式无效。"
   },
   "common": {
     "cancel": "取消",
@@ -540,15 +555,6 @@
       "licenses": "许可证",
       "open": "打开"
     }
-  },
-  "float": {
-    "move": "使用方向键移动窗口",
-    "popOut": "在新标签页打开",
-    "newTab": "新标签页",
-    "minimize": "最小化",
-    "maximize": "最大化",
-    "restore": "还原",
-    "resize": "使用方向键调整大小"
   },
   "connection": {
     "forbidden": "没有访问权限。",

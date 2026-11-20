@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import s from './ui.module.css';
 
 interface Props {
@@ -13,9 +13,11 @@ interface Props {
 
 export function Slider({ value, min, max, step = 1, label, onCommit }: Props) {
   const [local, setLocal] = useState(value);
-  useEffect(() => setLocal(value), [value]);
+  const changed = useRef(false);
+  useEffect(() => { setLocal(value); changed.current = false; }, [value]);
   const commit = () => {
-    if (local !== value) onCommit(local);
+    if (changed.current && local !== value) onCommit(local);
+    changed.current = false;
   };
   return (
     <span className={s.slider}>
@@ -26,7 +28,7 @@ export function Slider({ value, min, max, step = 1, label, onCommit }: Props) {
         max={max}
         step={step}
         value={local}
-        onChange={(e) => setLocal(Number(e.target.value))}
+        onChange={(e) => { changed.current = true; setLocal(Number(e.target.value)); }}
         onPointerUp={commit}
         onKeyUp={commit}
         onBlur={commit}

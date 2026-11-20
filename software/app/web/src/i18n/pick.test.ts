@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import i18n, { pickLanguage } from './index';
+
+afterEach(async () => { await i18n.changeLanguage('en'); });
 
 describe('pickLanguage', () => {
   it('auto: zh-* maps to zh', () => {
@@ -27,3 +29,9 @@ describe('i18n fallback', () => {
     expect(i18n.t('dev.enOnly')).toBe('English only');
   });
 });
+
+it.each(['bad_name', 'user_exists', 'device_exists', 'internal', 'invalid_json'])(
+  'has a localized message for API error %s in both languages', code => {
+    for (const lang of ['en', 'zh']) expect(i18n.getResource(lang, 'translation', 'error.' + code)).toEqual(expect.any(String));
+  },
+);

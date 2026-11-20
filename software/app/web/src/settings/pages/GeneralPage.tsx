@@ -1,3 +1,4 @@
+import { useUi } from '../../state/ui';
 import type { ChangeEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api, unwrap } from '../../api/client';
@@ -24,6 +25,7 @@ export function GeneralPage() {
     if (!file) return;
     try {
       await unwrap(api.PUT('/api/branding/logo', { body: file as never, bodySerializer: (b: unknown) => b as never, headers: { 'content-type': file.type } }));
+      useUi.getState().refreshLogo();
       toast(t('settings.general.logoSaved'));
     } catch (err) {
       toast(errorText(t, err), 'error');

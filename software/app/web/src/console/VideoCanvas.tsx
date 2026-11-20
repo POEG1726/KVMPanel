@@ -39,6 +39,7 @@ export function VideoCanvas({ scale, onPointer, cursor }: Props) {
   const raf = useRef(0);
   const pressed = useRef(new Set<string>());
   const buttons = useRef(0);
+  const lastPointer = useRef<Extract<ClientMessage, { t: 'mouse_abs' | 'mouse_rel' }> | null>(null);
   const pendingAbs = useRef<{ x: number; y: number } | null>(null);
   const pendingRel = useRef({ dx: 0, dy: 0 });
   const pointerRaf = useRef(0);
@@ -87,6 +88,7 @@ export function VideoCanvas({ scale, onPointer, cursor }: Props) {
 
   const emit = useCallback(
     (m: ClientMessage) => {
+      if (m.t === 'mouse_abs' || m.t === 'mouse_rel') lastPointer.current = m;
       send(m);
       onPointer?.(m);
     },
@@ -138,17 +140,42 @@ export function VideoCanvas({ scale, onPointer, cursor }: Props) {
     return () => el.removeEventListener('wheel', onWheel);
   }, [emit, wheelDir, wheelSpeed]);
 
-  const releaseKeys = () => {
+  const releaseInput = useCallback(() => {
     pressed.current.forEach((code) => send({ t: 'key', code, down: false }));
     pressed.current.clear();
-  };
+    cancelAnimationFrame(pointerRaf.current);
+    pointerRaf.current = 0;
+    pendingAbs.current = null;
+    pendingRel.current = { dx: 0, dy: 0 };
+    buttons.current = 0;
+    const last = lastPointer.current;
+    if (last?.buttons) emit(last.t === 'mouse_abs' ? { ...last, buttons: 0 } : relMessage(0, 0, 0));
+  }, [emit, send]);
+
+  useEffect(() => {
+    const lockChanged = () => { if (document.pointerLockElement !== canvas.current) releaseInput(); };
+    const hidden = () => { if (document.visibilityState === 'hidden') releaseInput(); };
+    window.addEventListener('blur', releaseInput);
+    document.addEventListener('pointerlockchange', lockChanged);
+    document.addEventListener('visibilitychange', hidden);
+    return () => {
+      window.removeEventListener('blur', releaseInput);
+      document.removeEventListener('pointerlockchange', lockChanged);
+      document.removeEventListener('visibilitychange', hidden);
+      releaseInput();
+    };
+  }, [releaseInput]);
 
   const onKey = (e: React.KeyboardEvent<HTMLCanvasElement>) => {
     const m = keyMessage(e.nativeEvent);
     if (!m || m.t !== 'key') return;
     e.preventDefault();
-    if (m.down) pressed.current.add(m.code);
-    else pressed.current.delete(m.code);
+    if (m.down) {
+      if (e.repeat || pressed.current.has(m.code)) return;
+      pressed.current.add(m.code);
+    } else if (!pressed.current.delete(m.code)) {
+      return;
+    }
     send(m);
   };
 
@@ -166,9 +193,11 @@ export function VideoCanvas({ scale, onPointer, cursor }: Props) {
     }
     // Button changes go out immediately so a click is never reordered after later motion.
     cancelAnimationFrame(pointerRaf.current);
-    flushPointer();
     if (relative && !pendingRel.current.dx && !pendingRel.current.dy) {
       emit(relMessage(0, 0, buttons.current));
+      pointerRaf.current = 0;
+    } else {
+      flushPointer();
     }
   };
 
@@ -181,7 +210,8 @@ export function VideoCanvas({ scale, onPointer, cursor }: Props) {
       style={{ display: 'block', margin: 'auto', outline: 'none', cursor, ...SCALE_STYLE[scale] }}
       onKeyDown={onKey}
       onKeyUp={onKey}
-      onBlur={releaseKeys}
+      onBlur={releaseInput}
+      onPointerCancel={releaseInput}
       onContextMenu={(e) => e.preventDefault()}
       onPointerDown={(e) => {
         e.currentTarget.focus();

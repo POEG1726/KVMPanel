@@ -10,12 +10,16 @@
 .bar {
   position: fixed;
   top: 10px;
-  left: 50%;
+  left: 4px;
   z-index: 10;
   display: flex;
   align-items: center;
   gap: 2px;
-  max-width: 96vw;
+  width: max-content;
+  max-width: calc(100vw - 8px);
+  box-sizing: border-box;
+  flex-wrap: wrap;
+  justify-content: center;
   padding: 4px 6px;
   font-size: 12px;
   white-space: nowrap;
@@ -27,7 +31,7 @@
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
   transition: transform 0.18s ease;
 }
-.hidden { pointer-events: none; }
+.hidden { pointer-events: none; transform: translateY(calc(-100vh - 100%)); }
 
 .logo {
   font-weight: 700;
@@ -40,7 +44,7 @@
 .logo i { color: var(--ac); font-style: normal; }
 .sep { width: 1px; height: 18px; background: var(--ln); margin: 0 4px; }
 
-.item { position: relative; }
+.item { display: flex; }
 .btn {
   display: flex;
   align-items: center;
@@ -80,9 +84,9 @@
   left: 0;
   z-index: 11;
   width: max-content;
-  min-width: 280px;
-  max-width: 92vw;
-  max-height: 80vh;
+  box-sizing: border-box;
+  min-width: min(280px, calc(100vw - 8px));
+  max-width: calc(100vw - 8px);
   overflow: auto;
   white-space: normal;
   background: rgba(21, 26, 35, 0.97);
@@ -91,4 +95,10 @@
   padding: 8px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
 }
-.ddRight { left: auto; right: 0; }
+
+.logo img { vertical-align: middle; max-width: 42px; max-height: 20px; margin-right: 5px; }
+.hotzone:focus-visible { height: 10px; outline: 2px solid var(--ac); outline-offset: -2px; }
+@media (max-width: 560px) {
+  .dd { width: calc(100vw - 8px); }
+  .dd > div { min-width: 0; }
+}

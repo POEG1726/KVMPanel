@@ -101,8 +101,8 @@ export function connectSocket(path: string, handlers: SocketHandlers, opts: { re
       if (!stopped && ws === sock) handlers.onMessage(e.data);
     };
     sock.onclose = (e) => {
-      clearTimeout(stableTimer);
       if (stopped || ws !== sock) return;
+      clearTimeout(stableTimer);
       ws = null;
       let policy = closePolicy(e.code);
       if (path.startsWith('/api/terminal?')) {
@@ -113,7 +113,7 @@ export function connectSocket(path: string, handlers: SocketHandlers, opts: { re
       if (policy === 'login' && ownPasswordChangeActive()) policy = 'retry';
       handlers.onClosed?.(policy);
       if (policy === 'login') emitLoginRequired();
-      if (!reconnect || NO_RECONNECT.has(policy)) {
+      if (stopped || !reconnect || NO_RECONNECT.has(policy)) {
         registry.delete(handle);
         return;
       }

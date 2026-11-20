@@ -23,7 +23,9 @@ export const wsFactory =
 /** A private mock server (spawned by global-setup), so tests that change passwords or lock accounts cannot disturb other files. */
 export async function startMock(): Promise<{ url: string; close(): Promise<void> }> {
   const control = process.env.MOCK_CONTROL_URL!;
-  const { url } = (await (await fetch(control, { method: 'POST' })).json()) as { url: string };
+  const response = await fetch(control, { method: 'POST' });
+  if (!response.ok) throw new Error('Mock setup failed: ' + await response.text());
+  const { url } = await response.json() as { url: string };
   return { url, close: async () => void (await fetch(`${control}/?url=${encodeURIComponent(url)}`, { method: 'DELETE' })) };
 }
 

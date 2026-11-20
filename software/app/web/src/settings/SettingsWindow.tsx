@@ -51,7 +51,11 @@ export function SettingsWindow({ page = 'general', onClose }: Props) {
   const { t } = useTranslation();
   const titleId = useId();
   const win = useRef<HTMLDivElement>(null);
-  useEffect(() => win.current?.focus(), []);
+  useEffect(() => {
+    const opener = document.activeElement;
+    win.current?.focus();
+    return () => { if (opener instanceof HTMLElement && opener.isConnected) opener.focus(); };
+  }, []);
   const [current, setCurrent] = useState<SettingsPageId>(page);
   useEffect(() => setCurrent(page), [page]);
   const me = useQuery({ queryKey: ME_KEY, queryFn: fetchMe, retry: false, staleTime: Infinity });
@@ -70,7 +74,17 @@ export function SettingsWindow({ page = 'general', onClose }: Props) {
       className={s.mask}
       data-keep-open
       // A dialog on top (confirm) has already used its Escape.
-      onKeyDown={(e) => e.key === 'Escape' && !e.defaultPrevented && onClose?.()}
+      onKeyDown={e => {
+        const dialog = win.current;
+        if (!dialog || e.defaultPrevented || !dialog.contains(e.target as Node)) return;
+        if (e.key === 'Escape') { e.preventDefault(); onClose?.(); return; }
+        if (e.key !== 'Tab') return;
+        const controls = Array.from(dialog.querySelectorAll<HTMLElement>('button:enabled, input:enabled, select:enabled, textarea:enabled, a[href]'))
+          .filter(control => control.tabIndex >= 0 && !control.closest('[hidden], input[type="hidden"]'));
+        const first = controls[0], last = controls.at(-1);
+        if (e.shiftKey && (e.target === dialog || e.target === first)) { e.preventDefault(); last?.focus(); }
+        else if (!e.shiftKey && e.target === last) { e.preventDefault(); first?.focus(); }
+      }}
     >
       <div ref={win} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className={s.window}>
         <div className={s.titlebar}>

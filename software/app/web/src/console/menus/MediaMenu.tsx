@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../../api/client';
 import { useEventsContext } from '../../api/EventsProvider';
 import { useUi } from '../../state/ui';
 import { Button, ConfirmDialog, Switch, toast } from '../../ui';
-import { ErrorLine, useConfig, useRun } from './hooks';
+import { errorText, ErrorLine, useConfig, useRun } from './hooks';
 import s from './menus.module.css';
 
 const IMAGES_KEY = ['media', 'images'] as const;
@@ -17,6 +17,7 @@ const SHARE_KEY = ['share'] as const;
 const IMAGE_EXT = /\.(iso|img)$/i;
 const MAX_SCAN_DEPTH = 3;
 const MAX_SCAN_DIRS = 40;
+const SCAN_CONCURRENCY = 4;
 
 interface Image {
   path: string;
@@ -25,22 +26,26 @@ interface Image {
 }
 
 /** SD images are found by walking the card a few levels deep: the contract has no search endpoint. */
-async function scanImages(): Promise<Image[]> {
+async function scanImages({ signal }: { signal: AbortSignal }): Promise<Image[]> {
   const found: Image[] = [];
-  const queue: { path: string; depth: number }[] = [{ path: '/', depth: 0 }];
+  const queue = [{ path: '/', depth: 0 }];
   let visited = 0;
   while (queue.length && visited < MAX_SCAN_DIRS) {
-    const { path, depth } = queue.shift()!;
-    visited += 1;
-    const { entries } = await unwrap(api.GET('/api/files', { params: { query: { root: 'sd', path } } }));
-    for (const e of entries) {
-      const full = `${path === '/' ? '' : path}/${e.name}`;
-      if (e.type === 'dir') {
-        if (depth + 1 < MAX_SCAN_DEPTH) queue.push({ path: full, depth: depth + 1 });
-      } else if (IMAGE_EXT.test(e.name)) {
-        found.push({ path: full, name: e.name, size: e.size });
+    const batch = queue.splice(0, Math.min(SCAN_CONCURRENCY, MAX_SCAN_DIRS - visited));
+    visited += batch.length;
+    const pages = await Promise.all(batch.map(({ path }) =>
+      unwrap(api.GET('/api/files', { params: { query: { root: 'sd', path } }, signal }))));
+    pages.forEach(({ entries }, i) => {
+      const { path, depth } = batch[i];
+      for (const entry of entries) {
+        const full = (path === '/' ? '' : path) + '/' + entry.name;
+        if (entry.type === 'dir') {
+          if (depth + 1 < MAX_SCAN_DEPTH) queue.push({ path: full, depth: depth + 1 });
+        } else if (IMAGE_EXT.test(entry.name)) {
+          found.push({ path: full, name: entry.name, size: entry.size });
+        }
       }
-    }
+    });
   }
   return found.sort((a, b) => a.path.localeCompare(b.path));
 }
@@ -77,7 +82,7 @@ export function MediaMenu() {
   const [url, setUrl] = useState('');
   const [path, setPath] = useState<string | null>(null);
 
-  const images = useQuery({ queryKey: IMAGES_KEY, queryFn: scanImages });
+  const images = useQuery({ queryKey: IMAGES_KEY, queryFn: scanImages, staleTime: 10_000 });
   const mounted = useQuery({ queryKey: MOUNT_KEY, queryFn: () => unwrap(api.GET('/api/media')) });
   const storage = useQuery({ queryKey: STORAGE_KEY, queryFn: () => unwrap(api.GET('/api/storage')) });
   const share = useQuery({ queryKey: SHARE_KEY, queryFn: () => unwrap(api.GET('/api/share')) });
@@ -86,6 +91,18 @@ export function MediaMenu() {
     queryFn: async () => (await unwrap(api.GET('/api/media/jobs'))).jobs,
     refetchInterval: (q) => (q.state.data?.some((j) => j.state === 'running') ? 1000 : false),
   });
+
+  const doneCount = jobs.data?.filter(job => job.state === 'done').length;
+  const previousDone = useRef<number>();
+  useEffect(() => {
+    if (doneCount === undefined) return;
+    if (doneCount > (previousDone.current ?? 0)) {
+      void qc.invalidateQueries({ queryKey: IMAGES_KEY });
+      void qc.invalidateQueries({ queryKey: STORAGE_KEY });
+    }
+    previousDone.current = doneCount;
+  }, [doneCount, qc]);
+  const queryError = images.error ?? mounted.error ?? storage.error ?? share.error ?? jobs.error;
 
   // Another session (or the PC) can change the mount; the status stream tells us.
   const mountedName = status?.media.mounted ?? null;
@@ -231,7 +248,7 @@ export function MediaMenu() {
         <Switch label={t('media.share')} checked={share.data?.exported_to_host ?? false} disabled={!share.data} onChange={toggleShare} />
       </div>
 
-      <ErrorLine message={error} />
+      <ErrorLine message={error ?? (queryError && errorText(t, queryError))} />
       {ejecting && (
         <ConfirmDialog title={t('media.ejectTitle')} message={t('media.ejectMessage')} confirmLabel={t('media.eject')} danger onConfirm={eject} onCancel={() => setEjecting(false)} />
       )}
