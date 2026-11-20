@@ -86,6 +86,20 @@ impl Host {
         if !self.online(now) {
             self.samples.clear();
         }
+        // Slot labels in vendor reports are dynamic. Bound their retained inventory
+        // independently of the fixed CPU/GPU metrics on the 512 MiB board.
+        const MAX_DIMMS: usize = 256;
+        if id.starts_with("mem.dimm.")
+            && !self.samples.contains_key(&id)
+            && self
+                .samples
+                .keys()
+                .filter(|key| key.starts_with("mem.dimm."))
+                .count()
+                >= MAX_DIMMS
+        {
+            return;
+        }
         self.samples.insert(id, value);
         self.last_seen = Some((now, ts));
     }
@@ -447,6 +461,17 @@ mod tests {
             assert_eq!(m[0]["id"], "mem.dimm.c1");
             assert_eq!(m[0]["value"], expected);
         }
+    }
+    #[test]
+    fn repeated_new_slot_names_cannot_grow_the_inventory_indefinitely() {
+        let mut host = Host::default();
+        let now = Instant::now();
+        for i in 0..300 {
+            host.ingest(format!("mem.dimm.slot_{i}"), Some(40.), now, 1);
+        }
+        host.ingest("cpu.tctl".into(), Some(60.), now, 1);
+        assert_eq!(host.samples.len(), 257);
+        assert_eq!(host.samples["cpu.tctl"], Some(60.));
     }
     #[test]
     fn host_gaps_clear_old_metrics_before_reconnect() {
