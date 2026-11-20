@@ -160,11 +160,10 @@ else
 		hid relative 1 2 4 "$desc"
 	fi
 	if [ "$absolute" = 1 ]; then
-		desc="$mouse_header $buttons $abs_xy $wheel c0 c0"
-		length=6
+		desc="$mouse_header 85 02 $buttons $abs_xy $wheel c0 c0"
+		length=7
 		if [ "$telemetry" = 1 ]; then
-			desc="$mouse_header 85 02 $buttons $abs_xy $wheel c0 c0
-				$vendor_header 85 03 $vendor_output"
+			desc="$desc $vendor_header 85 03 $vendor_output"
 			length=64
 		fi
 		hid absolute 0 0 "$length" "$desc"

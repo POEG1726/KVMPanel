@@ -52,7 +52,7 @@ check_interfaces() {
 			set -- "$intf"/*/hidraw/hidraw*
 			[ -c "/dev/${1##*/}" ] || return 1
 			hids=$((hids+1))
-			if [ "$(cat "$intf/bInterfaceSubClass")" = 00 ]; then telemetry=/dev/${1##*/}; fi
+			if [ "$(cat "$intf/bInterfaceSubClass")" = 00 ]; then aux_hidraw=/dev/${1##*/}; fi
 			;;
 		usb-storage) stores=$((stores+1)); store_intf=$intf ;;
 		*) return 1 ;;
@@ -92,10 +92,21 @@ check_telemetry() {
 	minor=$(cat "$g/functions/hid.$1/dev")
 	report=/tmp/report
 	{ printf '\003KVM'; dd if=/dev/zero bs=60 count=1 2>/dev/null; } > "$report"
-	dd if="$report" of="$telemetry" bs=64 count=1 2>/dev/null
+	dd if="$report" of="$aux_hidraw" bs=64 count=1 2>/dev/null
 	dd if="/dev/hidg${minor##*:}" of=/tmp/received bs=64 count=1 2>/dev/null
 	cmp "$report" /tmp/received
 }
+# Hold hidraw open before queuing the device-to-host interrupt report.
+check_absolute_input() {
+	minor=$(cat "$g/functions/hid.absolute/dev")
+	printf '\002\001\020\000\040\000\000' > /tmp/mouse-sent
+	exec 8<"$aux_hidraw"
+	cat /tmp/mouse-sent > "/dev/hidg${minor##*:}"
+	dd bs=7 count=1 of=/tmp/mouse-received <&8 2>/dev/null
+	exec 8<&-
+	cmp /tmp/mouse-sent /tmp/mouse-received
+}
+check_absolute_input
 check_telemetry absolute
 echo "PASS host vendor HID output report received over EP0"
 
@@ -107,6 +118,14 @@ echo "PASS budget rejection and teardown"
 
 # Exercise the optional functions within USB0's budget, including fresh binds.
 unset CDROM_IMAGE DISK_IMAGE SHARE_IMAGE
+TELEMETRY=0 kvmpanel-gadget start
+wait_for configured
+wait_for find_device
+wait_for check_interfaces
+check_absolute_input
+echo "PASS absolute mouse Input report ID 0x02 with and without telemetry"
+stop_gadget
+
 ABS_MOUSE=0 kvmpanel-gadget start
 wait_for configured
 wait_for find_device
