@@ -532,5 +532,14 @@
       "licenses": "Licenses",
       "open": "Open"
     }
+  },
+  "float": {
+    "move": "Move with the arrow keys",
+    "popOut": "Open in a new tab",
+    "newTab": "New tab",
+    "minimize": "Minimize",
+    "maximize": "Maximize",
+    "restore": "Restore",
+    "resize": "Resize with the arrow keys"
   }
 }

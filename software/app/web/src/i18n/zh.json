@@ -529,5 +529,14 @@
       "licenses": "许可证",
       "open": "打开"
     }
+  },
+  "float": {
+    "move": "使用方向键移动窗口",
+    "popOut": "在新标签页打开",
+    "newTab": "新标签页",
+    "minimize": "最小化",
+    "maximize": "最大化",
+    "restore": "还原",
+    "resize": "使用方向键调整大小"
   }
 }
