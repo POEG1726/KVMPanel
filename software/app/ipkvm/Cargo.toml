@@ -1,0 +1,40 @@
+[package]
+name = "kvmd"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["full", "test-util"] }
+tower-http = { version = "0.6", features = ["fs"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+jsonschema = { version = "0.33", default-features = false }
+bcrypt = "0.17"
+uuid = { version = "1", features = ["v4"] }
+tempfile = "3"
+sha2 = "0.10"
+hex = "0.4"
+futures-util = "0.3"
+tokio-util = { version = "0.7", features = ["io","codec"] }
+reqwest = { version = "0.12", default-features = false, features = ["json","stream","rustls-tls"] }
+tar = "0.4"
+libc = "0.2"
+jpeg-encoder = "0.6"
+clap = { version = "4", features = ["derive","env"] }
+axum-server = { version = "0.8", default-features = false, features = ["tls-rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring","std","tls12"] }
+
+[build-dependencies]
+serde_yaml = "0.9"
+serde_json = "1"
+
+[dev-dependencies]
+tokio-tungstenite = "0.28"
+
+[profile.dev.package.bcrypt]
+opt-level = 3
+[profile.dev.package.blowfish]
+opt-level = 3
+[profile.dev.package.jpeg-encoder]
+opt-level = 3
