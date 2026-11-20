@@ -1,3 +1,5 @@
+import { emitLoginRequired } from './authEvents';
+
 export type ClosePolicy = 'login' | 'forbidden' | 'no_serial' | 'disconnected' | 'restarting' | 'retry';
 
 /** Maps a WebSocket close code to what the UI must do (see constraints: close codes). */
@@ -56,6 +58,13 @@ export interface SocketHandlers {
   onClosed?(policy: ClosePolicy): void;
 }
 
+const registry = new Set<SocketHandle>();
+
+/** Closes every live socket and stops their reconnects (session ended). */
+export function closeAllSockets(): void {
+  [...registry].forEach((h) => h.close());
+}
+
 export interface SocketHandle {
   send(d: string | ArrayBufferLike | ArrayBufferView): void;
   close(): void;
@@ -94,7 +103,11 @@ export function connectSocket(path: string, handlers: SocketHandlers, opts: { re
       ws = null;
       const policy = closePolicy(e.code);
       handlers.onClosed?.(policy);
-      if (!reconnect || NO_RECONNECT.has(policy)) return;
+      if (policy === 'login') emitLoginRequired();
+      if (!reconnect || NO_RECONNECT.has(policy)) {
+        registry.delete(handle);
+        return;
+      }
       const delay = Math.min(2 ** attempt, BACKOFF_CAP_S) * 1000;
       attempt += 1;
       retryTimer = setTimeout(connect, delay);
@@ -102,11 +115,12 @@ export function connectSocket(path: string, handlers: SocketHandlers, opts: { re
   };
   connect();
 
-  return {
+  const handle: SocketHandle = {
     send(d) {
       if (ws?.readyState === OPEN) ws.send(d);
     },
     close() {
+      registry.delete(handle);
       stopped = true;
       clearTimeout(retryTimer);
       clearTimeout(stableTimer);
@@ -114,4 +128,6 @@ export function connectSocket(path: string, handlers: SocketHandlers, opts: { re
       ws = null;
     },
   };
+  registry.add(handle);
+  return handle;
 }

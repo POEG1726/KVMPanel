@@ -1,4 +1,38 @@
 {
-  "app": { "title": "KVMPanel" },
-  "login": { "title": "登录" }
+  "app": {
+    "title": "KVMPanel"
+  },
+  "login": {
+    "title": "登录",
+    "username": "用户名",
+    "password": "密码",
+    "submit": "登录",
+    "locked": "失败次数过多，请在 {{seconds}} 秒后重试。"
+  },
+  "changePassword": {
+    "title": "修改密码",
+    "hint": "继续之前必须先设置新密码。",
+    "old": "当前密码",
+    "new": "新密码",
+    "confirm": "确认新密码",
+    "submit": "修改密码",
+    "tooShort": "新密码至少需要 {{min}} 个字符。",
+    "mismatch": "两次输入的密码不一致。"
+  },
+  "console": {
+    "title": "控制台"
+  },
+  "workspace": {
+    "title": "工作区"
+  },
+  "error": {
+    "unknown": "出错了。",
+    "invalid_credentials": "用户名或密码错误。",
+    "login_locked": "失败次数过多。",
+    "user_disabled": "该账号已被停用。",
+    "unauthenticated": "会话已失效，请重新登录。",
+    "wrong_password": "当前密码不正确。",
+    "invalid_body": "请求内容无效。",
+    "forbidden": "没有权限执行此操作。"
+  }
 }

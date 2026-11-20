@@ -1,5 +1,41 @@
 {
-  "app": { "title": "KVMPanel" },
-  "login": { "title": "Sign in" },
-  "dev": { "enOnly": "English only" }
+  "app": {
+    "title": "KVMPanel"
+  },
+  "login": {
+    "title": "Sign in",
+    "username": "Username",
+    "password": "Password",
+    "submit": "Sign in",
+    "locked": "Too many failed attempts. Try again in {{seconds}} s."
+  },
+  "dev": {
+    "enOnly": "English only"
+  },
+  "changePassword": {
+    "title": "Change your password",
+    "hint": "You must set a new password before continuing.",
+    "old": "Current password",
+    "new": "New password",
+    "confirm": "Confirm new password",
+    "submit": "Change password",
+    "tooShort": "The new password needs at least {{min}} characters.",
+    "mismatch": "The passwords do not match."
+  },
+  "console": {
+    "title": "Console"
+  },
+  "workspace": {
+    "title": "Workspace"
+  },
+  "error": {
+    "unknown": "Something went wrong.",
+    "invalid_credentials": "Wrong username or password.",
+    "login_locked": "Too many failed attempts.",
+    "user_disabled": "This account is disabled.",
+    "unauthenticated": "Your session has ended. Please sign in again.",
+    "wrong_password": "The current password is wrong.",
+    "invalid_body": "The request was rejected as invalid.",
+    "forbidden": "You do not have permission to do this."
+  }
 }
