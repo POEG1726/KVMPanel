@@ -177,7 +177,7 @@ async fn device(State(app): State<App>, h: HeaderMap) -> Result<Json<Value>, Api
 pub fn device_action(app: &App, action: &str) -> Result<(), ApiError> {
     match action {
         "reset_hid" => {
-            app.hw.reset_hid()?;
+            app.hw.reset_hid().map_err(ApiError::device)?;
             app.emit("usb_reenumerated");
         }
         "disconnect_sessions" => app.emit("disconnect_sessions"),
