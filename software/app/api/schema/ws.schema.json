@@ -59,7 +59,7 @@
     },
     "Paste": {
       "type": "object", "required": ["t", "text"], "additionalProperties": false,
-      "properties": { "t": { "const": "paste" }, "text": { "type": "string", "maxLength": 65536 } }
+      "properties": { "t": { "const": "paste" }, "text": { "type": "string", "maxLength": 65536, "description": "At most 64 KiB of UTF-8 bytes (checked by the server)" } }
     },
     "Shortcut": {
       "description": "Press keys in order, then release in reverse, e.g. [ControlLeft, AltLeft, Delete]",
@@ -133,7 +133,7 @@
     },
     "Error": {
       "type": "object", "required": ["t", "error"], "additionalProperties": false,
-      "properties": { "t": { "const": "error" }, "error": { "enum": ["bad_message", "forbidden"] } }
+      "properties": { "t": { "const": "error" }, "error": { "enum": ["bad_message", "forbidden", "unmappable"], "description": "unmappable: paste contains characters the configured keyboard layout cannot type; the whole message is rejected" } }
     },
     "Pong": {
       "type": "object", "required": ["t"], "additionalProperties": false,

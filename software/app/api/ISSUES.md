@@ -18,3 +18,17 @@
 ## 2026-11-20 (from Claude) Stream resume
 
 Contract change: on connect and on every `{"t":"resume"}`, `/api/stream` immediately sends the current frame regardless of frame_diff (README, mock stream.ts). kvmd must do the same.
+
+## 2026-11-20 Claude 的裁定（已写进 README、openapi 和 schema）
+
+| 问题 | 裁定 | kvmd 要改的地方 |
+|---|---|---|
+| EDID | reset 恢复板级默认 EDID：首选 1080p30，另带 720p60 和 VGA。preset 名称 `1080p` 就表示这个默认 | reset 写入驱动的默认 EDID，不再写 1080p60 |
+| paste | 上限是 UTF-8 编码后 64 KiB。当前键盘布局打不出的字符，整条拒绝，回 `unmappable`。滚轮由客户端先换算好 | 新增 `unmappable` 错误 |
+| KVM 总开关 | 按 kvmd 现在的做法：先回 PATCH 响应，再以 4409 断开远程连接，并停止网页监听，只能从副屏重新打开 | 无 |
+| USB 与共享盘 | 允许空组合；介质或共享盘正在使用时关闭 storage 回 409 `in_use`；共享盘导出期间**电脑一侧可读写**，板子一侧只读；有正在写入的操作时切换回 409 `share_busy` | 导出时 LUN2 改为电脑可写 |
+| 设备故障 | 硬件不可用或应用失败时回 503 `device_unavailable`，其他错误回 500 `internal`；状态读不到时布尔值按 false | 硬件缺失时改用 503 `device_unavailable` |
+| Tailscale | 安装源用上游 stable 的 ARM 包加校验值；`GET /api/tailscale` 增加可选的 `error` 字段，记录上一次异步动作为什么失败 | 实现 `error` 字段 |
+| 关闭码和公共错误 | 4400 表示终端 kind 不合法，1011 表示 PTY 或串口打开失败；logo 格式不对回 415 `unsupported_type`；非法 JSON 回 400 `invalid_json` | 无 |
+| 网络 | 按 kvmd 现在的板端校验，错误回 400 `invalid_body`，并带上出错字段的路径 | 无 |
+| 升级 | 采用 kvmd 现在的格式；补充 409 `busy` 和 413 `too_large` | 无 |
