@@ -25,19 +25,7 @@ async fn main() -> io::Result<()> {
         }
     });
     let app = App::new(&dir, args.sim)?;
-    let addr = args.listen.unwrap_or_else(|| {
-        if args.sim {
-            ([127, 0, 0, 1], 8800).into()
-        } else {
-            ([0, 0, 0, 0], 80).into()
-        }
-    });
     let web = args.web_dir.unwrap_or_else(|| "/usr/share/kvmd/web".into());
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    eprintln!("kvmd listening on {}", listener.local_addr()?);
-    axum::serve(
-        listener,
-        router(app, &web).into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .await
+    kvmd::system::start_services(app.clone());
+    kvmd::system::listeners::serve(app.clone(), router(app, &web), args.listen).await
 }

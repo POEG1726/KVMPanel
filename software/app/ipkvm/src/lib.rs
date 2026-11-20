@@ -4,6 +4,7 @@ pub mod console;
 pub mod hardware;
 mod schema;
 pub mod storage;
+pub mod system;
 use axum::{
     extract::{FromRequest, Request, State},
     http::{HeaderMap, StatusCode},
@@ -109,6 +110,7 @@ impl Deref for App {
 }
 pub struct Inner {
     pub storage: Arc<storage::Storage>,
+    pub system: system::System,
     pub console: console::Console,
     pub sim: bool,
     pub data_dir: PathBuf,
@@ -124,6 +126,7 @@ impl App {
         let hw = hardware::open(sim)?;
         Ok(Self(Arc::new(Inner {
             storage: Arc::new(storage::Storage::new(data_dir, sim)?),
+            system: system::System::new(data_dir)?,
             console: console::Console::new(data_dir)?,
             sim,
             data_dir: data_dir.to_owned(),
@@ -158,6 +161,7 @@ pub fn router(app: App, web: &Path) -> Router {
             get(|| async { Json(json!({"ok":true,"version":env!("CARGO_PKG_VERSION")})) }),
         )
         .merge(storage::routes())
+        .merge(system::routes())
         .merge(console::routes())
         .merge(auth::routes())
         .merge(config::routes())
