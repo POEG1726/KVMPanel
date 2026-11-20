@@ -48,6 +48,10 @@ fn merge(target: &mut Value, patch: &Value, path: &str) {
     }
 }
 impl App {
+    pub fn subscribe_config(&self) -> (Value, broadcast::Receiver<Value>) {
+        let cfg = self.cfg.lock().unwrap();
+        (cfg.value.clone(), self.config_updates.subscribe())
+    }
     pub fn config(&self) -> Value {
         self.cfg.lock().unwrap().value.clone()
     }
@@ -78,6 +82,7 @@ impl App {
         }
         save(&self.data_dir.join("config.json"), &next)?;
         cfg.value = next.clone();
+        let _ = self.config_updates.send(next.clone());
         self.emit("config_changed");
         Ok(next)
     }

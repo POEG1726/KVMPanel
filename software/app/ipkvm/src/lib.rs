@@ -2,6 +2,7 @@ mod auth;
 mod config;
 pub mod console;
 pub mod hardware;
+pub mod panel;
 mod schema;
 pub mod storage;
 pub mod system;
@@ -61,13 +62,35 @@ impl IntoResponse for ApiError {
         (StatusCode::from_u16(self.status).unwrap(), Json(v)).into_response()
     }
 }
+// JSON Schema accepts 100.0 for an integer. Normalize representable integral
+// values before typed handlers use as_u64/as_i64.
+pub fn normalize_numbers(value: &mut Value) {
+    match value {
+        Value::Number(n) if n.is_f64() => {
+            let f = n.as_f64().unwrap();
+            if f.fract() == 0.0 {
+                if (0.0..18446744073709551616.0).contains(&f) {
+                    *value = Value::from(f as u64)
+                } else if (-9223372036854775808.0..0.0).contains(&f) {
+                    *value = Value::from(f as i64)
+                }
+            }
+        }
+        Value::Array(arr) => arr.iter_mut().for_each(normalize_numbers),
+        Value::Object(obj) => obj.values_mut().for_each(normalize_numbers),
+        _ => {}
+    }
+}
 pub struct JsonBody(pub Value);
 impl<S: Send + Sync> FromRequest<S> for JsonBody {
     type Rejection = ApiError;
     async fn from_request(req: Request, state: &S) -> Result<Self, ApiError> {
         Json::<Value>::from_request(req, state)
             .await
-            .map(|Json(v)| Self(v))
+            .map(|Json(mut v)| {
+                normalize_numbers(&mut v);
+                Self(v)
+            })
             .map_err(|e| match e.status().as_u16() {
                 415 => ApiError::new(415, "unsupported_type"),
                 413 => ApiError::new(413, "too_large"),
@@ -115,6 +138,7 @@ pub struct Inner {
     pub sim: bool,
     pub data_dir: PathBuf,
     pub started: Instant,
+    pub config_updates: broadcast::Sender<Value>,
     pub events: broadcast::Sender<String>,
     pub hw: Arc<dyn hardware::Hardware>,
     auth: Mutex<auth::Auth>,
@@ -131,6 +155,7 @@ impl App {
             sim,
             data_dir: data_dir.to_owned(),
             started: Instant::now(),
+            config_updates: broadcast::channel(256).0,
             events: broadcast::channel(256).0,
             hw,
             auth: Mutex::new(auth::Auth::open(data_dir)?),

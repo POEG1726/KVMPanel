@@ -27,5 +27,17 @@ async fn main() -> io::Result<()> {
     let app = App::new(&dir, args.sim)?;
     let web = args.web_dir.unwrap_or_else(|| "/usr/share/kvmd/web".into());
     kvmd::system::start_services(app.clone());
-    kvmd::system::listeners::serve(app.clone(), router(app, &web), args.listen).await
+    let panel = args.panel.unwrap_or_else(|| {
+        if args.sim {
+            "127.0.0.1:7701".into()
+        } else {
+            "/run/kvmd/panel.sock".into()
+        }
+    });
+    // Keep panel and HTTP lifetimes together; report either bind failure to init.
+    let routes = router(app.clone(), &web);
+    tokio::select! {
+        result = kvmd::panel::serve(app.clone(), &panel) => result,
+        result = kvmd::system::listeners::serve(app, routes, args.listen) => result,
+    }
 }
