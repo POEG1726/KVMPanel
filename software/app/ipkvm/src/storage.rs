@@ -1,5 +1,6 @@
 mod jobs;
 mod lun;
+mod share;
 mod volume;
 
 use crate::{validate, ApiError, App, JsonBody};
@@ -22,7 +23,7 @@ use std::{
     io::{self, Write},
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
     time::UNIX_EPOCH,
 };
 use tokio_util::io::ReaderStream;
@@ -49,6 +50,8 @@ struct Mount {
 struct Runtime {
     mount: Option<Mount>,
     exported: bool,
+    switching_share: bool,
+    needs_recovery: bool,
     pending: HashSet<PathBuf>,
     jobs: Vec<jobs::Job>,
 }
@@ -59,6 +62,7 @@ pub struct Storage {
     state: Mutex<Runtime>,
     // Serialize gadget changes with operations on its LUNs.
     lun_gate: Mutex<()>,
+    share_view: RwLock<()>,
     sim: bool,
     share_image: PathBuf,
 }
@@ -105,12 +109,19 @@ impl Storage {
                 function: "/sys/kernel/config/usb_gadget/kvmpanel/functions/mass_storage.media"
                     .into(),
                 share_root: share,
+                share_record: data.join("share-export.json"),
                 share_image: env::var_os("KVMD_SHARE_IMAGE")
                     .map(PathBuf::from)
                     .unwrap_or(sd.join("share.img")),
             })
         };
-        let (mount, exported) = lun.restore(&volumes["sd"].base)?;
+        let (mount, exported, needs_recovery) = match lun.restore(&volumes["sd"].base) {
+            Ok((mount, exported)) => (mount, exported, false),
+            Err(e) => {
+                eprintln!("kvmd: cannot recover USB media yet: {e}");
+                (None, false, true)
+            }
+        };
         let share_image = if sim {
             volumes["sd"].base.join("share.img")
         } else {
@@ -128,11 +139,37 @@ impl Storage {
             state: Mutex::new(Runtime {
                 mount,
                 exported,
+                needs_recovery,
                 ..Default::default()
             }),
             sim,
             lun_gate: Mutex::new(()),
+            share_view: RwLock::new(()),
         })
+    }
+
+    // Called under lun_gate. A card can be absent while the daemon starts or
+    // an interrupted export is being restored. Retry on the next operation.
+    fn recover_luns(&self) -> Result<(), ApiError> {
+        if self.state.lock().unwrap().needs_recovery {
+            let _view = self.share_view.write().unwrap();
+            let (mount, exported) = self
+                .lun
+                .restore(&self.volumes["sd"].base)
+                .map_err(ApiError::device)?;
+            let mut state = self.state.lock().unwrap();
+            state.mount = mount;
+            state.exported = exported;
+            state.needs_recovery = false;
+        }
+        Ok(())
+    }
+    fn ensure_ready(&self) -> Result<(), ApiError> {
+        if self.state.lock().unwrap().needs_recovery {
+            let _gate = self.lun_gate.lock().unwrap();
+            self.recover_luns()?;
+        }
+        Ok(())
     }
 
     pub fn with_gadget_args(
@@ -141,6 +178,7 @@ impl Storage {
         apply: impl FnOnce(Vec<(OsString, OsString)>) -> Result<(), ApiError>,
     ) -> Result<(), ApiError> {
         let _gate = self.lun_gate.lock().unwrap();
+        self.recover_luns()?;
         let state = self.state.lock().unwrap();
         if !enable_storage && (state.exported || state.mount.is_some()) {
             return Err(ApiError::new(409, "in_use"));
@@ -166,6 +204,7 @@ impl Storage {
 
     pub fn eject(&self) -> Result<(), ApiError> {
         let _gate = self.lun_gate.lock().unwrap();
+        self.recover_luns()?;
         let mut state = self.state.lock().unwrap();
         if let Some(m) = &state.mount {
             self.lun
@@ -183,6 +222,9 @@ impl Storage {
     // Compare physical paths as well as root names, since the admin system root
     // can expose the very same SD directory and share mount.
     fn ensure_writable(&self, state: &Runtime, path: &Path) -> Result<(), ApiError> {
+        if state.needs_recovery {
+            return Err(ApiError::new(503, "device_unavailable"));
+        }
         let same_file = |p: &Path| -> bool {
             match (fs::metadata(path), fs::metadata(p)) {
                 (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
@@ -199,7 +241,7 @@ impl Storage {
                 },
             ));
         }
-        if state.exported
+        if (state.exported || state.switching_share)
             && (path.starts_with(&self.volumes["share"].base)
                 || self.volumes["share"].base.starts_with(path))
         {
@@ -271,6 +313,7 @@ fn write_target(app: &App, h: &HeaderMap, op: &str, b: &Value) -> Result<Target,
 async fn capacity(State(app): State<App>, h: HeaderMap) -> Reply {
     app.require(&h, "files")?;
     blocking(move || {
+        let _view = app.storage.share_view.read().unwrap();
         let mut volumes = Vec::new();
         for root in ROOTS {
             let vol = &app.storage.volumes[root];
@@ -307,6 +350,7 @@ async fn list(State(app): State<App>, h: HeaderMap, q: Params) -> Reply {
     let t = query_target(&app, &h, &q)?;
     blocking(move || {
         let s = &app.storage;
+        let _view = (t.root != "sd").then(|| s.share_view.read().unwrap());
         let dir = s.volumes[&t.root].open(&t.path, libc::O_DIRECTORY, t.root == "system")?;
         let state = s.state.lock().unwrap();
         let mount = state
@@ -431,6 +475,7 @@ struct Transfer {
 impl Transfer {
     fn begin(app: &App, t: Target, declared: u64, create_only: bool) -> Result<Self, ApiError> {
         let s = app.storage.clone();
+        s.ensure_ready()?;
         let volume = &s.volumes[&t.root];
         let leaf = volume.parent(&t)?;
         let absolute = fs::canonicalize(fd_path(&leaf.dir))
@@ -447,6 +492,9 @@ impl Transfer {
             if !md.is_file() {
                 return Err(ApiError::new(400, "bad_path"));
             }
+        }
+        if state.switching_share {
+            return Err(ApiError::new(409, "share_busy"));
         }
         s.ensure_writable(&state, &absolute)?;
         if declared > volume.capacity().map_err(error)?.1 {
@@ -569,6 +617,7 @@ async fn upload(State(app): State<App>, h: HeaderMap, q: Params, body: Body) -> 
 async fn mkdir(State(app): State<App>, h: HeaderMap, JsonBody(b): JsonBody) -> Reply {
     let t = write_target(&app, &h, "makeDir", &b)?;
     blocking(move || {
+        app.storage.ensure_ready()?;
         let s = &app.storage;
         let state = s.state.lock().unwrap();
         let leaf = s.volumes[&t.root].parent(&t)?;
@@ -592,6 +641,7 @@ async fn rename(State(app): State<App>, h: HeaderMap, JsonBody(b): JsonBody) -> 
     let t = write_target(&app, &h, "renamePath", &b)?;
     let to = Target::new(&t.root, vstr(&b, "to"))?;
     blocking(move || {
+        app.storage.ensure_ready()?;
         let s = &app.storage;
         let state = s.state.lock().unwrap();
         if to.path.starts_with(&t.path) {
@@ -617,6 +667,7 @@ async fn rename(State(app): State<App>, h: HeaderMap, JsonBody(b): JsonBody) -> 
 async fn delete(State(app): State<App>, h: HeaderMap, JsonBody(b): JsonBody) -> Reply {
     let t = write_target(&app, &h, "deletePath", &b)?;
     blocking(move || {
+        app.storage.ensure_ready()?;
         let s = &app.storage;
         let state = s.state.lock().unwrap();
         let leaf = s.volumes[&t.root].parent(&t)?;
@@ -641,6 +692,7 @@ async fn delete(State(app): State<App>, h: HeaderMap, JsonBody(b): JsonBody) -> 
 async fn share(State(app): State<App>, h: HeaderMap) -> Reply {
     app.require(&h, "files")?;
     blocking(move || {
+        app.storage.ensure_ready()?;
         Ok(ok(
             json!({"exported_to_host":app.storage.state.lock().unwrap().exported}),
         ))
@@ -654,19 +706,30 @@ async fn set_share(State(app): State<App>, h: HeaderMap, JsonBody(b): JsonBody) 
     blocking(move || {
         let s = &app.storage;
         let _gate = s.lun_gate.lock().unwrap();
-        let mut state = s.state.lock().unwrap();
+        s.recover_luns()?;
         let export = b["exported_to_host"] == true;
-        if export != state.exported {
-            if state
-                .pending
-                .iter()
-                .any(|p| p.starts_with(&s.volumes["share"].base))
-            {
+        {
+            let mut state = s.state.lock().unwrap();
+            if export == state.exported {
+                return Ok(ok(json!({"exported_to_host":export})));
+            }
+            if !state.pending.is_empty() {
                 return Err(ApiError::new(409, "share_busy"));
             }
-            s.lun.share(export).map_err(ApiError::device)?;
-            state.exported = export;
+            if export && !app.storage_enabled() {
+                return Err(ApiError::new(409, "in_use"));
+            }
+            state.switching_share = true;
         }
+        let _view = s.share_view.write().unwrap();
+        let change = s.lun.share(export);
+        let mut state = s.state.lock().unwrap();
+        state.switching_share = false;
+        if let Err(e) = change {
+            state.needs_recovery = true;
+            return Err(ApiError::device(e));
+        }
+        state.exported = export;
         Ok(ok(json!({"exported_to_host":export})))
     })
     .await
@@ -691,9 +754,11 @@ async fn mount(State(app): State<App>, h: HeaderMap, JsonBody(b): JsonBody) -> R
     validate("mountMedia", &b)?;
     let t = Target::new("sd", vstr(&b, "path"))?;
     blocking(move || {
+        app.storage.ensure_ready()?;
         let mode = vstr(&b, "mode");
         let s = &app.storage;
         let _gate = s.lun_gate.lock().unwrap();
+        s.recover_luns()?;
         let mut state = s.state.lock().unwrap();
         if !app.storage_enabled() {
             return Err(ApiError::new(409, "in_use"));
@@ -752,6 +817,7 @@ mod tests {
         s.lun = Box::new(lun::BoardLun {
             function: d.path().join("absent"),
             share_root: d.path().join("share"),
+            share_record: d.path().join("share-export.json"),
             share_image: d.path().join("share.img"),
         });
         s.state.lock().unwrap().mount = Some(Mount {

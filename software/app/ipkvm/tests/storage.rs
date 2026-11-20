@@ -605,3 +605,80 @@ async fn mounting_uses_the_applied_storage_switch() {
     assert_eq!(rejected["error"], "in_use");
     assert_eq!(a.s.app.storage.status()["mounted"], Value::Null);
 }
+
+#[tokio::test]
+async fn switching_share_refuses_writers_in_both_directions() {
+    let a = Api::new().await;
+    let mut writer = socket_upload(
+        &a,
+        "sd",
+        "/images/unpublished",
+        "Transfer-Encoding: chunked",
+    )
+    .await;
+    writer.write_all(b"1\r\nx\r\n").await.unwrap();
+    let dir = a.s.dir.path().join("volumes/sd/images");
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !fs::read_dir(&dir).unwrap().any(|f| {
+            f.unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".kvmd-upload-")
+        }) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let res = a.post("/api/share", json!({"exported_to_host":true})).await;
+    assert_eq!(res.status(), 409);
+    assert_eq!(res.json::<Value>().await.unwrap()["error"], "share_busy");
+    writer.write_all(b"0\r\n\r\n").await.unwrap();
+    let mut reply = String::new();
+    writer.read_to_string(&mut reply).await.unwrap();
+    assert!(reply.starts_with("HTTP/1.1 201"));
+    check(
+        a.post("/api/share", json!({"exported_to_host":true})).await,
+        "setShare",
+        200,
+    )
+    .await;
+    assert_eq!(a.list("share", "/").await.status(), 200);
+    let job = check(
+        a.post(
+            "/api/media/download",
+            json!({"url":"http://example.test/disk.iso","path":"/images/downloading.iso"}),
+        )
+        .await,
+        "startDownload",
+        202,
+    )
+    .await;
+    let id = job["job"]["id"].as_str().unwrap();
+    check(
+        a.post(&format!("/api/media/jobs/{id}/pause"), Value::Null)
+            .await,
+        "controlJob",
+        200,
+    )
+    .await;
+    let res = a
+        .post("/api/share", json!({"exported_to_host":false}))
+        .await;
+    assert_eq!(res.status(), 409);
+    assert_eq!(res.json::<Value>().await.unwrap()["error"], "share_busy");
+    check(
+        a.post(&format!("/api/media/jobs/{id}/cancel"), Value::Null)
+            .await,
+        "controlJob",
+        200,
+    )
+    .await;
+    check(
+        a.post("/api/share", json!({"exported_to_host":false}))
+            .await,
+        "setShare",
+        200,
+    )
+    .await;
+}
