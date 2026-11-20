@@ -126,9 +126,13 @@ impl Storage {
 
     pub fn with_gadget_args(
         &self,
+        enable_storage: bool,
         apply: impl FnOnce(Vec<(OsString, OsString)>) -> io::Result<()>,
     ) -> io::Result<()> {
         let state = self.state.lock().unwrap();
+        if !enable_storage && (state.exported || state.mount.is_some()) {
+            return Err(io::Error::from_raw_os_error(libc::EBUSY));
+        }
         apply(self.lun.args(
             state.mount.as_ref(),
             &self.volumes["sd"].base,

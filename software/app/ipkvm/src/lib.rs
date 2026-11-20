@@ -169,6 +169,9 @@ impl App {
         let _ = self.events.send(event.to_owned());
     }
     pub fn socket_code(&self, h: &HeaderMap, perm: &str, event: &str) -> Option<u16> {
+        if self.config()["kvm"]["enabled"] == false {
+            return Some(4409);
+        }
         match event {
             "disconnect_sessions" => Some(4409),
             "kvm_restarting" => Some(1012),
@@ -178,6 +181,39 @@ impl App {
                 .map(|e| if e.status == 403 { 4403 } else { 4401 }),
         }
     }
+}
+// Extractor and method errors from axum must use the same wire format as handlers.
+async fn api_errors(req: Request, next: axum::middleware::Next) -> Response {
+    let is_api = req.uri().path().starts_with("/api/");
+    let mut response = next.run(req).await;
+    let status = response.status();
+    if is_api
+        && (status.is_client_error() || status.is_server_error())
+        && !response
+            .headers()
+            .get("content-type")
+            .is_some_and(|v| v.as_bytes().starts_with(b"application/json"))
+    {
+        let code = match status.as_u16() {
+            400 => "bad_request",
+            401 => "unauthenticated",
+            403 => "forbidden",
+            404 => "not_found",
+            405 => "method_not_allowed",
+            413 => "too_large",
+            415 => "unsupported_type",
+            426 => "upgrade_required",
+            _ => "internal",
+        };
+        // Preserve headers that still apply (e.g. Allow on a 405).
+        response.headers_mut().remove("content-length");
+        response.headers_mut().insert(
+            "content-type",
+            axum::http::HeaderValue::from_static("application/json"),
+        );
+        *response.body_mut() = axum::body::Body::from(json!({"error":code}).to_string());
+    }
+    response
 }
 pub fn router(app: App, web: &Path) -> Router {
     Router::new()
@@ -195,5 +231,6 @@ pub fn router(app: App, web: &Path) -> Router {
             axum::routing::any(|| async { ApiError::new(404, "not_found") }),
         )
         .fallback_service(ServeDir::new(web))
+        .layer(axum::middleware::from_fn(api_errors))
         .with_state(app)
 }

@@ -210,47 +210,81 @@ fn reconcile(
 /// A CLI override or simulator binds one fixed HTTP address. Board settings
 /// reload while the independent local panel server continues accepting clients.
 pub async fn serve(app: App, router: Router, listen: Option<SocketAddr>) -> io::Result<()> {
-    if let Some(addr) = listen.or_else(|| app.sim.then(|| ([127, 0, 0, 1], 8800).into())) {
-        let tcp = tokio::net::TcpListener::bind(addr).await?;
-        eprintln!("kvmd HTTP listening on {}", tcp.local_addr()?);
-        return axum::serve(
-            tcp,
-            router.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .await;
-    }
+    let mut fixed = listen.or_else(|| app.sim.then(|| ([127, 0, 0, 1], 8800).into()));
     let mut active = BTreeMap::new();
     let mut events = app.events.subscribe();
     let mut retry = tokio::time::interval(Duration::from_secs(5));
     retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     retry.tick().await;
+    let mut enabled = app.config()["kvm"]["enabled"] == true;
+    let mut first = true;
     let mut dirty = true;
     let mut pending = true;
     loop {
         if dirty {
-            let mut cfg = app.system.network();
-            let result = match addresses(&app, &cfg).await {
-                Ok(specs) => reconcile(&mut active, specs, &router),
-                Err(err) => Err(io::Error::other(format!("{} {:?}", err.code, err.detail))),
-            };
-            pending = result.is_err();
-            if let Err(e) = result {
-                eprintln!("web listener settings: {e}");
-                // After a cold boot there is no old listener to retain. Keep the
-                // configured HTTP endpoint available if only the TLS endpoint failed.
-                if active.is_empty() && cfg["https"]["enabled"] == true {
+            let result = if !enabled {
+                // Graceful shutdown drains the PATCH response already in flight,
+                // disables keep-alive and stops accepting new TCP connections.
+                active.clear();
+                Ok(())
+            } else if let Some(addr) = fixed {
+                if active
+                    .get(&addr)
+                    .is_some_and(|r: &Running| !r.task.is_finished())
+                {
+                    Ok(())
+                } else {
+                    active.clear();
+                    let start_fixed = || {
+                        let socket = TcpListener::bind(addr)?;
+                        socket.set_nonblocking(true)?;
+                        start(socket, None, &router)
+                    };
+                    match start_fixed() {
+                        Ok(server) => {
+                            let actual = server.socket.local_addr()?;
+                            // Keep the first OS-assigned port across off/on cycles.
+                            fixed = Some(actual);
+                            active.insert(actual, server);
+                            Ok(())
+                        }
+                        Err(e) if first => return Err(e),
+                        Err(e) => Err(e),
+                    }
+                }
+            } else {
+                let mut cfg = app.system.network();
+                let result = match addresses(&app, &cfg).await {
+                    Ok(specs) => reconcile(&mut active, specs, &router),
+                    Err(err) => Err(io::Error::other(format!("{} {:?}", err.code, err.detail))),
+                };
+                if result.is_err() && active.is_empty() && cfg["https"]["enabled"] == true {
+                    // Retain the configured HTTP endpoint on a cold boot with broken TLS.
                     cfg["https"]["enabled"] = Value::Bool(false);
                     if let Ok(http) = addresses(&app, &cfg).await {
                         let _ = reconcile(&mut active, http, &router);
                     }
                 }
+                result
+            };
+            pending = result.is_err();
+            if let Err(e) = result {
+                eprintln!("web listener settings: {e}");
             }
-            dirty = false;
+            first = false;
         }
         tokio::select! {
             ev=events.recv()=>match ev{
-                Ok(name)=>if name=="network_changed"{dirty=true},
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>dirty=true,
+                Ok(name) if name=="config_changed"=>{
+                    let next=app.config()["kvm"]["enabled"]==true;
+                    dirty=enabled!=next;
+                    enabled=next;
+                }
+                Ok(name)=>dirty=name=="network_changed" && fixed.is_none(),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>{
+                    enabled=app.config()["kvm"]["enabled"]==true;
+                    dirty=true;
+                }
                 Err(_)=>return Ok(()),
             },
             _=retry.tick()=>dirty=pending || active.values().any(|r|r.task.is_finished()),

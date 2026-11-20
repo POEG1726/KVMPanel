@@ -315,3 +315,32 @@ async fn stream_rate_pause_and_resume() {
     send(&mut ws, json!({"t":"resume"})).await;
     assert!(matches!(receive(&mut ws).await, Message::Binary(_)));
 }
+
+#[tokio::test]
+async fn new_and_resumed_streams_immediately_send_the_cached_frame() {
+    let s = Server::new().await;
+    let a = s.login("admin", "admin").await;
+    s.app
+        .patch_config(&json!({"video":{"fps_max":1,"frame_diff":true}}), None)
+        .unwrap();
+    let mut first = open(&s, "/api/stream", &a).await;
+    let frame = receive(&mut first).await.into_data();
+    let mut second = open(&s, "/api/stream", &a).await;
+    assert_eq!(
+        timeout(Duration::from_millis(150), receive(&mut second))
+            .await
+            .unwrap()
+            .into_data(),
+        frame
+    );
+    send(&mut first, json!({"t":"pause"})).await;
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    for _ in 0..2 {
+        send(&mut first, json!({"t":"resume"})).await;
+        let current = timeout(Duration::from_millis(150), receive(&mut first))
+            .await
+            .unwrap()
+            .into_data();
+        assert!(current.starts_with(&[0xff, 0xd8]) && current.ends_with(&[0xff, 0xd9]));
+    }
+}

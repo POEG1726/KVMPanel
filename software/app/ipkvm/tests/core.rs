@@ -31,6 +31,12 @@ async fn health_config_permissions_and_usb() {
         json!({"ok":true,"version":"0.1.0"})
     );
     assert!(validate("Health", &json!({"ok":"yes"})).is_err());
+    let method = s.call("POST", "/api/health", "", None).await;
+    assert_eq!(method.status(), 405);
+    assert_eq!(
+        method.json::<Value>().await.unwrap(),
+        json!({"error":"method_not_allowed"})
+    );
     let a = s.login("admin", "admin").await;
     let original = check(&s, "GET", "/api/config", &a, None, 200, "getConfig").await;
     assert_eq!(
@@ -390,4 +396,126 @@ async fn endpoint_combinations() {
         assert_eq!(r["out"], output);
         assert_eq!(r["fits"], input <= 5);
     }
+}
+
+#[tokio::test]
+async fn persisted_accounts_config_scripts_wol_mcp_and_logo_survive_restart() {
+    let s = Server::new().await;
+    let a = s.login("admin", "admin").await;
+    let b=s.call("POST","/api/users",&a,Some(json!({"name":"reader","password":"reading","role":"user","permissions":["console"]}))).await;
+    assert_eq!(b.status(), 201);
+    s.app
+        .patch_config(
+            &json!({"panel":{"brightness":48},"usb":{"mouse_abs":false}}),
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        s.call(
+            "POST",
+            "/api/wol/devices",
+            &a,
+            Some(json!({"name":"lab","mac":"02:00:00:00:00:01"}))
+        )
+        .await
+        .status(),
+        201
+    );
+    let put = s
+        .client
+        .put(format!("{}/api/scripts/sample.sh", s.url))
+        .header("cookie", &a)
+        .header("content-type", "text/plain")
+        .body("echo sample\n")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(put.status(), 201);
+    let put = s
+        .client
+        .put(format!("{}/api/branding/logo", s.url))
+        .header("cookie", &a)
+        .header("content-type", "image/svg+xml")
+        .body("<svg/>")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(put.status(), 204);
+    let key = s
+        .call("POST", "/api/mcp/regenerate", &a, None)
+        .await
+        .json::<Value>()
+        .await
+        .unwrap()["key"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let restarted = App::new(s.dir.path(), true).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let routes = kvmd::router(restarted, s.dir.path());
+    let task = tokio::spawn(async move { axum::serve(listener, routes).await.unwrap() });
+    assert_eq!(
+        s.client
+            .get(format!("{base}/api/auth/me"))
+            .header("cookie", &a)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    for (name, pw) in [("reader", "reading"), ("admin", "admin")] {
+        let login = s
+            .client
+            .post(format!("{base}/api/auth/login"))
+            .json(&json!({"username":name,"password":pw}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(login.status(), 200);
+        if name == "admin" {
+            let token = cookie(&login);
+            for (path, pointer, expected) in [
+                ("config", "/panel/brightness", json!(48)),
+                ("usb/applied", "/pending", json!(true)),
+                ("scripts", "/0/name", json!("sample.sh")),
+                ("wol/devices", "/devices/0/name", json!("lab")),
+            ] {
+                let value = s
+                    .client
+                    .get(format!("{base}/api/{path}"))
+                    .header("cookie", &token)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap();
+                assert_eq!(value.pointer(pointer), Some(&expected));
+            }
+        }
+    }
+    assert_eq!(
+        s.client
+            .get(format!("{base}/api/branding/logo"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap(),
+        "<svg/>"
+    );
+    assert_eq!(
+        s.client
+            .get(format!("{base}/api/mcp/v1/screenshot"))
+            .bearer_auth(&key)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    task.abort();
 }

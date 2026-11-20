@@ -27,6 +27,9 @@ axum-server = { version = "0.8", default-features = false, features = ["tls-rust
 rustls = { version = "0.23", default-features = false, features = ["ring","std","tls12"] }
 rcgen = { version = "0.14", default-features = false, features = ["crypto","ring","pem"] }
 
+[target.'cfg(not(target_arch = "arm"))'.dependencies]
+libloading = "0.8"
+
 [build-dependencies]
 serde_yaml = "0.9"
 serde_json = "1"

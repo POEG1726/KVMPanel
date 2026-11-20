@@ -1,4 +1,5 @@
 //! Device administration, local shells, updates and the bearer-authenticated MCP API.
+mod device_settings;
 pub mod listeners;
 mod network;
 mod tailscale;
@@ -287,7 +288,7 @@ async fn hid(
     if body["t"] == "ping" {
         return Err(ApiError::new(400, "bad_message"));
     }
-    crate::console::input(&app, &body).await?;
+    crate::console::input(&app, &body, || bearer(&app, &h).is_ok()).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 const LOGO_MAX: usize = 256 * 1024;
@@ -350,6 +351,7 @@ async fn logo(State(app): State<App>) -> Result<Response, ApiError> {
 /// Resume services owned by kvmd after the board boots.
 pub fn start_services(app: App) {
     if !app.sim {
+        device_settings::start(app.clone());
         let net = app.clone();
         tokio::spawn(async move {
             let cfg = net.system.network();
