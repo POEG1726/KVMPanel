@@ -1,0 +1,92 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
+#include <dt-bindings/reset/sun20i-d1-ccu.h>
+
+/ {
+	/* SW1-SW4 and the PC817 optocouplers U7-U10 have no routed pins. */
+
+	soc {
+		ths: thermal-sensor@2009400 {
+			compatible = "allwinner,sun20i-d1-ths";
+			reg = <0x2009400 0x400>;
+			interrupts = <GIC_SPI 58 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&ccu CLK_BUS_THS>;
+			clock-names = "bus";
+			resets = <&ccu RST_BUS_THS>;
+			nvmem-cells = <&ths_calibration>;
+			nvmem-cell-names = "calibration";
+			#thermal-sensor-cells = <0>;
+		};
+	};
+
+	thermal-zones {
+		cpu-thermal {
+			polling-delay-passive = <0>;
+			polling-delay = <0>;
+			thermal-sensors = <&ths>;
+
+			trips {
+				cpu-critical {
+					temperature = <100000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+		};
+	};
+};
+
+&sid {
+	ths_calibration: thermal-sensor-calibration@14 {
+		reg = <0x14 0x8>;
+	};
+};
+
+&pio {
+	vcc-pd-supply = <&reg_1v8>;
+	vcc-pf-supply = <&reg_1v8>;
+};
+
+&i2c2 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c2_pd_pins>;
+	clock-frequency = <100000>;
+	status = "okay";
+
+	light-sensor@23 {
+		compatible = "rohm,bh1750";
+		/* U6.2 (ADDR) is grounded. */
+		reg = <0x23>;
+	};
+
+	touchscreen@20 {
+		compatible = "syna,rmi4-i2c";
+		reg = <0x20>;
+		vdd-supply = <&reg_3v3_main>;
+		vio-supply = <&reg_1v8>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		/* CN2.35 (IRQ) and CN2.5 (reset) end at the connector. */
+		status = "disabled";
+
+		rmi4-f12@12 {
+			reg = <0x12>;
+			syna,sensor-type = <1>;
+		};
+	};
+};
+
+&mmc0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&mmc0_pins>;
+	bus-width = <4>;
+	max-frequency = <50000000>;
+	broken-cd;
+	no-1-8-v;
+	/* Update the PF supply and add the card supply when the socket is wired. */
+	status = "disabled";
+};
+
+/* Use with the ARMv7 FEL build; keep reserved if firmware owns the watchdog. */
+&wdt {
+	status = "okay";
+};
