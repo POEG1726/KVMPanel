@@ -72,9 +72,9 @@ export function bodyGuard(operationId: string): preHandlerHookHandler {
   };
 }
 
-function issueSession(state: State, reply: FastifyReply, acc: Account) {
+function issueSession(state: State, req: FastifyRequest, reply: FastifyReply, acc: Account) {
   const token = randomBytes(24).toString('hex');
-  state.sessions.set(token, { token, user: acc.name, token_version: acc.token_version });
+  state.sessions.set(token, { token, user: acc.name, token_version: acc.token_version, ip: req.ip, since: state.now() });
   reply.setCookie(COOKIE, token, { path: '/', httpOnly: true, sameSite: 'strict' });
 }
 
@@ -105,7 +105,7 @@ export function registerAuth(app: FastifyInstance, state: State) {
     }
     state.loginGuards.delete(username);
     if (acc.disabled) return sendError(reply, 403, 'user_disabled');
-    issueSession(state, reply, acc);
+    issueSession(state, req, reply, acc);
     return { user: publicUser(acc) };
   });
 
@@ -125,7 +125,7 @@ export function registerAuth(app: FastifyInstance, state: State) {
     Object.assign(acc, hashPassword(next));
     acc.must_change_password = false;
     endSessionsOf(acc);
-    issueSession(state, reply, acc);
+    issueSession(state, req, reply, acc);
     return reply.code(204).send();
   });
 

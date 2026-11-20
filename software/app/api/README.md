@@ -46,3 +46,32 @@ npm test --prefix software/app/api/mock
 ```
 
 Mock 的测试会对照 `openapi.yaml` 校验每一个响应。初始账号为 `admin` / `admin`。
+
+## 事件和输入：`/api/ws`
+
+- 要求已登录且有 `console` 权限。未登录以 4401 关闭，没有 `console` 权限以 4403 关闭。
+- 每条消息都是 JSON 对象，用 `t` 区分类型。完整定义见 `schema/ws.schema.json` 里的 `$defs/ClientMessage` 和 `$defs/ServerMessage`。
+
+**客户端 → 服务端**
+
+| `t` | 字段 | 说明 |
+|---|---|---|
+| `key` | `code`（`KeyboardEvent.code`）、`down` | 按下或松开一个键 |
+| `mouse_abs` | `x`、`y`（0–65535）、`buttons` | 绝对坐标 |
+| `mouse_rel` | `dx`、`dy`（−127–127）、`buttons` | 相对移动 |
+| `wheel` | `dy`（−127–127） | 滚轮 |
+| `paste` | `text`（不超过 64 KiB） | 把文本当键盘输入打出来 |
+| `shortcut` | `keys`（1–8 个 code） | 按顺序按下，再倒序松开，比如 `["ControlLeft","AltLeft","Delete"]` |
+| `ping` | — | 服务端回 `pong` |
+
+`buttons` 是位掩码：1 左键、2 右键、4 中键、8 后退、16 前进。
+
+**服务端 → 客户端**
+
+| `t` | 说明 |
+|---|---|
+| `status` | 连上时推一次，状态变化时推，另外每秒至少推一次。字段：`hdmi`、`stream`、`power`、`locks`（被控电脑的 Num/Caps/Scroll 灯）、`sessions`（当前打开 `/api/ws` 的连接）、`media` |
+| `usb_reenumerated` | USB gadget 已经重建 |
+| `kvm_restarting` | kvmd 即将重启，随后服务端以 1012 关闭连接 |
+| `error` | `bad_message`：格式不对，这条消息丢弃，连接不断；`forbidden`：只读会话发了输入 |
+| `pong` | 回应 `ping` |

@@ -27,7 +27,14 @@ export interface Session {
   token: string;
   user: string;
   token_version: number;
+  ip: string;
+  since: number;
 }
+
+export interface Hdmi { signal: boolean; width: number; height: number; fps: number }
+export interface Locks { num: boolean; caps: boolean; scroll: boolean }
+export interface Power { on: boolean; hdd: boolean }
+export interface MediaState { mounted: string | null; mode: 'cdrom' | 'disk' | null }
 
 export interface LoginGuard {
   failures: number;
@@ -45,6 +52,10 @@ export interface State {
   sessions: Map<string, Session>;
   loginGuards: Map<string, LoginGuard>;
   config: Config;
+  hdmi: Hdmi;
+  locks: Locks;
+  power: Power;
+  media: MediaState;
 }
 
 export function hashPassword(password: string, salt = randomBytes(16).toString('hex')): { salt: string; hash: string } {
@@ -70,5 +81,9 @@ export function createState(opts: { now?: () => number; sleep?: (ms: number) => 
     sessions: new Map(),
     loginGuards: new Map(),
     config: defaultConfig(),
+    hdmi: { signal: true, width: 1920, height: 1080, fps: 60 },
+    locks: { num: false, caps: false, scroll: false },
+    power: { on: true, hdd: false },
+    media: { mounted: null, mode: null },
   };
 }

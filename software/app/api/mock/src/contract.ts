@@ -34,6 +34,24 @@ for (const [path, item] of Object.entries(contract.paths)) {
 
 const cache = new Map<string, ValidateFunction>();
 
+const loadedMessageSchemas = new Set<string>();
+
+/** Validator for `$defs/<def>` in a message schema file under api/schema/ (e.g. ws.schema.json). */
+export function messageValidator(file: string, def: string): ValidateFunction {
+  const key = `msg:${file}#${def}`;
+  let v = cache.get(key);
+  if (!v) {
+    if (!loadedMessageSchemas.has(file)) {
+      const path = fileURLToPath(new URL(`../../schema/${file}`, import.meta.url));
+      ajv.addSchema(JSON.parse(readFileSync(path, 'utf8')));
+      loadedMessageSchemas.add(file);
+    }
+    v = ajv.compile({ $ref: `${file}#/$defs/${pointerEscape(def)}` });
+    cache.set(key, v);
+  }
+  return v;
+}
+
 /** Validator for a named schema under components/schemas. */
 export function schemaValidator(name: string): ValidateFunction {
   const key = `schema:${name}`;

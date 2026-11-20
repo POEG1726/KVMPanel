@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ws.schema.json",
+  "title": "KVMPanel /api/ws messages",
+  "$defs": {
+    "ClientMessage": {
+      "oneOf": [
+        { "$ref": "#/$defs/Key" },
+        { "$ref": "#/$defs/MouseAbs" },
+        { "$ref": "#/$defs/MouseRel" },
+        { "$ref": "#/$defs/Wheel" },
+        { "$ref": "#/$defs/Paste" },
+        { "$ref": "#/$defs/Shortcut" },
+        { "$ref": "#/$defs/Ping" }
+      ]
+    },
+    "ServerMessage": {
+      "oneOf": [
+        { "$ref": "#/$defs/Status" },
+        { "$ref": "#/$defs/UsbReenumerated" },
+        { "$ref": "#/$defs/KvmRestarting" },
+        { "$ref": "#/$defs/Error" },
+        { "$ref": "#/$defs/Pong" }
+      ]
+    },
+    "Buttons": {
+      "description": "Bit mask: 1 left, 2 right, 4 middle, 8 back, 16 forward",
+      "type": "integer", "minimum": 0, "maximum": 31
+    },
+    "Key": {
+      "type": "object", "required": ["t", "code", "down"], "additionalProperties": false,
+      "properties": {
+        "t": { "const": "key" },
+        "code": { "description": "KeyboardEvent.code, e.g. KeyA, CapsLock", "type": "string", "minLength": 1, "maxLength": 32 },
+        "down": { "type": "boolean" }
+      }
+    },
+    "MouseAbs": {
+      "type": "object", "required": ["t", "x", "y", "buttons"], "additionalProperties": false,
+      "properties": {
+        "t": { "const": "mouse_abs" },
+        "x": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "y": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "buttons": { "$ref": "#/$defs/Buttons" }
+      }
+    },
+    "MouseRel": {
+      "type": "object", "required": ["t", "dx", "dy", "buttons"], "additionalProperties": false,
+      "properties": {
+        "t": { "const": "mouse_rel" },
+        "dx": { "type": "integer", "minimum": -127, "maximum": 127 },
+        "dy": { "type": "integer", "minimum": -127, "maximum": 127 },
+        "buttons": { "$ref": "#/$defs/Buttons" }
+      }
+    },
+    "Wheel": {
+      "type": "object", "required": ["t", "dy"], "additionalProperties": false,
+      "properties": { "t": { "const": "wheel" }, "dy": { "type": "integer", "minimum": -127, "maximum": 127 } }
+    },
+    "Paste": {
+      "type": "object", "required": ["t", "text"], "additionalProperties": false,
+      "properties": { "t": { "const": "paste" }, "text": { "type": "string", "maxLength": 65536 } }
+    },
+    "Shortcut": {
+      "description": "Press keys in order, then release in reverse, e.g. [ControlLeft, AltLeft, Delete]",
+      "type": "object", "required": ["t", "keys"], "additionalProperties": false,
+      "properties": {
+        "t": { "const": "shortcut" },
+        "keys": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "type": "string", "minLength": 1, "maxLength": 32 } }
+      }
+    },
+    "Ping": {
+      "type": "object", "required": ["t"], "additionalProperties": false,
+      "properties": { "t": { "const": "ping" } }
+    },
+    "Status": {
+      "description": "Sent on connect, on every change and at least once per second",
+      "type": "object",
+      "required": ["t", "hdmi", "stream", "power", "locks", "sessions", "media"],
+      "additionalProperties": false,
+      "properties": {
+        "t": { "const": "status" },
+        "hdmi": {
+          "type": "object", "required": ["signal", "width", "height", "fps"], "additionalProperties": false,
+          "properties": {
+            "signal": { "type": "boolean" },
+            "width": { "type": "integer", "minimum": 0 },
+            "height": { "type": "integer", "minimum": 0 },
+            "fps": { "type": "number", "minimum": 0 }
+          }
+        },
+        "stream": {
+          "type": "object", "required": ["fps", "kbps"], "additionalProperties": false,
+          "properties": { "fps": { "type": "number", "minimum": 0 }, "kbps": { "type": "number", "minimum": 0 } }
+        },
+        "power": {
+          "type": "object", "required": ["on", "hdd"], "additionalProperties": false,
+          "properties": { "on": { "type": "boolean" }, "hdd": { "type": "boolean" } }
+        },
+        "locks": {
+          "type": "object", "required": ["num", "caps", "scroll"], "additionalProperties": false,
+          "properties": { "num": { "type": "boolean" }, "caps": { "type": "boolean" }, "scroll": { "type": "boolean" } }
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "type": "object", "required": ["user", "ip", "since", "view_only"], "additionalProperties": false,
+            "properties": {
+              "user": { "type": "string" },
+              "ip": { "type": "string" },
+              "since": { "description": "Unix ms", "type": "integer" },
+              "view_only": { "type": "boolean" }
+            }
+          }
+        },
+        "media": {
+          "type": "object", "required": ["mounted", "mode"], "additionalProperties": false,
+          "properties": {
+            "mounted": { "type": ["string", "null"], "description": "File name of the mounted image" },
+            "mode": { "enum": ["cdrom", "disk", null] }
+          }
+        }
+      }
+    },
+    "UsbReenumerated": {
+      "type": "object", "required": ["t"], "additionalProperties": false,
+      "properties": { "t": { "const": "usb_reenumerated" } }
+    },
+    "KvmRestarting": {
+      "description": "Sent right before kvmd restarts; the server then closes with code 1012",
+      "type": "object", "required": ["t"], "additionalProperties": false,
+      "properties": { "t": { "const": "kvm_restarting" } }
+    },
+    "Error": {
+      "type": "object", "required": ["t", "error"], "additionalProperties": false,
+      "properties": { "t": { "const": "error" }, "error": { "enum": ["bad_message", "forbidden"] } }
+    },
+    "Pong": {
+      "type": "object", "required": ["t"], "additionalProperties": false,
+      "properties": { "t": { "const": "pong" } }
+    }
+  }
+}
