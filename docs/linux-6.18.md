@@ -2,32 +2,78 @@
 
 日期：2026-11-20。检查基线：v6.18 与 v6.18.64。
 
-这是静态源码检查。没有编译验证、实板启动或性能测试；T113-S 的支持不能直接当作 T113-i 全功能验证。
+在 Ubuntu WSL 的 Linux 6.18.64 上构建板级内核、模块和组合 DTB。QEMU virt 已验证用户态、USB 枚举，以及 LT8619C、CSIC、TD4322 三个模块的加载和卸载。四份私有内核补丁使用 checkpatch --strict 检查；每份仅有一条 FILE_PATH_CHANGES 提醒审核上游 MAINTAINERS，项目在 binding 中记录维护人，五个驱动对象通过 W=1 编译，组合 DTB 通过相关绑定的 dt-validate。本板尚未上电。[构建与测试命令](development.md#构建应用所需的内核模块和组合-dtb)
 
 ## 结果
 
-| 功能 | 检查结果 | 后续 |
+| 功能 | 电脑上已核对或验证 | 待实板验证 |
 |---|---|---|
-| 板级 DTS | 无 T113-i 自定义板配置；存在 T113-S / D1 共用基础 | 核对差异，建立本板 DTS |
-| DDR / 双核 | DDR 属于启动程序；Linux 有 PSCI 路径，U-Boot 有 R528 实现 | 固定 DDR 参数与启动固件，实测两核 |
-| UART/GPIO/I²C/SPI/USB | 有共享节点与驱动 | 填本板 pinctrl、供电和角色 |
-| RTL8211F / W25N04KW / BH1750 | 有相应驱动条目 | 配置并验证；不代表 Flash 启动链已兼容 |
-| DSI | 已有 DE/TCON/DSI/D-PHY；未找到 TD4322 命名面板驱动 | DRM panel 适配；触摸协议另确认 |
-| CSI | sun6i-csi 无 T113/D1 匹配项，共用 DTS 无 CSI 节点 | 对照 Tina VIN 的寄存器、DMA、IRQ；不是只加 compatible |
-| LT8619C | 原版树无驱动 | 参考 Rockchip GPL 驱动，剥离私有依赖，接 V4L2 |
-| JPEG/MJPEG 编码 | Cedrus 原版接口为解码 | 评估社区 V4L2 编码补丁，再考虑 Tina 编码 ABI |
-| 温度 / 重启 | THS 驱动有 D1 支持，T113 DTS 集成缺失；watchdog reserved | 评估后续上游 DT 补丁、固件所有权与校准 |
-| 自身关机 | STC 是板级自有协议 | 小型协议/关机驱动或合适的最终断电信号 |
+| 板级 DTS / 启动 | 基础 DTS 加显示、采集与外设，保留 RAM 启动；SD、NAND 均未指定为根设备 | FEL 启动、实际板型、引脚电压 |
+| DDR / 双核 / 串口 | U-Boot 有 T113-i 外置 DDR3 参考，QEMU 以双 Cortex-A7 登录 | DDR 训练、512 MiB、PSCI、UART0 |
+| 网络 / USB-A | DWMAC、RTL8211F、sunxi USB host 已配置；QEMU 验证 DHCP、网关和 USB 存储读取 | PHY 时钟、复位、RGMII 延时和真实 USB-A 收发 |
+| USB0 gadget | 默认 3 HID、3 LUN、EP0 遥测通过 QEMU，默认 4 IN / 1 OUT | MUSB、FIFO 分配、BIOS 键鼠与 Windows 兼容性 |
+| SPI NAND / SD | SPI0 预留；SMHC0/PF0–5 已预留，现版 VCC-PF 为 1.8 V | 改板电压和供电，SD 卡只读探测、可选 NAND 识别、选定介质后的启动 |
+| LT8619C / CSI | 标准 V4L2 子设备、独立 CSIC 驱动、绑定与板级图已编译 | 先解决 RESET_N，再验 HPD、EDID、DMA/IRQ、持续采集与换模式 |
+| JPEG / MJPEG | 软件 NEON 编解码通过；硬件 ABI 已调查 | 硬件编码节点、真实吞吐、CPU 占用和采集并发 |
+| TD4322 / DSI / 背光 | 参考初始化、TE 触发命令帧和 DCS 亮度已编译；面板节点禁用 | 确认型号、复位和 TE 接线，验证电源、灰阶与连续刷新 |
+| S3508 / BH1750 | I²C2 节点与内核驱动就绪；S3508 缺 IRQ 禁用 | 触摸引脚、F12 坐标、光照读数 |
+| PC817 / SW1–SW4 | 已核对网表，当前无可分配 GPIO | 补走线，确认极性与按键映射 |
+| 温度 / 看门狗 | D1 THS、SID 校准、thermal zone、系统 WDT 节点已编译 | 校准读数、固件所有权、喂狗与受控复位 |
+| 自身关机 | STC 板级关机通信沿用既有待办，本计划六项未定义协议 | 核对协议、下电和恢复时序 |
 
-6.18.64 已含部分 DSI/LVDS mux 修复；DSI mod clock 仍在 probe 阶段获取，需评估后续 bind-time 修复。不能把 6.18 基础版和最新 6.18.y 的缺陷一概而论。
+## MIPI DSI
 
-## 移植策略
+- 可独立构建的 [DSI 设备树](../software/os/linux/dts/sun8i-t113i-kvmpanel-dsi.dts) 启用 DE → TCON LCD0 → DSI，引用 SoC 的 PD0–PD9 pinmux、D-PHY 和本板固定 1.8 V 电源。基础 DSI DTS 用于主控单测。组合 DTB 另加 TD4322 子节点。
+- [时钟补丁](../software/os/linux/patches/0001-sun6i-dsi-tcon-top-clock.patch) 将 D1/T113 共用的 A100 路径的模块时钟获取移到 component bind 阶段，等待 TCON TOP 提供该时钟。[Generic Write 补丁](../software/os/linux/patches/0002-sun6i-dsi-generic-write.patch) 支持通用短、长写，沿用现有 LP 发送路径供面板初始化使用。 [时钟补丁原帖](https://lists.openwall.net/linux-kernel/2026/09/26/448)
+- [卖家参考包](../hardware/reference/display/TD4322.zip) 的面板驱动采用 4 lane、RGB888、1080×1920、140.640 MHz 像素时钟和 Command Mode，并在初始化发送 Generic Long Write。原版 sun6i 像素输出走 Video Mode，Generic Write 只提供初始化包传输，本板 0004 系列补丁另行实现 Command Mode 帧更新和 TE 同步。现有 DCS 读路径只支持回读一个字节。
+- 参考包针脚图的四组数据对和时钟对与 CN2 网表的信号名称、lane 顺序和极性相符。参考代码需要可控的面板复位 GPIO，本板当前网表的 DISP_RST 和 DISP_TE 只到 CN2。面板类型、供电时序和复位方式需要结合拆机屏实物确认。
 
-1. 基础外设复用主线，主要改 DTS/config。
-2. 面板只迁移命令、时序和电源顺序，保留主线 DRM 框架。
-3. LT8619C 复用寄存器和检测逻辑；T113 CSI 按数据手册/Tina 寄存器实现必要的 V4L2 驱动适配。
-4. 编码优先评估标准 V4L2 路线。社区作者报告 T113 JPEG 测试成功不等于当前 T113-i + 6.18 已验证。
-5. STC、面板电源等板级特有功能保持独立小模块，不整体搬入厂商显示/VIN 框架。
+### TD4322 刷新与背光
+
+参考包的 4 lane RGB888、1080×1920 和 140.640 MHz 模式已编进面板驱动。1302×1957 总时序折合约 55.20 Hz，计算线速约 843.84 Mbit/s/lane。面板初始化包的类型、字节和延时按卖家序列复核。有效的外部 TE 边沿触发 HSTX 和 TCON；连续两个名义帧周期未触发时，看门狗按帧周期尝试发送真实帧。共用的触发路径会跳过在途帧，并滤掉半帧内的重复边沿；每行传输 3240 字节像素，首行写 0x2c，后续 0x3c。TCON TRI_FINISH 上报 vblank。LP 控制命令与帧传输互斥，忙时跳过该 TE。
+
+亮度用 DCS 0x51 暴露为 0–255 的 backlight。SGM3851A 的控制线经 R17/R13 回到 CN2。CN2.28（DISP_RST）、CN2.26（DISP_TE）都没有 SoC 管脚；组合 DTB 保留 panel@0 并禁用。确认面板型号、VCI/VDDI、复位脉冲、TE 电平/极性和引脚后，填入 reset-gpios 与 te-gpios 并启用。上板测频、验证黑白与色条、亮度、持续翻页和休眠恢复。[卖家参考包](../hardware/reference/display/TD4322.zip) · [BSP 寄存器与触发路径](https://github.com/AvaotaSBC/linux/tree/7c2a33957cb82e522885992ec26331d1c1c6db28/bsp/drivers/video/sunxi/disp2/disp/de/lowlevel_v2x)
+
+## USB0 gadget
+
+板上运行 `kvmpanel-gadget --help` 查看组合与镜像参数。默认键盘、相对鼠标、绝对鼠标各一个 HID，存储使用一个 bulk 功能。LUN0 是只读光驱，LUN1 是虚拟 U 盘，LUN2 是共享盘。介质路径可留空，两个磁盘槽默认只读。启用写入前应先卸载同一镜像的本地文件系统。
+
+每个绝对鼠标 Input 报告都是 7 字节，首字节为 report ID `0x02`，后接 6 字节鼠标数据；单独或合并鼠标、开关遥测时均相同。每个厂商遥测 Output 报告都是 64 字节，首字节为 `0x03`，后接 63 字节数据。启用绝对鼠标时两者共用接口。关闭绝对鼠标时，遥测使用独立 HID，占 1 个 IN；相对 boot 鼠标继续发送无编号报告。HID 的 `no_out_endpoint=1` 使主机的 SET_REPORT 走 EP0。QEMU host 读到三个独立 LUN 的标记，并从 hidraw 到 /dev/hidgN 逐字节比对了默认的 64 字节报告。NCM、RNDIS、ACM 的合法组合已解绑重建并配置成功。
+
+T113-i 手册 USB2.0 OTG 一节给出 EP1–EP5 各一个 IN、一个 OUT，FIFO 共 8 KiB + 64 B。默认组合实测用 4 IN / 1 OUT。6.18.64 的 sunxi MUSB 五端点表按每方向 512 B 单缓冲配置。脚本在绑定前计算预算，dummy_hcd 无法测出 T113-i 的端点上限或 FIFO 行为。MUSB、冷启动 BIOS、Windows hidapi 和实际多 LUN 主机兼容性待实板验证。
+
+## LT8619C 和并行 CSI
+
+U26 的 D8–D15 接到 CSI_D0–7，控制 I²C 使用 PE14/PE15、七位地址 0x32。LT8619C 子设备从 Rockchip GPL 驱动移植接收器寄存器操作，使用标准 V4L2 DV timings 和 EDID 接口，默认 EDID 1.3 首选 1080p30，另有 720p60 DTD 和 VGA established timing，0xFD 给出显示范围。寄存器 0x6089 选择内部参考，REXT 可按 LT8619C R1.7 §6.2 接 1.8 V。U26.24 的 LT_RESET_N 低有效，当前网表只有 R302（10 kΩ）下拉到地。请在制板前确认释放路径，否则 I²C 探测和视频采集均可能失败。[Rockchip 源码](https://github.com/rockchip-linux/kernel/blob/develop-6.1/drivers/media/i2c/lt8619c.c) · [Lontium R1.7 数据手册](https://datasheet4u.com/pdf/1556811/LT8619C.pdf)
+
+独立的 sun20i-csi 采用社区 D1 CSIC 驱动，经 Tina VIN 和手册核对 TOP、parser、DMA、IRQ；DMA0/1 的 GIC SPI 为 95/96，parser0 为 100。板级链路用单通道 BT.656 嵌入同步、8 位 SDR 和 UYVY8_2X8，捕获队列使用 VB2 DMA 连续缓冲。开始上板验证时可从 CMA 32 MiB、4 个 VGA 缓冲起步。[CSIC 原补丁系列](https://lore.kernel.org/linux-media/20260930154835.402684-1-tien.nguyenminh@embeddedlinux.blog/) · [寄存器手册 §6.1](https://dl.linux-sunxi.org/T113-S3/T113-S3_User_manual_v1.1_20210830.pdf)
+
+8 位 SDR 在一个 PCLK 周期传 1 字节，YUV 4:2:2 每像素占 2 字节。T113-i 手册表 5-21 的时钟上限 148.5 MHz 对应 148.5 MB/s 或 74.25 Mpixel/s。以下用十进制 MB，标准 CTA 总时序为 2200×1125。[本板 SoC 数据手册](../hardware/reference/datasheets/T113-i_Datasheet_V1.4.pdf)
+
+| 模式 | 有效画面载荷 | 含消隐所需字节时钟 | 结论 |
+|---|---:|---:|---|
+| 1920×1080p60 | 248.832 MB/s | 297 MHz | 超过上限，削减软件帧率也不能接收这一输入时序 |
+| 1920×1080p30 | 124.416 MB/s | 148.5 MHz | 理论可行，正好到上限；边沿裕量、像素顺序、丢帧待实板验证 |
+
+上板先用 `media-ctl -p` 识别 LT 子设备和捕获节点。读取 `v4l2-ctl -d /dev/v4l-subdevN --query-dv-timings`，锁定后执行 `--set-dv-bt-timings query`。以实际宽高设置 CSI sink，例如 `media-ctl -V '"sun20i-csi-bridge":0 [fmt:UYVY8_2X8/640x480 field:none]'`，再用 `v4l2-ctl -d /dev/videoN --set-fmt-video=width=640,height=480,pixelformat=NV12 --stream-mmap=4 --stream-count=120 --stream-to=/dev/null` 验证。显示器拔线或换模式时，应用需用有限时长的 poll 和 QUERY_DV_TIMINGS 检测变化，然后 STREAMOFF、释放缓冲、重新设置时序和格式、重新排队。当前网表未把接收器中断引到主控。
+
+## JPEG/MJPEG 编码
+
+T113-i 数据手册 §2 的 VE 规格列出 JPEG/MJPEG 编码最高 1080p60；该指标描述编码器能力。本板 HDMI 输入另受上述 8 位总线限制。6.18.64 的 Cedrus 匹配 sun20i-d1-video-engine，cedrus_video.c 的输出队列接收压缩切片、采集队列给出原始图像。本板没有可直接使用的主线 V4L2 JPEG 编码节点。[Cedrus 队列实现](https://github.com/gregkh/linux/blob/v6.18.64/drivers/staging/media/sunxi/cedrus/cedrus_video.c)
+
+社区作者在 Linux 6.12.28 的 stateful V4L2 M2M 补丁上报告了 T113 JPEG 成功。6.18.64 仍需移植该补丁、核对 VE 的时钟/复位/电源域与 DMA 地址，并用实际原始帧验证 JPEG 输出。附件请求返回 HTTP 403，本次没有取得可验证应用的补丁正文。厂商 Cedar ABI 则要配套 /dev/cedar_dev、内核 ioctl、可供 VE 使用的 DMA 内存与匹配的 libvencoder/JPEG 库；Tina DTS 使用 sunxi-cedar-ve，与主线 Cedrus 的 V4L2 ABI 不同。目前没有在本项目的 ARMhf 静态 musl 系统验证配套库和设备驱动。两条硬件路径均留待实板。[补丁作者的测试说明](https://forum.armbian.com/topic/26551-video-encoder-using-mainline-kernel/) · [Cedar 设备 ABI 实现](https://github.com/uboborov/sunxi-cedar-mainline) · [Allwinner 编码示例](https://github.com/FREEWING-JP/OrangePi_CedarX/blob/master/cedarx/demo/demoVencoder/EncoderTest.c)
+
+保底方案为 Buildroot 的 libjpeg-turbo 2.1.5、Cortex-A7 和 NEON/VFPv4。核实了 CMake WITH_SIMD=ON、libjpeg.a 中的 NEON FDCT/降采样符号，并在 QEMU Cortex-A7 编解码了一张 16×8 色块图，核对了回读尺寸和像素误差。1080p 的实际软件帧率、CPU 占用和采集叠加时的内存带宽待实板验证。
+
+## 触摸、光照、SD 和 GPIO
+
+I²C2 的 PD20/PD21 分别通过 U18.W18/V18 接 SCL/SDA。总线经 R19/R18 上拉到 1.8 V。BH1750 U6.2 的 ADDR 接地，7 位地址为 0x23。S3508 卖家参考地址为 0x20，采用 RMI4 I²C/F12。CN2.35 TOUCH_IT、CN2.5 TOUCH_RST 各为单点，节点暂时禁用。待实板核对 S3508 型号、IRQ 电平、触点方向与 BH1750 的 IIO 读数。
+
+当前网表没有 SD 卡座；SMHC0 已描述 4 位 PF0–PF5。U18.F4 即 VCC-PF，现接 1V8。普通 SD 卡初始化要求 3.3 V 信号，需在改板时确认接 3.3 V 或使用合适的电平转换，补卡座电源、核对 CD，再启用节点。此 DTB 保留 NAND 和 SD 的独立启用方式，根文件系统用 initramfs。
+
+U7–U10（PC817）和 SW1–SW4 出现在 $PACKAGES，$NETS 内没有它们的管脚。JAF2.2 的 R15/POWER_ON 单独成网，没有证据可将其指定为 SoC 的某条电源键 GPIO。DTS 预留了注释，内核启用 GPIO 字符设备（含 libgpiod 1.x 所需 v1 ABI）和 gpio-keys。请提供改板网表中的电源/复位输出、灯输入、有效电平以及四键管脚，再填映射。[硬件网表](../hardware/exports/2026-11-20/Netlist_Schematic2_2026-11-20.tel)
+
+THS 位于 0x02009400，GIC SPI 58，校准读取 SID 偏移 0x14 的 8 字节。以 thermal_zone 暴露 SoC 温度，100 °C 临界阈值取自公开的 T113 DTS 提案。系统 WDT @0x020500a0 用于当前 ARMv7 FEL/U-Boot 组合；改用持有看门狗的固件时应保留 reserved。启动后检查校准、温度变化及 watchdog 身份；超时复位须单独安排实板验证。[THS 节点与校准来源](https://lists.openwall.net/linux-kernel/2026/01/13/2046)
 
 ## 参考
 
