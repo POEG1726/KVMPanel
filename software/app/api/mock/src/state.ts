@@ -58,6 +58,7 @@ export interface State {
   power: Power;
   media: MediaState;
   edid: { hex: string; preset: '1080p' | 'custom' };
+  wol: { name: string; mac: string }[];
 }
 
 export function hashPassword(password: string, salt = randomBytes(16).toString('hex')): { salt: string; hash: string } {
@@ -88,5 +89,6 @@ export function createState(opts: { now?: () => number; sleep?: (ms: number) => 
     power: { on: true, hdd: false },
     media: { mounted: null, mode: null },
     edid: { hex: edid1080p(), preset: '1080p' },
+    wol: [],
   };
 }

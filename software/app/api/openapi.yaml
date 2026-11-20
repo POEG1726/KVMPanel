@@ -353,6 +353,117 @@ paths:
               schema: { $ref: '#/components/schemas/Edid' }
         '401': *unauthenticated
         '403': *forbidden
+  /api/power:
+    get:
+      operationId: getPower
+      summary: PC power and HDD LED state read from the front-panel header (console permission)
+      responses:
+        '200':
+          description: LED state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PowerState' }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/power/press:
+    post:
+      operationId: pressPower
+      summary: Hold the PC power or reset button (PC817) for duration_ms. ≥4000 ms on power forces the PC off. The web asks for confirmation first (power permission).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [button, duration_ms]
+              additionalProperties: false
+              properties:
+                button: { type: string, enum: [power, reset] }
+                duration_ms: { type: integer, minimum: 200, maximum: 12000 }
+      responses:
+        '204': *noContent
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/wol/devices:
+    get:
+      operationId: listWolDevices
+      responses:
+        '200':
+          description: Saved wake-on-LAN targets
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [devices]
+                additionalProperties: false
+                properties:
+                  devices:
+                    type: array
+                    items: { $ref: '#/components/schemas/WolDevice' }
+        '401': *unauthenticated
+        '403': *forbidden
+    post:
+      operationId: addWolDevice
+      summary: Save a named target; mac may use - or :, any case, and is stored as lowercase aa:bb:cc:dd:ee:ff (power permission)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, mac]
+              additionalProperties: false
+              properties:
+                name: { type: string, minLength: 1, maxLength: 64 }
+                mac: { type: string }
+      responses:
+        '201':
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WolDevice' }
+        '400':
+          description: Malformed MAC (error=bad_mac) or body
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
+        '409': *conflict
+  /api/wol/devices/{mac}:
+    parameters:
+      - { name: mac, in: path, required: true, schema: { type: string } }
+    delete:
+      operationId: deleteWolDevice
+      responses:
+        '204': *noContent
+        '401': *unauthenticated
+        '403': *forbidden
+        '404': *notFound
+  /api/wol/wake:
+    post:
+      operationId: wakeOnLan
+      summary: Broadcast a magic packet (power permission)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mac]
+              additionalProperties: false
+              properties:
+                mac: { type: string }
+      responses:
+        '204': *noContent
+        '400':
+          description: Malformed MAC (error=bad_mac)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': *unauthenticated
+        '403': *forbidden
 components:
   securitySchemes:
     session:
@@ -530,3 +641,17 @@ components:
       properties:
         hex: { type: string, pattern: '^00ffffffffffff00([0-9a-f]{240}|[0-9a-f]{496})$', description: 128 or 256 bytes, lowercase hex }
         preset: { type: string, enum: ['1080p', custom] }
+    PowerState:
+      type: object
+      required: [on, hdd]
+      additionalProperties: false
+      properties:
+        on: { type: boolean, description: Power LED lit }
+        hdd: { type: boolean, description: HDD LED lit }
+    WolDevice:
+      type: object
+      required: [name, mac]
+      additionalProperties: false
+      properties:
+        name: { type: string }
+        mac: { type: string, pattern: '^([0-9a-f]{2}:){5}[0-9a-f]{2}$' }
