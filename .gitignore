@@ -21,3 +21,6 @@ node_modules/
 # Vendor archives / credentials must not enter the project repository.
 *.key
 *.pem
+
+# Brainstorm mockups
+.superpowers/
