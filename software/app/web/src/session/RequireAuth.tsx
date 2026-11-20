@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Navigate, Outlet, useLocation } from 'react-router-dom';
+import { Navigate, Outlet, useMatch } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api, ApiError, errorKey, unwrap } from '../api/client';
@@ -17,7 +17,7 @@ function ConnectionBanner() {
 /** Layout route: requires a session, forces a password change when asked, then opens the events socket once. */
 export function RequireAuth() {
   const { t } = useTranslation();
-  const { pathname } = useLocation();
+  const workspaceRoute = useMatch('/workspace');
   const { user, isLoading, error } = useSession();
   const config = useQuery({
     queryKey: CONFIG_KEY,
@@ -44,7 +44,7 @@ export function RequireAuth() {
   // The password change ends this user's other sessions, so the socket is only opened afterwards.
   if (user.must_change_password) return <ChangePasswordDialog />;
   return (
-    <EventsProvider enabled={pathname !== '/workspace' || user.role === 'admin' || user.permissions.includes('console')}>
+    <EventsProvider enabled={!workspaceRoute || user.role === 'admin' || user.permissions.includes('console')}>
       <ConnectionBanner />
       <Outlet />
     </EventsProvider>

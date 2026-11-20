@@ -2,7 +2,21 @@ import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: 'kvmd-route-entries',
+      enforce: 'post',
+      generateBundle(_, bundle) {
+        // kvmd serves directories directly; each BrowserRouter entry needs a physical index.
+        const index = bundle['index.html'];
+        if (index?.type !== 'asset') this.error('Missing application index.html');
+        for (const route of ['login', 'workspace']) {
+          this.emitFile({ type: 'asset', fileName: route + '/index.html', source: index.source });
+        }
+      },
+    },
+  ],
   optimizeDeps: { include: ['@xterm/xterm', '@xterm/addon-fit'] },
   server: {
     proxy: {
