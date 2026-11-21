@@ -16,4 +16,6 @@ D 盘本地镜像在 `repos/<名称>.git`；Ubuntu WSL 中对应的源码目录�
 
 Tina 框架和 overlay 不是完整 SDK，尚缺配套 kernel、brandy/DDR、platform、prebuilt 等包。后续需要时再补，不影响先研究 6.18。
 
+辅助核参考保存在 WSL 的 `~/work/KVMPanel/upstream/`。`t113-amp-reference` 对应 MiniEVM 6.18 内核，`t113-amp-demos` 对应同一开发板的回环示例，`t113-c906` 对应 C906 启动与 FreeRTOS 示例。交叉工具链放在同级的 `riscv64-elf-cross` 和 `xtensa-hifi4-cross`。 [MiniEVM 6.18 移植](https://github.com/nickfox-taterli/t113-linux/tree/4e1c29c35) · [MiniEVM 回环示例](https://github.com/nickfox-taterli/t113-utils) · [C906 启动与 FreeRTOS 示例](https://github.com/nickfox-taterli/t113-c906)
+
 上游源码不提交到主仓库；改驱动时把自己的补丁放 `software/os/`。

@@ -3,3 +3,4 @@
 #include "kvmpanel-peripherals.dtsi"
 #include "kvmpanel-capture.dtsi"
 #include "kvmpanel-display.dtsi"
+#include "kvmpanel-remoteproc.dtsi"

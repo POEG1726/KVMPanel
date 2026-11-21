@@ -208,7 +208,7 @@ export ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
 
 # 仅在新目录执行 clone 和 apply。
 git clone --shared --branch v6.18.64 "$work/upstream/linux" "$linux"
-for patch in "$files"/patches/000{1,2,3,4}-*.patch; do
+for patch in "$files"/patches/000{1,2,3,4,5}-*.patch; do
     git -C "$linux" apply "$patch"
 done
 mkdir -p "$out"
@@ -240,6 +240,47 @@ make -C "$linux" O="$mout" olddefconfig
 make -C "$linux" O="$mout" -j12 zImage modules
 find "$mout/drivers" -name 'lt8619c.ko' -o -name 'sun20i-csi.ko' -o -name 'panel-td4322.ko'
 ```
+
+## C906 和 HiFi4
+
+组合 DTB 注册 C906、HiFi4 和它们的 mailbox。默认在 root shell 手动启动各核，固件由 Linux 从 `/lib/firmware/kvmpanel/` 加载。固件只提供 RPMsg 回环服务。Buildroot 选择 `BR2_PACKAGE_KVMPANEL_AMP=y` 后一起编译并安装两份 ELF 和 `kvmpanel-amp-ping`。普通 Buildroot 配置可以继续单独生成基础系统镜像。
+
+在 WSL 准备 RISC‑V bare-metal GCC 和 HiFi4 GCC 10.3，把实际编译器前缀传给 Buildroot。本次 RISC‑V 用 Ubuntu 24.04 的 `gcc-riscv64-unknown-elf` 和 `binutils-riscv64-unknown-elf`。 [HiFi4 GCC 10.3](https://github.com/YuzukiHD/FreeRTOS-HIFI4-DSP/releases/tag/Toolchains)
+
+```bash
+work="$HOME/work/KVMPanel"
+project=/mnt/d/MyProj/KVMPanel
+br="$work/upstream/buildroot"
+ext="$project/software/os/buildroot"
+bout="$work/build/buildroot-plan2"
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export RISCV_CROSS_COMPILE="$work/upstream/riscv64-elf-cross/usr/bin/riscv64-unknown-elf-"
+export XTENSA_CROSS_COMPILE="$work/upstream/xtensa-hifi4-cross/bin/xtensa-hifi4-elf-"
+make -C "$br" O="$bout" BR2_EXTERNAL="$ext" menuconfig
+# 选 KVMPanel packages 下的 C906 and HiFi4 echo firmware，然后保存。
+make -C "$br" O="$bout" BR2_EXTERNAL="$ext" -j12
+```
+
+本次构建的 `zImage`、`sun8i-t113i-kvmpanel-drivers.dtb` 和 `rootfs.cpio.gz` 放在 WSL 的 `~/work/KVMPanel/build/t113-amp/`。按 FEL 流程加载这三个文件。第一次在串口上分别启动两个核，确认各自的 RPMsg 设备名。 [FEL 加载方法](../software/os/u-boot/README.md#加载到内存)
+
+```sh
+for proc in /sys/class/remoteproc/remoteproc*; do
+    printf '%s ' "$proc"
+    cat "$proc/name" "$proc/firmware" "$proc/state"
+done
+
+# 替换为上面对应核的实际路径。
+proc=/sys/class/remoteproc/remoteproc0
+echo start > "$proc/state"
+for dev in /sys/class/rpmsg/rpmsg[0-9]*; do
+    [ -e "$dev" ] && readlink -f "$dev"
+done
+# 从路径中核对所属 remoteproc，替换成实际节点。
+kvmpanel-amp-ping /dev/rpmsg0
+echo stop > "$proc/state"
+```
+
+再同时启动两核，分别回环并重复停止和启动，检查串口是否有 mailbox 或 remoteproc 错误。回环固件轮询 mailbox 和共享队列，测试结束后可手动停止。SD 启动使用同一套 DT 节点和固件路径。
 
 ## Buildroot 与 QEMU 的组合验证
 

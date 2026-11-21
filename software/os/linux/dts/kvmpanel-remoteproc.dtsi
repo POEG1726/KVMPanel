@@ -1,0 +1,106 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
+#include <dt-bindings/reset/sun20i-d1-ccu.h>
+
+/ {
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		/* Both firmware link maps stay clear of the FEL boot images. */
+		c906_code: firmware@4fa00000 {
+			reg = <0x4fa00000 0x10000>;
+			no-map;
+		};
+
+		c906_rx: vdev0vring0@4fa10000 {
+			reg = <0x4fa10000 0x2000>;
+			no-map;
+		};
+
+		c906_tx: vdev0vring1@4fa12000 {
+			reg = <0x4fa12000 0x2000>;
+			no-map;
+		};
+
+		c906_pool: vdev0buffer@4fa14000 {
+			reg = <0x4fa14000 0x4000>;
+			no-map;
+		};
+
+		dsp_code: firmware@400000 {
+			reg = <0x00400000 0x10000>;
+			no-map;
+		};
+
+		dsp_rx: vdev0vring0@4fb10000 {
+			reg = <0x4fb10000 0x2000>;
+			no-map;
+		};
+
+		dsp_tx: vdev0vring1@4fb12000 {
+			reg = <0x4fb12000 0x2000>;
+			no-map;
+		};
+
+		dsp_pool: vdev0buffer@4fb14000 {
+			reg = <0x4fb14000 0x4000>;
+			no-map;
+		};
+
+		dsp_data: firmware@4fc00000 {
+			reg = <0x4fc00000 0x10000>;
+			no-map;
+		};
+	};
+};
+
+&{/soc} {
+	dsp: remoteproc@1700000 {
+		compatible = "allwinner,hifi4-rproc";
+		reg = <0x01700000 0x1000>;
+		clocks = <&ccu CLK_DSP>, <&ccu CLK_BUS_DSP_CFG>;
+		clock-names = "core", "bus";
+		assigned-clocks = <&ccu CLK_DSP>;
+		assigned-clock-parents = <&ccu CLK_PLL_PERIPH0_2X>;
+		assigned-clock-rates = <600000000>;
+		resets = <&ccu RST_DSP>, <&ccu RST_BUS_DSP_CFG>,
+			 <&ccu RST_BUS_DSP_DBG>;
+		reset-names = "core", "cfg", "dbg";
+		memory-region = <&dsp_code>, <&dsp_data>, <&dsp_rx>, <&dsp_tx>,
+				<&dsp_pool>;
+		firmware-name = "kvmpanel/hifi4-echo.elf";
+		mboxes = <&amp_msgbox 0>;
+		mbox-names = "arm-kick";
+	};
+
+	amp_msgbox: mailbox@3003000 {
+		compatible = "allwinner,sun8iw20-msgbox";
+		reg = <0x03003000 0x1000>, <0x01701000 0x1000>,
+		      <0x0601f000 0x1000>;
+		interrupts = <GIC_SPI 0 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&ccu CLK_BUS_MSGBOX0>, <&ccu CLK_BUS_MSGBOX1>,
+			 <&ccu CLK_BUS_MSGBOX2>;
+		resets = <&ccu RST_BUS_MSGBOX0>, <&ccu RST_BUS_MSGBOX1>,
+			 <&ccu RST_BUS_MSGBOX2>;
+		local_id = <0>;
+		#mbox-cells = <1>;
+	};
+
+	c906: remoteproc@6010000 {
+		compatible = "allwinner,c906-rproc";
+		reg = <0x06010000 0x1000>;
+		clocks = <&ccu CLK_RISCV>, <&ccu CLK_MBUS_RISCV>,
+			 <&ccu CLK_BUS_RISCV_CFG>, <&ccu CLK_RISCV_AXI>;
+		clock-names = "core", "bus", "cfg", "axi";
+		assigned-clocks = <&ccu CLK_RISCV>;
+		assigned-clock-parents = <&ccu CLK_PLL_PERIPH0_800M>;
+		assigned-clock-rates = <800000000>;
+		resets = <&ccu RST_BUS_RISCV_CFG>;
+		reset-names = "cfg";
+		memory-region = <&c906_code>, <&c906_rx>, <&c906_tx>, <&c906_pool>;
+		firmware-name = "kvmpanel/c906-echo.elf";
+		mboxes = <&amp_msgbox 4>;
+		mbox-names = "arm-kick";
+	};
+};

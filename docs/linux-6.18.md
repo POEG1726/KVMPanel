@@ -20,6 +20,15 @@
 | PC817 / SW1–SW4 | 已核对网表，当前无可分配 GPIO | 补走线，确认极性与按键映射 |
 | 温度 / 看门狗 | D1 THS、SID 校准、thermal zone、系统 WDT 节点已编译 | 校准读数、固件所有权、喂狗与受控复位 |
 | 自身关机 | STC 板级关机通信沿用既有待办，本计划六项未定义协议 | 核对协议、下电和恢复时序 |
+| C906 / HiFi4 | remoteproc、mailbox、RPMsg 和两份回环固件已构建并打包 | 两核的时钟、复位、共享内存可见性、独立及同时回环 |
+
+## C906、HiFi4 与 GPADC
+
+C906 和 HiFi4 由 A7 上的 Linux remoteproc 加载。板级 DT 使用 CPUX mailbox 的通道 4 和 0，分别为 C906 和 HiFi4 预留固件、vring 和 RPMsg buffer。C906 固件从 `0x4fa00000` 加载，HiFi4 指令在 `0x00400000` 的 IRAM，数据从 `0x4fc00000` 加载。驱动沿用 MiniEVM 的寄存器、时钟和复位路径，内存分配使用本板的固定 DT carveout。默认手动启动。 [构建与上板命令](development.md#c906-和-hifi4) · [MiniEVM 驱动来源](https://github.com/nickfox-taterli/t113-linux/tree/4e1c29c35)
+
+三个驱动通过 ARMv7 `W=1` 编译，最终内核和板级 DTB 已生成。已核对两份 ELF 的加载段、RPMsg resource table 与 DT 的地址和大小，预留区和本次 FEL 镜像互不重叠。QEMU 的板外测试通过，覆盖 Buildroot 镜像启动、固件目录、诊断程序和既有基础服务。两个核的复位、时钟和 RPMsg 收发待在实板验证。
+
+现版 `GPADC0` 接 TP2，`GPADC1` 接 TP1，两个通道都只有测试点，SW1–SW4 的电阻梯还未接入。现在的内核未启用 `CONFIG_SUN20I_GPADC`，板级 DT 沿用上游 `adc@2009000` 禁用状态，所以当前镜像没有这两个通道的 IIO 读数。要用测试点先启用驱动和 `&gpadc`；接好电阻梯后再按实测电压配置 `adc-keys`。GPADC 输入满量程以 AVCC 为上限。 [网表](../hardware/exports/2026-11-20/Netlist_Schematic2_2026-11-20.tel#L354) · [T113-i 数据手册 §5.7](../hardware/reference/datasheets/T113-i_Datasheet_V1.4.pdf)
 
 ## MIPI DSI
 

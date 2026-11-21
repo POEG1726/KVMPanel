@@ -1,0 +1,1596 @@
+diff --git a/drivers/mailbox/Kconfig b/drivers/mailbox/Kconfig
+index 29f16f220..ee067adca 100644
+--- a/drivers/mailbox/Kconfig
++++ b/drivers/mailbox/Kconfig
+@@ -323,6 +323,15 @@ config SUN6I_MSGBOX
+ 	  various Allwinner SoCs. This mailbox is used for communication
+ 	  between the application CPUs and the power management coprocessor.
+ 
++config SUNXI_MSGBOX
++	tristate "Allwinner sun8iw20/T113 message box"
++	depends on ARCH_SUNXI || COMPILE_TEST
++	select RESET_CONTROLLER
++	help
++	  Message box controller used for AMP communication between the
++	  Cortex-A7 cluster and the C906 co-processor found on T113/T113-S3
++	  (sun8iw20) parts. Enable this when using remoteproc/rpmsg on T113.
++
+ config SPRD_MBOX
+ 	tristate "Spreadtrum Mailbox"
+ 	depends on ARCH_SPRD || COMPILE_TEST
+diff --git a/drivers/mailbox/Makefile b/drivers/mailbox/Makefile
+index 81820a4f5..833c5f29a 100644
+--- a/drivers/mailbox/Makefile
++++ b/drivers/mailbox/Makefile
+@@ -68,6 +68,7 @@ obj-$(CONFIG_MTK_GPUEB_MBOX)	+= mtk-gpueb-mailbox.o
+ obj-$(CONFIG_ZYNQMP_IPI_MBOX)	+= zynqmp-ipi-mailbox.o
+ 
+ obj-$(CONFIG_SUN6I_MSGBOX)	+= sun6i-msgbox.o
++obj-$(CONFIG_SUNXI_MSGBOX)	+= sunxi-msgbox.o
+ 
+ obj-$(CONFIG_SPRD_MBOX)		+= sprd-mailbox.o
+ 
+diff --git a/drivers/remoteproc/Kconfig b/drivers/remoteproc/Kconfig
+index 48a0d3a69..d0ae2b012 100644
+--- a/drivers/remoteproc/Kconfig
++++ b/drivers/remoteproc/Kconfig
+@@ -378,6 +378,27 @@ config XLNX_R5_REMOTEPROC
+ 
+ 	  It's safe to say N if not interested in using RPU r5f cores.
+ 
++config SUNXI_C906_REMOTEPROC
++	tristate "Allwinner T113/D1 C906 remoteproc support"
++	depends on ARCH_SUNXI && SUNXI_MSGBOX
++	help
++	  Say y here to enable minimal remoteproc control of the Xuantie C906
++	  coprocessor present on Allwinner T113/T113s/D1 based SoCs.
++
++	  The driver can boot a firmware image provided via standard
++	  request_firmware() and exposes the usual sysfs control under
++	  /sys/class/remoteproc/. It expects a single MMIO region for the
++	  RISCV_CFG block and optional clocks/resets provided in the device tree.
++
++config SUNXI_HIFI4_REMOTEPROC
++	tristate "Allwinner T113 HiFi4 DSP remoteproc support"
++	depends on ARCH_SUNXI && SUNXI_MSGBOX
++	help
++	  Enable minimal remoteproc control of the Cadence HiFi4 DSP present
++	  on Allwinner T113/T113s devices. The driver can load an ELF firmware
++	  via request_firmware(), release the DSP from reset and transport
++	  RPMsg notifications over the T113 mailbox.
++
+ endif # REMOTEPROC
+ 
+ endmenu
+diff --git a/drivers/remoteproc/Makefile b/drivers/remoteproc/Makefile
+index 1c7598b84..74f183b3e 100644
+--- a/drivers/remoteproc/Makefile
++++ b/drivers/remoteproc/Makefile
+@@ -40,3 +40,5 @@ obj-$(CONFIG_TI_K3_DSP_REMOTEPROC)	+= ti_k3_dsp_remoteproc.o ti_k3_common.o
+ obj-$(CONFIG_TI_K3_M4_REMOTEPROC)	+= ti_k3_m4_remoteproc.o ti_k3_common.o
+ obj-$(CONFIG_TI_K3_R5_REMOTEPROC)	+= ti_k3_r5_remoteproc.o ti_k3_common.o
+ obj-$(CONFIG_XLNX_R5_REMOTEPROC)	+= xlnx_r5_remoteproc.o
++obj-$(CONFIG_SUNXI_C906_REMOTEPROC)	+= sunxi_c906_rproc.o
++obj-$(CONFIG_SUNXI_HIFI4_REMOTEPROC)	+= sunxi_hifi4_rproc.o
+diff --git a/drivers/mailbox/sunxi-msgbox.c b/drivers/mailbox/sunxi-msgbox.c
+new file mode 100644
+index 000000000..141ff4ff4
+--- /dev/null
++++ b/drivers/mailbox/sunxi-msgbox.c
+@@ -0,0 +1,638 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * sunxi-msgbox.c
++ * Created on Nov 20, 2026
++ * Author: @POEG1726
++ * Based on the T113-i MiniEVM port of the Allwinner mailbox driver.
++ */
++/*
++ * Allwinner sun8iw20/T113 message box controller
++ *
++ * This is a trimmed-down variant of the vendor driver that only keeps
++ * the pieces needed for AMP use (remoteproc/rpmsg).  It uses the mailbox
++ * framework with txdone polling and exposes up to 8 channels between the
++ * application ARM cores (local_id = 0) and the C906 co-processor.
++ */
++
++#include <linux/bitops.h>
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/device.h>
++#include <linux/err.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/jiffies.h>
++#include <linux/kernel.h>
++#include <linux/mailbox_controller.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_irq.h>
++#include <linux/platform_device.h>
++#include <linux/reset.h>
++#include <linux/slab.h>
++
++#define SUNXI_MSGBOX_OFFSET(n)             (0x100 * (n))
++#define SUNXI_MSGBOX_READ_IRQ_ENABLE(n)    (0x20 + SUNXI_MSGBOX_OFFSET(n))
++#define SUNXI_MSGBOX_READ_IRQ_STATUS(n)    (0x24 + SUNXI_MSGBOX_OFFSET(n))
++#define SUNXI_MSGBOX_WRITE_IRQ_ENABLE(n)   (0x30 + SUNXI_MSGBOX_OFFSET(n))
++#define SUNXI_MSGBOX_WRITE_IRQ_STATUS(n)   (0x34 + SUNXI_MSGBOX_OFFSET(n))
++#define SUNXI_MSGBOX_MSG_STATUS(n, p)      (0x60 + SUNXI_MSGBOX_OFFSET(n) + 0x4 * (p))
++#define SUNXI_MSGBOX_MSG_FIFO(n, p)        (0x70 + SUNXI_MSGBOX_OFFSET(n) + 0x4 * (p))
++#define SUNXI_MSGBOX_WRITE_IRQ_THRESHOLD(n, p) (0x80 + SUNXI_MSGBOX_OFFSET(n) + 0x4 * (p))
++
++#define RD_IRQ_EN_MASK             0x1
++#define RD_IRQ_EN_SHIFT(p)         ((p) * 2)
++
++#define RD_IRQ_PEND_MASK           0x1
++#define RD_IRQ_PEND_SHIFT(p)       ((p) * 2)
++
++#define WR_IRQ_EN_MASK             0x1
++#define WR_IRQ_EN_SHIFT(p)         ((p) * 2 + 1)
++
++#define WR_IRQ_PEND_MASK           0x1
++#define WR_IRQ_PEND_SHIFT(p)       ((p) * 2 + 1)
++
++#define MSG_NUM_MASK               0xF
++#define MSG_NUM_SHIFT              0
++
++#define WR_IRQ_THR_MASK            0x3
++#define WR_IRQ_THR_SHIFT           0
++
++/*
++ * Hardware description for a given SoC:
++ *  processors_max   : number of CPU instances that can talk to the msgbox
++ *  channels_max     : number of FIFO channels per CPU pair
++ *  fifo_msg_max     : depth of each FIFO
++ *  mbox_num_chans   : total exposed mailbox channels to Linux
++ *  to_coef_n        : map [local_id][remote_id] -> coefficient N
++ *  to_remote_id     : map [local_id][coef_n]    -> remote_id
++ */
++struct sunxi_msgbox_hwdata {
++	int processors_max;
++	int channels_max;
++	int fifo_msg_max;
++	int mbox_num_chans;
++	int to_coef_n[4][4];
++	int to_remote_id[4][4];
++};
++
++	struct sunxi_msgbox {
++		struct mbox_controller controller;
++		const struct sunxi_msgbox_hwdata *hwdata;
++		struct platform_device *pdev;
++		struct device *dev;
++
++		struct resource *res;
++		struct clk_bulk_data *clks;
++		int num_clks;
++		struct reset_control *reset;
++		int *irq;
++		int irq_cnt;
++		int local_id;
++		void __iomem *base_addr[0];
++	};
++
++static inline void reg_bits_set(void __iomem *reg, u32 mask, u32 shift)
++{
++	u32 val = readl(reg);
++
++	val |= (mask << shift);
++	writel(val, reg);
++}
++
++static inline void reg_bits_clear(void __iomem *reg, u32 mask, u32 shift)
++{
++	u32 val = readl(reg);
++
++	val &= ~(mask << shift);
++	writel(val, reg);
++}
++
++static inline u32 reg_bits_get(void __iomem *reg, u32 mask, u32 shift)
++{
++	return (readl(reg) & (mask << shift)) >> shift;
++}
++
++static inline void reg_val_update(void __iomem *reg, u32 mask, u32 shift, u32 val)
++{
++	u32 reg_val = readl(reg);
++
++	reg_val &= ~(mask << shift);
++	reg_val |= ((val & mask) << shift);
++	writel(reg_val, reg);
++}
++
++static inline void mbox_chan_id_to_coef_n_p(const struct sunxi_msgbox *chip,
++						 int chan_id, int *coef_n, int *coef_p)
++{
++	*coef_n = chan_id / chip->hwdata->channels_max;
++	*coef_p = chan_id % chip->hwdata->channels_max;
++}
++
++static inline void mbox_chan_to_coef_n_p(const struct sunxi_msgbox *chip,
++					     struct mbox_chan *chan,
++					     int *coef_n, int *coef_p)
++{
++	mbox_chan_id_to_coef_n_p(chip, chan - chan->mbox->chans, coef_n, coef_p);
++}
++
++static inline int sunxi_msgbox_coef_n(const struct sunxi_msgbox *chip,
++					  int sender_id, int receiver_id)
++{
++	return chip->hwdata->to_coef_n[sender_id][receiver_id];
++}
++
++static inline int sunxi_msgbox_remote_id(const struct sunxi_msgbox *chip,
++					     int local_id, int coef_n)
++{
++	return chip->hwdata->to_remote_id[local_id][coef_n];
++}
++
++static inline void *sunxi_msgbox_reg_base(const struct sunxi_msgbox *chip, int index)
++{
++	return chip->base_addr[index];
++}
++
++static inline struct sunxi_msgbox *to_sunxi_msgbox(struct mbox_chan *chan)
++{
++	return chan->con_priv;
++}
++
++static inline void sunxi_msgbox_set_write_irq_threshold(struct sunxi_msgbox *chip,
++							      void __iomem *base, int n,
++							      int p, int threshold)
++{
++	u32 thr_val;
++
++	switch (threshold) {
++	case 8:
++		 thr_val = 3;
++		 break;
++	case 4:
++		 thr_val = 2;
++		 break;
++	case 2:
++		 thr_val = 1;
++		 break;
++	case 1:
++	default:
++		 thr_val = 0;
++		 break;
++	}
++
++	reg_val_update(base + SUNXI_MSGBOX_WRITE_IRQ_THRESHOLD(n, p),
++			 WR_IRQ_THR_MASK, WR_IRQ_THR_SHIFT, thr_val);
++}
++
++static void sunxi_msgbox_read_handler(struct sunxi_msgbox *chip, struct mbox_chan *chan,
++					  void __iomem *base, int local_n, int p)
++{
++	unsigned long timeout = jiffies + msecs_to_jiffies(10);
++	u32 msg;
++	int ret = -1;
++
++	while (reg_bits_get(base + SUNXI_MSGBOX_MSG_STATUS(local_n, p),
++			      MSG_NUM_MASK, MSG_NUM_SHIFT) &&
++		time_before(jiffies, timeout)) {
++		 msg = readl(base + SUNXI_MSGBOX_MSG_FIFO(local_n, p));
++		 mbox_chan_received_data(chan, &msg);
++		 ret = 0;
++	}
++
++	if (ret)
++		 dev_err(chip->dev, "msgbox: read timeout on chan %d\n", p);
++
++	writel(RD_IRQ_PEND_MASK << RD_IRQ_PEND_SHIFT(p), base + SUNXI_MSGBOX_READ_IRQ_STATUS(local_n));
++}
++
++static irqreturn_t sunxi_msgbox_handler(int irq, void *dev_id)
++{
++	struct sunxi_msgbox *chip = dev_id;
++	int i;
++
++	for (i = 0; i < chip->hwdata->mbox_num_chans; i++) {
++		 struct mbox_chan *chan = &chip->controller.chans[i];
++		 int local_n, p;
++		 int local_id = chip->local_id;
++		 int remote_id, remote_n;
++		 void __iomem *read_reg_base;
++		 void __iomem *write_reg_base;
++		 u32 read_irq_en, read_irq_pending;
++		 u32 write_irq_en, write_irq_pending;
++
++		 mbox_chan_id_to_coef_n_p(chip, i, &local_n, &p);
++
++		 remote_id = sunxi_msgbox_remote_id(chip, local_id, local_n);
++		 remote_n = sunxi_msgbox_coef_n(chip, remote_id, local_id);
++
++		 read_reg_base = sunxi_msgbox_reg_base(chip, local_id);
++		 write_reg_base = sunxi_msgbox_reg_base(chip, remote_id);
++
++		 read_irq_en = reg_bits_get(read_reg_base +
++				   SUNXI_MSGBOX_READ_IRQ_ENABLE(local_n),
++				   RD_IRQ_EN_MASK, RD_IRQ_EN_SHIFT(p));
++		 read_irq_pending = reg_bits_get(read_reg_base +
++					 SUNXI_MSGBOX_READ_IRQ_STATUS(local_n),
++					 RD_IRQ_PEND_MASK, RD_IRQ_PEND_SHIFT(p));
++		 write_irq_en = reg_bits_get(write_reg_base +
++				    SUNXI_MSGBOX_WRITE_IRQ_ENABLE(remote_n),
++				    WR_IRQ_EN_MASK, WR_IRQ_EN_SHIFT(p));
++		 write_irq_pending = reg_bits_get(write_reg_base +
++					  SUNXI_MSGBOX_WRITE_IRQ_STATUS(remote_n),
++					  WR_IRQ_PEND_MASK, WR_IRQ_PEND_SHIFT(p));
++
++		 if (read_irq_en && read_irq_pending)
++			  sunxi_msgbox_read_handler(chip, chan, read_reg_base, local_n, p);
++
++		 /* Clear stray write IRQs if firmware left them enabled */
++		 if (write_irq_en && write_irq_pending)
++			  writel(WR_IRQ_PEND_MASK << WR_IRQ_PEND_SHIFT(p), write_reg_base +
++					 SUNXI_MSGBOX_WRITE_IRQ_STATUS(remote_n));
++	}
++
++	return IRQ_HANDLED;
++}
++
++static int sunxi_msgbox_startup(struct mbox_chan *chan)
++{
++	struct sunxi_msgbox *chip = to_sunxi_msgbox(chan);
++	int local_id, remote_id, local_n, remote_n, p;
++	void __iomem *read_reg_base;
++	void __iomem *write_reg_base;
++	unsigned long timeout = jiffies + msecs_to_jiffies(10);
++
++	mbox_chan_to_coef_n_p(chip, chan, &local_n, &p);
++	local_id = chip->local_id;
++	remote_id = sunxi_msgbox_remote_id(chip, local_id, local_n);
++	remote_n = sunxi_msgbox_coef_n(chip, remote_id, local_id);
++
++	read_reg_base = sunxi_msgbox_reg_base(chip, local_id);
++	write_reg_base = sunxi_msgbox_reg_base(chip, remote_id);
++
++	while (reg_bits_get(read_reg_base + SUNXI_MSGBOX_MSG_STATUS(local_n, p),
++			      MSG_NUM_MASK, MSG_NUM_SHIFT) &&
++		time_before(jiffies, timeout))
++		 readl(read_reg_base + SUNXI_MSGBOX_MSG_FIFO(local_n, p));
++
++	writel(RD_IRQ_PEND_MASK << RD_IRQ_PEND_SHIFT(p), read_reg_base + SUNXI_MSGBOX_READ_IRQ_STATUS(local_n));
++
++	reg_bits_set(read_reg_base + SUNXI_MSGBOX_READ_IRQ_ENABLE(local_n),
++		      RD_IRQ_EN_MASK, RD_IRQ_EN_SHIFT(p));
++
++	writel(WR_IRQ_PEND_MASK << WR_IRQ_PEND_SHIFT(p), write_reg_base + SUNXI_MSGBOX_WRITE_IRQ_STATUS(remote_n));
++
++	sunxi_msgbox_set_write_irq_threshold(chip, write_reg_base, remote_n, p, 1);
++
++	dev_dbg(chip->dev, "msgbox: channel %d ready (local %d -> remote %d)\n",
++		 p, local_id, remote_id);
++	return 0;
++}
++
++static int sunxi_msgbox_send_data(struct mbox_chan *chan, void *data)
++{
++	struct sunxi_msgbox *chip = to_sunxi_msgbox(chan);
++	int local_id = chip->local_id;
++	int local_n, remote_id, remote_n, p;
++	u32 msg_num, msg;
++	void __iomem *write_reg_base;
++	int retry = 5000; /* ~5ms max wait for FIFO space */
++
++	/* Remoteproc clients supply the queue ID plus one as a token. */
++	msg = (uintptr_t)data - 1;
++
++	mbox_chan_to_coef_n_p(chip, chan, &local_n, &p);
++	remote_id = sunxi_msgbox_remote_id(chip, local_id, local_n);
++	remote_n = sunxi_msgbox_coef_n(chip, remote_id, local_id);
++	write_reg_base = sunxi_msgbox_reg_base(chip, remote_id);
++
++	do {
++		msg_num = reg_bits_get(write_reg_base +
++				       SUNXI_MSGBOX_MSG_STATUS(remote_n, p),
++				       MSG_NUM_MASK, MSG_NUM_SHIFT);
++		if (msg_num < chip->hwdata->fifo_msg_max)
++			break;
++		udelay(1);
++	} while (--retry);
++
++	if (retry == 0)
++		return -ETIMEDOUT;
++
++	writel(msg, write_reg_base + SUNXI_MSGBOX_MSG_FIFO(remote_n, p));
++
++	return 0;
++}
++
++static void sunxi_msgbox_shutdown(struct mbox_chan *chan)
++{
++	struct sunxi_msgbox *chip = to_sunxi_msgbox(chan);
++	int local_id, remote_id;
++	int local_n, remote_n, p;
++	void __iomem *read_reg_base;
++	void __iomem *write_reg_base;
++	unsigned long timeout = jiffies + msecs_to_jiffies(10);
++
++	mbox_chan_to_coef_n_p(chip, chan, &local_n, &p);
++	local_id = chip->local_id;
++	remote_id = sunxi_msgbox_remote_id(chip, local_id, local_n);
++	remote_n = sunxi_msgbox_coef_n(chip, remote_id, local_id);
++
++	read_reg_base = sunxi_msgbox_reg_base(chip, local_id);
++	write_reg_base = sunxi_msgbox_reg_base(chip, remote_id);
++
++	reg_bits_clear(write_reg_base + SUNXI_MSGBOX_WRITE_IRQ_ENABLE(remote_n),
++			 WR_IRQ_EN_MASK, WR_IRQ_EN_SHIFT(p));
++	writel(WR_IRQ_PEND_MASK << WR_IRQ_PEND_SHIFT(p), write_reg_base + SUNXI_MSGBOX_WRITE_IRQ_STATUS(remote_n));
++
++	do {
++		 while (reg_bits_get(read_reg_base + SUNXI_MSGBOX_MSG_STATUS(local_n, p),
++					MSG_NUM_MASK, MSG_NUM_SHIFT) &&
++			 time_before(jiffies, timeout))
++			  readl(read_reg_base + SUNXI_MSGBOX_MSG_FIFO(local_n, p));
++
++		 reg_bits_clear(read_reg_base + SUNXI_MSGBOX_READ_IRQ_ENABLE(local_n),
++				  RD_IRQ_EN_MASK, RD_IRQ_EN_SHIFT(p));
++		 writel(RD_IRQ_PEND_MASK << RD_IRQ_PEND_SHIFT(p), read_reg_base + SUNXI_MSGBOX_READ_IRQ_STATUS(local_n));
++	} while (reg_bits_get(read_reg_base + SUNXI_MSGBOX_READ_IRQ_STATUS(local_n),
++				 RD_IRQ_PEND_MASK, RD_IRQ_PEND_SHIFT(p)) &&
++		  time_before(jiffies, timeout));
++
++	dev_dbg(chip->dev, "msgbox: channel %d shutdown\n", p);
++}
++
++static bool sunxi_msgbox_last_tx_done(struct mbox_chan *chan)
++{
++	struct sunxi_msgbox *chip = to_sunxi_msgbox(chan);
++	int local_id = chip->local_id;
++	int local_n, remote_id, remote_n, p;
++	void __iomem *status_reg;
++	u32 msg_num;
++
++	mbox_chan_to_coef_n_p(chip, chan, &local_n, &p);
++	remote_id = sunxi_msgbox_remote_id(chip, local_id, local_n);
++	remote_n = sunxi_msgbox_coef_n(chip, remote_id, local_id);
++
++	status_reg = sunxi_msgbox_reg_base(chip, remote_id) +
++		      SUNXI_MSGBOX_MSG_STATUS(remote_n, p);
++	msg_num = reg_bits_get(status_reg, MSG_NUM_MASK, MSG_NUM_SHIFT);
++
++	return msg_num < chip->hwdata->fifo_msg_max;
++}
++
++static bool sunxi_msgbox_peek_data(struct mbox_chan *chan)
++{
++	struct sunxi_msgbox *chip = to_sunxi_msgbox(chan);
++	int local_n, p;
++	u32 msg_num;
++
++	mbox_chan_to_coef_n_p(chip, chan, &local_n, &p);
++	msg_num = reg_bits_get(sunxi_msgbox_reg_base(chip, chip->local_id) +
++				  SUNXI_MSGBOX_MSG_STATUS(local_n, p),
++				  MSG_NUM_MASK, MSG_NUM_SHIFT);
++
++	return !!msg_num;
++}
++
++static struct mbox_chan *sunxi_mbox_xlate(struct mbox_controller *mbox,
++					      const struct of_phandle_args *sp)
++{
++	u32 ind = sp->args[0];
++
++	if (ind >= mbox->num_chans)
++		 return ERR_PTR(-EINVAL);
++
++	return &mbox->chans[ind];
++}
++
++static const struct mbox_chan_ops sunxi_msgbox_chan_ops = {
++	.startup      = sunxi_msgbox_startup,
++	.send_data    = sunxi_msgbox_send_data,
++	.shutdown     = sunxi_msgbox_shutdown,
++	.last_tx_done = sunxi_msgbox_last_tx_done,
++	.peek_data    = sunxi_msgbox_peek_data,
++};
++
++/* sun8iw20 / T113 mapping: ARM(0) <-> DSP(1) <-> C906(2) */
++static const struct sunxi_msgbox_hwdata sun8iw20_hwdata = {
++	.processors_max = 3,
++	.channels_max = 4,
++	.fifo_msg_max = 8,
++	.mbox_num_chans = 8,
++	.to_coef_n = {
++		 {-1, 0, 1, -1},
++		 {0, -1, 1, -1},
++		 {0, 1, -1, -1},
++		 {-1, -1, -1, -1}
++	},
++	.to_remote_id = {
++		 {1, 2, -1, -1},
++		 {0, 2, -1, -1},
++		 {0, 1, -1, -1},
++		 {-1, -1, -1, -1}
++	}
++};
++
++static const struct of_device_id sunxi_msgbox_of_match[] = {
++	{ .compatible = "allwinner,sun8iw20-msgbox", .data = &sun8iw20_hwdata },
++	{ .compatible = "allwinner,sun20i-d1-msgbox", .data = &sun8iw20_hwdata },
++	{ .compatible = "allwinner,sun8i-t113-msgbox", .data = &sun8iw20_hwdata },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, sunxi_msgbox_of_match);
++
++static void sunxi_msgbox_disable_irq(struct sunxi_msgbox *chip)
++{
++	int i, j;
++
++	for (i = 0; i < chip->hwdata->processors_max - 1; i++) {
++		 int local_n = i;
++		 int local_id = chip->local_id;
++		 int remote_id = sunxi_msgbox_remote_id(chip, local_id, local_n);
++		 int remote_n = sunxi_msgbox_coef_n(chip, remote_id, local_id);
++		 void __iomem *read_reg_base = sunxi_msgbox_reg_base(chip, local_id);
++		 void __iomem *write_reg_base = sunxi_msgbox_reg_base(chip, remote_id);
++		 void __iomem *read_irq_en_reg = read_reg_base +
++			  SUNXI_MSGBOX_READ_IRQ_ENABLE(local_n);
++		 void __iomem *write_irq_en_reg = write_reg_base +
++			  SUNXI_MSGBOX_WRITE_IRQ_ENABLE(remote_n);
++		 u32 read_irq_en_value = readl(read_irq_en_reg);
++		 u32 write_irq_en_value = readl(write_irq_en_reg);
++
++		 for (j = 0; j < chip->hwdata->channels_max; ++j) {
++			  read_irq_en_value &= ~(RD_IRQ_EN_MASK << RD_IRQ_EN_SHIFT(j));
++			  write_irq_en_value &= ~(WR_IRQ_EN_MASK << WR_IRQ_EN_SHIFT(j));
++		 }
++
++		 writel(read_irq_en_value, read_irq_en_reg);
++		 writel(write_irq_en_value, write_irq_en_reg);
++	}
++}
++
++static int sunxi_msgbox_resource_get(struct sunxi_msgbox *chip)
++{
++	int ret, i;
++
++	chip->num_clks = devm_clk_bulk_get_all(chip->dev, &chip->clks);
++	if (chip->num_clks < 0)
++		return chip->num_clks;
++	if (!chip->num_clks)
++		return dev_err_probe(chip->dev, -ENOENT, "no msgbox clocks defined\n");
++
++	chip->reset = devm_reset_control_array_get_optional_exclusive(chip->dev);
++	if (IS_ERR(chip->reset))
++		return PTR_ERR(chip->reset);
++
++	for (i = 0; i < chip->hwdata->processors_max; i++) {
++		chip->res = platform_get_resource(chip->pdev, IORESOURCE_MEM, i);
++		if (!chip->res)
++			return -ENODEV;
++
++		 chip->base_addr[i] = devm_ioremap_resource(chip->dev, chip->res);
++		 if (IS_ERR(chip->base_addr[i]))
++			  return PTR_ERR(chip->base_addr[i]);
++	}
++
++	ret = of_property_read_u32(chip->dev->of_node, "local_id", &chip->local_id);
++	if (ret)
++		 return ret;
++
++	chip->irq_cnt = of_irq_count(chip->dev->of_node);
++	chip->irq = devm_kcalloc(chip->dev, chip->irq_cnt, sizeof(int), GFP_KERNEL);
++	if (!chip->irq)
++		 return -ENOMEM;
++
++	for (i = 0; i < chip->irq_cnt; i++) {
++		 ret = of_irq_get(chip->dev->of_node, i);
++		 if (ret <= 0)
++			  return ret ? ret : -EINVAL;
++		 chip->irq[i] = ret;
++	}
++
++	return 0;
++}
++
++static int sunxi_msgbox_request_irqs(struct sunxi_msgbox *chip)
++{
++	int ret, i;
++
++	for (i = 0; i < chip->irq_cnt; i++) {
++		 ret = devm_request_irq(&chip->pdev->dev, chip->irq[i],
++					  sunxi_msgbox_handler, 0,
++					  dev_name(chip->dev), chip);
++		 if (ret)
++			  return ret;
++	}
++
++	return 0;
++}
++
++static int sunxi_msgbox_hw_init(struct sunxi_msgbox *chip)
++{
++	int ret;
++
++	if (chip->reset) {
++		ret = reset_control_deassert(chip->reset);
++		if (ret)
++			return ret;
++	}
++
++	ret = clk_bulk_prepare_enable(chip->num_clks, chip->clks);
++	if (ret)
++		goto err_reset;
++
++	sunxi_msgbox_disable_irq(chip);
++
++	return 0;
++
++err_reset:
++	if (chip->reset)
++		reset_control_assert(chip->reset);
++	return ret;
++}
++
++static void sunxi_msgbox_hw_deinit(void *data)
++{
++	struct sunxi_msgbox *chip = data;
++
++	sunxi_msgbox_disable_irq(chip);
++	clk_bulk_disable_unprepare(chip->num_clks, chip->clks);
++	reset_control_assert(chip->reset);
++}
++
++static int sunxi_msgbox_probe(struct platform_device *pdev)
++{
++	const struct sunxi_msgbox_hwdata *priv_data;
++	struct mbox_chan *chans;
++	struct sunxi_msgbox *chip;
++	int ret, i, processors_max_tmp;
++
++	priv_data = of_device_get_match_data(&pdev->dev);
++	if (!priv_data)
++		 return -ENODEV;
++
++	processors_max_tmp = priv_data->processors_max;
++	chip = devm_kzalloc(&pdev->dev,
++			      sizeof(*chip) + sizeof(void __iomem *) * processors_max_tmp,
++			      GFP_KERNEL);
++	if (!chip)
++		 return -ENOMEM;
++
++	chip->hwdata = priv_data;
++	chip->pdev = pdev;
++	chip->dev = &pdev->dev;
++
++	chans = devm_kcalloc(chip->dev, chip->hwdata->mbox_num_chans,
++				sizeof(*chans), GFP_KERNEL);
++	if (!chans)
++		 return -ENOMEM;
++
++	for (i = 0; i < chip->hwdata->mbox_num_chans; i++)
++		 chans[i].con_priv = chip;
++
++	ret = sunxi_msgbox_resource_get(chip);
++	if (ret)
++		 return ret;
++
++	ret = sunxi_msgbox_hw_init(chip);
++	if (ret)
++		return ret;
++
++	ret = devm_add_action_or_reset(chip->dev, sunxi_msgbox_hw_deinit, chip);
++	if (ret)
++		return ret;
++
++	chip->controller.dev            = chip->dev;
++	chip->controller.ops            = &sunxi_msgbox_chan_ops;
++	chip->controller.chans          = chans;
++	chip->controller.num_chans      = chip->hwdata->mbox_num_chans;
++	chip->controller.of_xlate       = sunxi_mbox_xlate;
++	chip->controller.txdone_irq     = false;
++	chip->controller.txdone_poll    = true;
++	chip->controller.txpoll_period  = 5; /* ms */
++
++	platform_set_drvdata(pdev, chip);
++
++	ret = sunxi_msgbox_request_irqs(chip);
++	if (ret)
++		return ret;
++
++	ret = devm_mbox_controller_register(chip->dev, &chip->controller);
++	if (ret)
++		return ret;
++
++	dev_info(chip->dev, "sunxi msgbox registered (local_id=%d)\n", chip->local_id);
++	return 0;
++
++}
++
++static struct platform_driver sunxi_msgbox_driver = {
++	.probe  = sunxi_msgbox_probe,
++	.driver = {
++		 .name           = "sunxi-msgbox",
++		 .of_match_table = sunxi_msgbox_of_match,
++	},
++};
++module_platform_driver(sunxi_msgbox_driver);
++
++MODULE_DESCRIPTION("Allwinner sun8iw20/T113 Message Box Controller");
++MODULE_AUTHOR("Codex AI (ported from Allwinner vendor driver)");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/remoteproc/sunxi_amp_rproc.h b/drivers/remoteproc/sunxi_amp_rproc.h
+new file mode 100644
+index 000000000..b5c32b244
+--- /dev/null
++++ b/drivers/remoteproc/sunxi_amp_rproc.h
+@@ -0,0 +1,100 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * sunxi_amp_rproc.h
++ * Created on Nov 20, 2026
++ * Author: @POEG1726
++ */
++
++#ifndef _SUNXI_AMP_RPROC_H_
++#define _SUNXI_AMP_RPROC_H_
++
++#include <linux/io.h>
++#include <linux/kernel.h>
++#include <linux/of_reserved_mem.h>
++
++#include "remoteproc_internal.h"
++
++/**
++ * @brief Map an identity-addressed firmware or vring carveout.
++ */
++static int sunxi_amp_map(struct rproc *rproc, struct rproc_mem_entry *mem)
++{
++	/* A7 accesses HiFi4 IRAM as MMIO. Reserved DDR uses a WC mapping. */
++	if (mem->dma < 0x40000000)
++		mem->va = ioremap(mem->dma, mem->len);
++	else
++		mem->va = ioremap_wc(mem->dma, mem->len);
++	mem->is_iomem = true;
++	return mem->va ? 0 : -ENOMEM;
++}
++
++static int sunxi_amp_unmap(struct rproc *rproc, struct rproc_mem_entry *mem)
++{
++	iounmap(mem->va);
++	return 0;
++}
++
++/**
++ * @brief Register DT regions before remoteproc processes the ELF resource table.
++ */
++static int sunxi_amp_parse_fw(struct rproc *rproc, const struct firmware *fw)
++{
++	struct device *parent = rproc->dev.parent;
++	struct of_phandle_iterator it;
++	int ret;
++
++	of_for_each_phandle(&it, ret, parent->of_node, "memory-region", NULL, 0) {
++		struct reserved_mem *region = of_reserved_mem_lookup(it.node);
++		struct rproc_mem_entry *mem;
++		bool pool = of_node_name_eq(it.node, "vdev0buffer");
++
++		if (!region || !region->size || upper_32_bits(region->base) ||
++		    region->size - 1 > U32_MAX - region->base) {
++			of_node_put(it.node);
++			return -EINVAL;
++		}
++
++		/* remoteproc_virtio declares the pool from its PA and DA. */
++		mem = rproc_mem_entry_init(&rproc->dev, NULL, region->base,
++					   region->size, region->base,
++					   pool ? NULL : sunxi_amp_map,
++					   pool ? NULL : sunxi_amp_unmap,
++					   "%s", it.node->name);
++		if (!mem) {
++			of_node_put(it.node);
++			return -ENOMEM;
++		}
++		rproc_add_carveout(rproc, mem);
++	}
++
++	if (ret != -ENOENT)
++		return ret;
++
++	ret = rproc_elf_load_rsc_table(rproc, fw);
++	return ret == -EINVAL ? 0 : ret;
++}
++
++/**
++ * @brief Resolve an ELF section only within a mapped firmware region.
++ */
++static void *sunxi_amp_da_to_va(struct rproc *rproc, u64 da, size_t len,
++				bool *is_iomem)
++{
++	struct rproc_mem_entry *mem;
++
++	list_for_each_entry(mem, &rproc->carveouts, node) {
++		u64 offset;
++
++		if (!mem->va || da < mem->da || strncmp(mem->name, "vdev", 4) == 0)
++			continue;
++		offset = da - mem->da;
++		if (offset >= mem->len || len > mem->len - offset)
++			continue;
++		if (is_iomem)
++			*is_iomem = true;
++		return mem->va + offset;
++	}
++	return NULL;
++}
++
++#endif /* _SUNXI_AMP_RPROC_H_ */
+diff --git a/drivers/remoteproc/sunxi_c906_rproc.c b/drivers/remoteproc/sunxi_c906_rproc.c
+new file mode 100644
+index 000000000..25847ffb2
+--- /dev/null
++++ b/drivers/remoteproc/sunxi_c906_rproc.c
+@@ -0,0 +1,334 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * sunxi_c906_rproc.c
++ * Created on Nov 20, 2026
++ * Author: @POEG1726
++ * Based on the T113-i MiniEVM driver by TaterLi.
++ */
++/*
++ * remoteproc driver for the Allwinner T113 C906 coprocessor.
++ *
++ * Based on the vendor implementation but reduced to upstream interfaces.
++ */
++
++#include <asm/delay.h>
++#include <linux/clk.h>
++#include <linux/bitops.h>
++#include <linux/io.h>
++#include <linux/mailbox_client.h>
++#include <linux/dma-mapping.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
++#include <linux/of_reserved_mem.h>
++#include <linux/platform_device.h>
++#include <linux/reset.h>
++#include <linux/remoteproc.h>
++#include <linux/mm.h>
++#include <linux/dma-direct.h>
++#include <linux/sizes.h>
++#include <linux/virtio_ring.h>
++#include <linux/slab.h>
++#include <linux/workqueue.h>
++
++#include "remoteproc_internal.h"
++#include "sunxi_amp_rproc.h"
++
++#define SUNXI_C906_STA_ADDL	0x0004
++#define SUNXI_C906_STA_ADDH	0x0008
++
++/* CCU Base address for T113 */
++#define SUNXI_CCU_BASE		0x02001000
++#define SUNXI_CCU_SIZE		SZ_4K
++
++#define SUNXI_RISCV_RST_REG	0x0f20
++
++#define SUNXI_RISCV_KEY		0x16aa
++#define SUNXI_RISCV_RST_KEY	(SUNXI_RISCV_KEY << 16)
++
++#define SUNXI_RISCV_SOFT_RST	BIT(0)
++
++
++struct sunxi_c906_mbox {
++	struct mbox_client client;
++	struct mbox_chan *chan;
++	struct work_struct vq_work;
++	struct rproc_subdev ipc;
++	bool running;
++};
++
++struct sunxi_c906 {
++	struct device *dev;
++	void __iomem *cfg_base;
++	void __iomem *ccu_base;
++	struct rproc *rproc;
++	struct sunxi_c906_mbox mbox;
++	struct workqueue_struct *wq;
++
++	struct clk_bulk_data *clks;
++	int num_clks;
++	struct reset_control *rst;
++};
++
++/**
++ * @brief Process both queues because mailbox notifications can coalesce.
++ */
++static void sunxi_c906_mbox_vq_work(struct work_struct *work)
++{
++	struct sunxi_c906_mbox *mbox = container_of(work, struct sunxi_c906_mbox, vq_work);
++	struct sunxi_c906 *priv = container_of(mbox, struct sunxi_c906, mbox);
++
++	if (!READ_ONCE(mbox->running))
++		return;
++
++	rproc_vq_interrupt(priv->rproc, 0);
++	rproc_vq_interrupt(priv->rproc, 1);
++}
++
++static void sunxi_c906_mbox_rx(struct mbox_client *cl, void *data)
++{
++	struct sunxi_c906_mbox *mbox = container_of(cl, struct sunxi_c906_mbox, client);
++	struct sunxi_c906 *priv = container_of(mbox, struct sunxi_c906, mbox);
++
++	if (READ_ONCE(mbox->running))
++		queue_work(priv->wq, &mbox->vq_work);
++}
++
++/**
++ * @brief Quiesce mailbox work before remoteproc deletes the virtqueues.
++ */
++static void sunxi_c906_stop_ipc(struct rproc_subdev *ipc, bool crashed)
++{
++	struct sunxi_c906_mbox *mbox = container_of(ipc, struct sunxi_c906_mbox, ipc);
++
++	WRITE_ONCE(mbox->running, false);
++	cancel_work_sync(&mbox->vq_work);
++}
++
++static int sunxi_c906_start(struct rproc *rproc)
++{
++	struct sunxi_c906 *priv = rproc->priv;
++	int ret;
++	u64 bootaddr = rproc->bootaddr;
++	phys_addr_t boot_pa = bootaddr;
++
++	if (!sunxi_amp_da_to_va(rproc, bootaddr, 1, NULL))
++		return -EINVAL;
++	dev_info(priv->dev, "Starting C906, bootaddr = 0x%llx (pa 0x%pa)\n",
++		 bootaddr, &boot_pa);
++
++	ret = clk_bulk_prepare_enable(priv->num_clks, priv->clks);
++	if (ret) {
++		dev_err(priv->dev, "failed to enable clocks: %d\n", ret);
++		return ret;
++	}
++
++	/* allow access to the cfg block */
++	if (priv->rst) {
++		ret = reset_control_deassert(priv->rst);
++		if (ret) {
++			dev_err(priv->dev, "failed to deassert cfg reset: %d\n", ret);
++			goto err_clk;
++		}
++		udelay(5);
++	}
++
++	/* program reset vector (SoC expects physical address) */
++	writel(lower_32_bits(boot_pa), priv->cfg_base + SUNXI_C906_STA_ADDL);
++	writel(upper_32_bits(boot_pa), priv->cfg_base + SUNXI_C906_STA_ADDH);
++
++	dev_info(priv->dev, "STA_ADDL = 0x%08x, STA_ADDH = 0x%08x\n",
++		 readl(priv->cfg_base + SUNXI_C906_STA_ADDL),
++		 readl(priv->cfg_base + SUNXI_C906_STA_ADDH));
++
++	/* Publish the firmware writes before releasing the keyed core reset. */
++	wmb();
++	/* Added after the virtio subdevice so stop runs before its teardown. */
++	priv->mbox.ipc.stop = sunxi_c906_stop_ipc;
++	rproc_add_subdev(rproc, &priv->mbox.ipc);
++	WRITE_ONCE(priv->mbox.running, true);
++	writel(SUNXI_RISCV_RST_KEY | SUNXI_RISCV_SOFT_RST,
++	       priv->ccu_base + SUNXI_RISCV_RST_REG);
++
++	dev_info(priv->dev, "C906 Core Soft Reset Deasserted\n");
++
++	return 0;
++
++err_clk:
++	clk_bulk_disable_unprepare(priv->num_clks, priv->clks);
++	return ret;
++}
++
++static int sunxi_c906_stop(struct rproc *rproc)
++{
++	struct sunxi_c906 *priv = rproc->priv;
++
++	sunxi_c906_stop_ipc(&priv->mbox.ipc, false);
++	rproc_remove_subdev(rproc, &priv->mbox.ipc);
++
++	/* assert core soft reset */
++	writel(SUNXI_RISCV_RST_KEY, priv->ccu_base + SUNXI_RISCV_RST_REG);
++
++	if (priv->rst)
++		reset_control_assert(priv->rst);
++
++	clk_bulk_disable_unprepare(priv->num_clks, priv->clks);
++	return 0;
++}
++
++static void sunxi_c906_kick(struct rproc *rproc, int vqid)
++{
++	struct sunxi_c906 *priv = rproc->priv;
++	int ret;
++
++	/* The mailbox encodes the queue ID in the pointer, with zero reserved. */
++	ret = mbox_send_message(priv->mbox.chan, (void *)(uintptr_t)(vqid + 1));
++	if (ret < 0)
++		dev_err_ratelimited(priv->dev, "mailbox kick failed: %d\n", ret);
++}
++
++static u64 sunxi_c906_get_boot_addr(struct rproc *rproc, const struct firmware *fw)
++{
++	return rproc_elf_get_boot_addr(rproc, fw);
++}
++
++static const struct rproc_ops sunxi_c906_ops = {
++	.start		= sunxi_c906_start,
++	.stop		= sunxi_c906_stop,
++	.kick		= sunxi_c906_kick,
++	.da_to_va	= sunxi_amp_da_to_va,
++	.load		= rproc_elf_load_segments,
++	.parse_fw	= sunxi_amp_parse_fw,
++	.find_loaded_rsc_table = rproc_elf_find_loaded_rsc_table,
++	.get_boot_addr	= sunxi_c906_get_boot_addr,
++};
++
++static int sunxi_c906_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct sunxi_c906 *priv;
++	struct rproc *rproc;
++	struct resource *res;
++	const char *fw_name = NULL;
++	int ret, i;
++	static const char * const clk_ids[] = {
++		"core", "bus", "cfg", "axi", "pll",
++	};
++
++	of_property_read_string(dev->of_node, "firmware-name", &fw_name);
++
++	rproc = rproc_alloc(dev, dev_name(dev), &sunxi_c906_ops, fw_name,
++			sizeof(*priv));
++	if (!rproc)
++		return -ENOMEM;
++
++	rproc->has_iommu = false;
++	rproc->auto_boot = false;
++	priv = rproc->priv;
++	priv->dev = dev;
++	priv->rproc = rproc;
++
++	priv->wq = alloc_ordered_workqueue(dev_name(dev), WQ_MEM_RECLAIM);
++	if (!priv->wq) {
++		ret = -ENOMEM;
++		goto free_rproc;
++	}
++
++	priv->ccu_base = devm_ioremap(dev, SUNXI_CCU_BASE, SUNXI_CCU_SIZE);
++	if (!priv->ccu_base) {
++		ret = -ENOMEM;
++		goto destroy_wq;
++	}
++
++	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	priv->cfg_base = devm_ioremap_resource(dev, res);
++	if (IS_ERR(priv->cfg_base)) {
++		ret = PTR_ERR(priv->cfg_base);
++		goto destroy_wq;
++	}
++
++	priv->rst = devm_reset_control_get_optional_exclusive(dev, "cfg");
++	if (IS_ERR(priv->rst)) {
++		ret = PTR_ERR(priv->rst);
++		goto destroy_wq;
++	}
++
++	priv->num_clks = ARRAY_SIZE(clk_ids);
++	priv->clks = devm_kcalloc(dev, priv->num_clks, sizeof(*priv->clks),
++				GFP_KERNEL);
++	if (!priv->clks) {
++		ret = -ENOMEM;
++		goto destroy_wq;
++	}
++
++	for (i = 0; i < priv->num_clks; i++)
++		priv->clks[i].id = clk_ids[i];
++
++	ret = devm_clk_bulk_get_optional(dev, priv->num_clks, priv->clks);
++	if (ret) {
++		dev_err(dev, "failed to get clocks: %d\n", ret);
++		goto destroy_wq;
++	}
++
++	priv->mbox.client.dev = dev;
++	priv->mbox.client.rx_callback = sunxi_c906_mbox_rx;
++	priv->mbox.client.tx_block = false;
++
++	INIT_WORK(&priv->mbox.vq_work, sunxi_c906_mbox_vq_work);
++
++	priv->mbox.chan = mbox_request_channel_byname(&priv->mbox.client, "arm-kick");
++	if (IS_ERR(priv->mbox.chan)) {
++		ret = PTR_ERR(priv->mbox.chan);
++		dev_err(dev, "failed to request mbox channel: %d\n", ret);
++		priv->mbox.chan = NULL;
++		goto destroy_wq;
++	}
++
++	platform_set_drvdata(pdev, rproc);
++
++	ret = rproc_add(rproc);
++	if (ret) {
++		mbox_free_channel(priv->mbox.chan);
++		goto destroy_wq;
++	}
++
++	dev_info(dev, "Sunxi C906 remoteproc registered\n");
++	return 0;
++
++destroy_wq:
++	destroy_workqueue(priv->wq);
++free_rproc:
++	rproc_free(rproc);
++	return ret;
++}
++
++static void sunxi_c906_remove(struct platform_device *pdev)
++{
++	struct rproc *rproc = platform_get_drvdata(pdev);
++	struct sunxi_c906 *priv = rproc->priv;
++
++	rproc_del(rproc);
++	mbox_free_channel(priv->mbox.chan);
++	destroy_workqueue(priv->wq);
++	rproc_free(rproc);
++}
++
++static const struct of_device_id sunxi_c906_of_match[] = {
++	{ .compatible = "allwinner,c906-rproc" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, sunxi_c906_of_match);
++
++static struct platform_driver sunxi_c906_driver = {
++	.probe	= sunxi_c906_probe,
++	.remove = sunxi_c906_remove,
++	.driver	= {
++		.name		= "sunxi-c906-rproc",
++		.of_match_table = sunxi_c906_of_match,
++	},
++};
++module_platform_driver(sunxi_c906_driver);
++
++MODULE_DESCRIPTION("Allwinner T113/D1 C906 remote processor driver");
++MODULE_AUTHOR("TaterLi");
++MODULE_LICENSE("GPL v2");
+diff --git a/drivers/remoteproc/sunxi_hifi4_rproc.c b/drivers/remoteproc/sunxi_hifi4_rproc.c
+new file mode 100644
+index 000000000..8c7728513
+--- /dev/null
++++ b/drivers/remoteproc/sunxi_hifi4_rproc.c
+@@ -0,0 +1,426 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * sunxi_hifi4_rproc.c
++ * Created on Nov 20, 2026
++ * Author: @POEG1726
++ * Based on the T113-i MiniEVM driver by TaterLi.
++ */
++/*
++ * Remoteproc driver for the Allwinner T113 HiFi4 DSP core.
++ * Handles firmware loading, memory mappings and RPMsg mailbox kicks.
++ */
++
++#include <linux/bitops.h>
++#include <linux/clk.h>
++#include <linux/dma-mapping.h>
++#include <linux/io.h>
++#include <linux/mailbox_client.h>
++#include <linux/module.h>
++#include <linux/mm.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
++#include <linux/of_reserved_mem.h>
++#include <linux/platform_device.h>
++#include <linux/reset.h>
++#include <linux/remoteproc.h>
++#include <linux/slab.h>
++#include <linux/sizes.h>
++#include <linux/vmalloc.h>
++#include <linux/virtio_ring.h>
++#include <linux/workqueue.h>
++
++#include "remoteproc_internal.h"
++#include "sunxi_amp_rproc.h"
++
++#define SUNXI_SYSCRL_BASE	0x03000000
++#define SUNXI_SYSCRL_SIZE	SZ_4K
++#define SUNXI_SRAM_REMAP_REG	0x0008
++#define SUNXI_SRAM_REMAP_EN	BIT(0)
++
++/* DSP CFG block offsets */
++#define SUNXI_DSP_ALT_RESET_VEC	0x0000
++#define SUNXI_DSP_CTRL0		0x0004
++
++#define SUNXI_DSP_RUNSTALL	BIT(0)
++#define SUNXI_DSP_VEC_SEL	BIT(1)
++#define SUNXI_DSP_CLKEN		BIT(2)
++
++#define SUNXI_DSP_RST_VEC_DEFAULT	0x00100000
++
++struct sunxi_hifi4_mbox {
++	struct mbox_client client;
++	struct mbox_chan *chan;
++	struct work_struct vq_work;
++	struct rproc_subdev ipc;
++	bool running;
++};
++
++struct sunxi_hifi4 {
++	struct device *dev;
++	void __iomem *cfg_base;
++	void __iomem *syscon_base;
++	struct rproc *rproc;
++	struct workqueue_struct *wq;
++	struct sunxi_hifi4_mbox mbox;
++
++	struct clk_bulk_data *clks;
++	int num_clks;
++	struct reset_control *rst_core;
++	struct reset_control *rst_cfg;
++	struct reset_control *rst_dbg;
++};
++
++static void sunxi_hifi4_sram_remap(struct sunxi_hifi4 *priv, bool enable_dsp)
++{
++	u32 v;
++
++	if (!priv->syscon_base)
++		return;
++
++	v = readl(priv->syscon_base + SUNXI_SRAM_REMAP_REG);
++	if (enable_dsp)
++		v &= ~SUNXI_SRAM_REMAP_EN;
++	else
++		v |= SUNXI_SRAM_REMAP_EN;
++	writel(v, priv->syscon_base + SUNXI_SRAM_REMAP_REG);
++}
++
++static void sunxi_hifi4_set_runstall(struct sunxi_hifi4 *priv, bool stall)
++{
++	u32 v;
++
++	v = readl(priv->cfg_base + SUNXI_DSP_CTRL0);
++	if (stall)
++		v |= SUNXI_DSP_RUNSTALL;
++	else
++		v &= ~SUNXI_DSP_RUNSTALL;
++	writel(v, priv->cfg_base + SUNXI_DSP_CTRL0);
++}
++
++static void sunxi_hifi4_set_bootvec(struct sunxi_hifi4 *priv, u32 boot)
++{
++	u32 v;
++
++	writel(boot, priv->cfg_base + SUNXI_DSP_ALT_RESET_VEC);
++
++	v = readl(priv->cfg_base + SUNXI_DSP_CTRL0);
++	if (boot != SUNXI_DSP_RST_VEC_DEFAULT)
++		v |= SUNXI_DSP_VEC_SEL;
++	else
++		v &= ~SUNXI_DSP_VEC_SEL;
++	writel(v, priv->cfg_base + SUNXI_DSP_CTRL0);
++}
++
++static void sunxi_hifi4_enable_clken(struct sunxi_hifi4 *priv)
++{
++	u32 v;
++
++	v = readl(priv->cfg_base + SUNXI_DSP_CTRL0);
++	v |= SUNXI_DSP_CLKEN;
++	writel(v, priv->cfg_base + SUNXI_DSP_CTRL0);
++}
++
++/**
++ * @brief Process both queues because mailbox notifications can coalesce.
++ */
++static void sunxi_hifi4_mbox_vq_work(struct work_struct *work)
++{
++	struct sunxi_hifi4_mbox *mbox = container_of(work, struct sunxi_hifi4_mbox, vq_work);
++	struct sunxi_hifi4 *priv = container_of(mbox, struct sunxi_hifi4, mbox);
++
++	if (!READ_ONCE(mbox->running))
++		return;
++
++	rproc_vq_interrupt(priv->rproc, 0);
++	rproc_vq_interrupt(priv->rproc, 1);
++}
++
++static void sunxi_hifi4_mbox_rx(struct mbox_client *cl, void *data)
++{
++	struct sunxi_hifi4_mbox *mbox = container_of(cl, struct sunxi_hifi4_mbox, client);
++	struct sunxi_hifi4 *priv = container_of(mbox, struct sunxi_hifi4, mbox);
++
++	if (READ_ONCE(mbox->running))
++		queue_work(priv->wq, &mbox->vq_work);
++}
++
++/**
++ * @brief Quiesce mailbox work before remoteproc deletes the virtqueues.
++ */
++static void sunxi_hifi4_stop_ipc(struct rproc_subdev *ipc, bool crashed)
++{
++	struct sunxi_hifi4_mbox *mbox = container_of(ipc, struct sunxi_hifi4_mbox, ipc);
++
++	WRITE_ONCE(mbox->running, false);
++	cancel_work_sync(&mbox->vq_work);
++}
++
++static int sunxi_hifi4_prepare(struct rproc *rproc)
++{
++	struct sunxi_hifi4 *priv = rproc->priv;
++	int ret;
++
++	ret = clk_bulk_prepare_enable(priv->num_clks, priv->clks);
++	if (ret)
++		return ret;
++
++	sunxi_hifi4_sram_remap(priv, false);
++
++	if (priv->rst_core)
++		reset_control_assert(priv->rst_core);
++	if (priv->rst_dbg)
++		reset_control_assert(priv->rst_dbg);
++	if (priv->rst_cfg)
++		reset_control_deassert(priv->rst_cfg);
++
++	sunxi_hifi4_set_runstall(priv, true);
++
++	return 0;
++}
++
++static int sunxi_hifi4_unprepare(struct rproc *rproc)
++{
++	struct sunxi_hifi4 *priv = rproc->priv;
++
++	sunxi_hifi4_sram_remap(priv, false);
++
++	if (priv->rst_core)
++		reset_control_assert(priv->rst_core);
++	if (priv->rst_dbg)
++		reset_control_assert(priv->rst_dbg);
++	if (priv->rst_cfg)
++		reset_control_assert(priv->rst_cfg);
++
++	clk_bulk_disable_unprepare(priv->num_clks, priv->clks);
++	return 0;
++}
++
++static int sunxi_hifi4_start(struct rproc *rproc)
++{
++	struct sunxi_hifi4 *priv = rproc->priv;
++	u32 boot = (u32)rproc->bootaddr;
++	int ret;
++
++	if (!sunxi_amp_da_to_va(rproc, boot, 1, NULL))
++		return -EINVAL;
++
++	sunxi_hifi4_set_runstall(priv, true);
++	sunxi_hifi4_set_bootvec(priv, boot);
++	sunxi_hifi4_enable_clken(priv);
++
++	if (priv->rst_dbg) {
++		ret = reset_control_deassert(priv->rst_dbg);
++		if (ret)
++			goto err;
++	}
++
++	if (priv->rst_core) {
++		ret = reset_control_deassert(priv->rst_core);
++		if (ret)
++			goto err;
++	}
++
++	/* Publish the IRAM/DDR writes before switching IRAM to the DSP. */
++	wmb();
++	/* Added after the virtio subdevice so stop runs before its teardown. */
++	priv->mbox.ipc.stop = sunxi_hifi4_stop_ipc;
++	rproc_add_subdev(rproc, &priv->mbox.ipc);
++	WRITE_ONCE(priv->mbox.running, true);
++
++	sunxi_hifi4_sram_remap(priv, true);
++	sunxi_hifi4_set_runstall(priv, false);
++	dev_info(priv->dev, "HiFi4 started at 0x%x\n", boot);
++	return 0;
++err:
++	dev_err(priv->dev, "failed to deassert reset: %d\n", ret);
++	return ret;
++}
++
++static int sunxi_hifi4_stop(struct rproc *rproc)
++{
++	struct sunxi_hifi4 *priv = rproc->priv;
++
++	sunxi_hifi4_stop_ipc(&priv->mbox.ipc, false);
++	rproc_remove_subdev(rproc, &priv->mbox.ipc);
++	sunxi_hifi4_set_runstall(priv, true);
++	if (priv->rst_core)
++		reset_control_assert(priv->rst_core);
++	if (priv->rst_dbg)
++		reset_control_assert(priv->rst_dbg);
++
++	return 0;
++}
++
++static void sunxi_hifi4_kick(struct rproc *rproc, int vqid)
++{
++	struct sunxi_hifi4 *priv = rproc->priv;
++	int ret;
++
++	/* The mailbox encodes the queue ID in the pointer, with zero reserved. */
++	ret = mbox_send_message(priv->mbox.chan, (void *)(uintptr_t)(vqid + 1));
++	if (ret < 0)
++		dev_err_ratelimited(priv->dev, "mailbox kick failed: %d\n", ret);
++}
++
++static u64 sunxi_hifi4_get_boot_addr(struct rproc *rproc,
++				     const struct firmware *fw)
++{
++	return rproc_elf_get_boot_addr(rproc, fw);
++}
++
++static const struct rproc_ops sunxi_hifi4_ops = {
++	.prepare	= sunxi_hifi4_prepare,
++	.unprepare	= sunxi_hifi4_unprepare,
++	.start		= sunxi_hifi4_start,
++	.stop		= sunxi_hifi4_stop,
++	.kick		= sunxi_hifi4_kick,
++	.da_to_va	= sunxi_amp_da_to_va,
++	.parse_fw	= sunxi_amp_parse_fw,
++	.load		= rproc_elf_load_segments,
++	.sanity_check	= rproc_elf_sanity_check,
++	.find_loaded_rsc_table = rproc_elf_find_loaded_rsc_table,
++	.get_boot_addr	= sunxi_hifi4_get_boot_addr,
++};
++
++static int sunxi_hifi4_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct sunxi_hifi4 *priv;
++	struct rproc *rproc;
++	struct resource *res;
++	const char *fw_name = NULL;
++	int ret, i;
++	static const char * const clk_ids[] = { "core", "bus" };
++
++	of_property_read_string(dev->of_node, "firmware-name", &fw_name);
++
++	rproc = rproc_alloc(dev, dev_name(dev), &sunxi_hifi4_ops, fw_name,
++			    sizeof(*priv));
++	if (!rproc)
++		return -ENOMEM;
++
++	priv = rproc->priv;
++	priv->dev = dev;
++	priv->rproc = rproc;
++	rproc->auto_boot = false;
++
++	priv->syscon_base = devm_ioremap(dev, SUNXI_SYSCRL_BASE,
++					 SUNXI_SYSCRL_SIZE);
++	if (!priv->syscon_base) {
++		ret = -ENOMEM;
++		goto free_rproc;
++	}
++
++	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	priv->cfg_base = devm_ioremap_resource(dev, res);
++	if (IS_ERR(priv->cfg_base)) {
++		ret = PTR_ERR(priv->cfg_base);
++		goto free_rproc;
++	}
++
++	priv->num_clks = ARRAY_SIZE(clk_ids);
++	priv->clks = devm_kcalloc(dev, priv->num_clks, sizeof(*priv->clks),
++				  GFP_KERNEL);
++	if (!priv->clks) {
++		ret = -ENOMEM;
++		goto free_rproc;
++	}
++
++	for (i = 0; i < priv->num_clks; i++)
++		priv->clks[i].id = clk_ids[i];
++
++	ret = devm_clk_bulk_get_optional(dev, priv->num_clks, priv->clks);
++	if (ret)
++		goto free_rproc;
++
++	priv->rst_core = devm_reset_control_get_optional_exclusive(dev, "core");
++	if (IS_ERR(priv->rst_core)) {
++		ret = PTR_ERR(priv->rst_core);
++		goto free_rproc;
++	}
++
++	priv->rst_cfg = devm_reset_control_get_optional_exclusive(dev, "cfg");
++	if (IS_ERR(priv->rst_cfg)) {
++		ret = PTR_ERR(priv->rst_cfg);
++		goto free_rproc;
++	}
++
++	priv->rst_dbg = devm_reset_control_get_optional_exclusive(dev, "dbg");
++	if (IS_ERR(priv->rst_dbg)) {
++		ret = PTR_ERR(priv->rst_dbg);
++		goto free_rproc;
++	}
++
++	priv->wq = alloc_ordered_workqueue(dev_name(dev), WQ_MEM_RECLAIM);
++	if (!priv->wq) {
++		ret = -ENOMEM;
++		goto free_rproc;
++	}
++
++	priv->mbox.client.dev = dev;
++	priv->mbox.client.rx_callback = sunxi_hifi4_mbox_rx;
++	priv->mbox.client.tx_block = false;
++
++	INIT_WORK(&priv->mbox.vq_work, sunxi_hifi4_mbox_vq_work);
++
++	priv->mbox.chan = mbox_request_channel_byname(&priv->mbox.client,
++						          "arm-kick");
++	if (IS_ERR(priv->mbox.chan)) {
++		ret = PTR_ERR(priv->mbox.chan);
++		dev_err(dev, "failed to request mbox channel: %d\n", ret);
++		priv->mbox.chan = NULL;
++		goto destroy_wq;
++	}
++
++	platform_set_drvdata(pdev, rproc);
++
++	ret = rproc_add(rproc);
++	if (ret) {
++		dev_err(dev, "failed to add rproc: %d\n", ret);
++		goto free_mbox;
++	}
++
++	dev_info(dev, "Sunxi HiFi4 remoteproc registered\n");
++	return 0;
++
++free_mbox:
++	if (priv->mbox.chan)
++		mbox_free_channel(priv->mbox.chan);
++destroy_wq:
++	if (priv->wq)
++		destroy_workqueue(priv->wq);
++free_rproc:
++	rproc_free(rproc);
++	return ret;
++}
++
++static void sunxi_hifi4_remove(struct platform_device *pdev)
++{
++	struct rproc *rproc = platform_get_drvdata(pdev);
++	struct sunxi_hifi4 *priv = rproc->priv;
++
++	rproc_del(rproc);
++	mbox_free_channel(priv->mbox.chan);
++	destroy_workqueue(priv->wq);
++	rproc_free(rproc);
++}
++
++static const struct of_device_id sunxi_hifi4_of_match[] = {
++	{ .compatible = "allwinner,hifi4-rproc" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, sunxi_hifi4_of_match);
++
++static struct platform_driver sunxi_hifi4_driver = {
++	.probe  = sunxi_hifi4_probe,
++	.remove = sunxi_hifi4_remove,
++	.driver = {
++		.name           = "sunxi-hifi4-rproc",
++		.of_match_table = sunxi_hifi4_of_match,
++	},
++};
++module_platform_driver(sunxi_hifi4_driver);
++
++MODULE_DESCRIPTION("Allwinner T113 HiFi4 remote processor driver");
++MODULE_AUTHOR("TaterLi");
++MODULE_LICENSE("GPL v2");

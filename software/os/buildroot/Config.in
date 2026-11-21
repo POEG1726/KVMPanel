@@ -1,3 +1,4 @@
 menu "KVMPanel packages"
 source "$BR2_EXTERNAL_KVMPANEL_PATH/package/kvmd/Config.in"
+source "$BR2_EXTERNAL_KVMPANEL_PATH/package/kvmpanel-amp/Config.in"
 endmenu
