@@ -1,0 +1,94 @@
+.button {
+  font: inherit;
+  color: var(--tx);
+  background: rgba(255, 255, 255, 0.07);
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.13); }
+.button:disabled { opacity: 0.4; cursor: not-allowed; }
+.button:focus-visible, .switch:focus-visible, .select:focus-visible { outline: 2px solid var(--ac); outline-offset: 1px; }
+.primary { background: rgba(94, 196, 255, 0.2); color: var(--ac); }
+.danger { background: rgba(255, 123, 114, 0.16); color: #ff9b93; }
+
+.switch {
+  flex: none;
+  width: 28px;
+  height: 16px;
+  border-radius: 8px;
+  border: 0;
+  padding: 0;
+  background: #3a4252;
+  position: relative;
+  cursor: pointer;
+}
+.switch::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left 0.12s;
+}
+.switch[aria-checked='true'] { background: #2f9e5b; }
+.switch[aria-checked='true']::after { left: 14px; }
+.switch:disabled, .switchOff { opacity: 0.4; cursor: not-allowed; }
+
+.slider { display: flex; align-items: center; gap: 8px; }
+.slider input { width: 90px; accent-color: var(--ac); }
+.sliderValue { min-width: 2.5em; text-align: right; color: var(--mu); font-variant-numeric: tabular-nums; }
+
+.select {
+  font: inherit;
+  color: var(--ac);
+  background: var(--pn2);
+  border: 1px solid var(--ln);
+  border-radius: 6px;
+  padding: 3px 6px;
+}
+
+.mask {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.55);
+  display: grid;
+  place-items: center;
+}
+.dialog {
+  min-width: 280px;
+  max-width: 90vw;
+  background: var(--pn);
+  color: var(--tx);
+  border: 1px solid var(--ln);
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+}
+.dialog h2 { margin: 0 0 8px; font-size: 1.1em; }
+.dialog p { margin: 0 0 14px; color: var(--mu); }
+.actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+.toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.toast {
+  background: var(--pn);
+  border: 1px solid var(--ln);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--tx);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+.toastError { border-color: var(--danger); }

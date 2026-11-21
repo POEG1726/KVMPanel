@@ -1,0 +1,88 @@
+.window {
+  position: fixed;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+  container-type: inline-size;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 10px;
+  color: var(--tx);
+  background: var(--bg);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .6);
+}
+.window[data-maximized="true"] { border-radius: 0; }
+.bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  min-height: 40px;
+  padding: 0 6px 0 14px;
+  border-bottom: 1px solid var(--ln);
+  background: var(--pn);
+  user-select: none;
+  touch-action: none;
+  cursor: grab;
+}
+.bar:active { cursor: grabbing; }
+.window[data-maximized="true"] .bar { cursor: default; }
+.bar h2 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bar button, .grip {
+  border: 0;
+  background: transparent;
+  color: var(--mu);
+  cursor: pointer;
+}
+.bar button {
+  min-width: 30px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 5px;
+  font: inherit;
+  line-height: 1;
+}
+.bar button:hover { background: var(--pn2); color: var(--tx); }
+.bar .close:hover { color: var(--danger); }
+.bar:focus-visible, .window button:focus-visible { outline: 2px solid var(--ac); outline-offset: -2px; }
+.bar .pop {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 4px;
+  font-size: 12px;
+}
+.body { flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+.grip {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 15px;
+  height: 15px;
+  touch-action: none;
+  cursor: nwse-resize;
+}
+.grip::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 8px;
+  height: 8px;
+  background: repeating-linear-gradient(135deg, transparent 0 2px, var(--mu) 2px 3px);
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+}
+@container (max-width: 340px) {
+  .popLabel { display: none; }
+  .bar .pop { justify-content: center; margin: 0; }
+}

@@ -1,0 +1,39 @@
+:root {
+  --bg: #0b0e13;
+  --pn: #151a23;
+  --pn2: #1c2230;
+  --ln: rgba(255, 255, 255, 0.08);
+  --tx: #e2e8f0;
+  --mu: #8b97aa;
+  --ac: #5ec4ff;
+  --ok: #3fb950;
+  --warn: #ffb454;
+  --danger: #ff7b72;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--tx);
+}
+
+.connection-banner {
+  position: fixed;
+  z-index: 65;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  max-width: 94vw;
+  padding: 8px 14px;
+  border: 1px solid var(--warn);
+  border-radius: 6px;
+  background: var(--pn);
+  color: var(--tx);
+  font-size: 14px;
+}
