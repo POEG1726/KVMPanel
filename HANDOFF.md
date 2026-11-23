@@ -8,7 +8,7 @@
 
 - SDC0 从 SD 启动的 SPL 起设 Level 3（典型 45 Ω），U-Boot 和 Linux 写入同一档。Linux 的 RGMII PG 引脚设 `drive-strength = <40>`。DDR3 颗粒用 `MR1=0x40` 配置 40 Ω 输出和 120 Ω RTT_NOM，T113 DDR PHY 读端 ODT 已开启。 [启动配置](software/os/u-boot/README.md) · [板级设备树](docs/linux-6.18.md#触摸光照sd-和-gpio)
 - SD/FEL U-Boot 和三份 Linux 板级 DTB 已构建，核对了 SPL 写入 SDC0 档位与 MR1 的指令及 DTB 属性。产物在 WSL 的 `~/work/KVMPanel/build/` 下，目录为 `u-boot-kvmpanel-drive-sd`、`u-boot-kvmpanel-drive-fel` 和 `linux-kvmpanel-drive`。旧镜像使用旧设置。有板后先用 FEL 复测 DDR 训练、容量和读写，再测 SD 冷启动、UHS 和 RGMII 千兆收发。 [首次上板](docs/development.md#首次上板)
-- T113 DDR PHY 继续用 `ZQ=0x7b7bfb`。取得同型号 PHY 的 ZQ 字段定义和阻抗表后，再选主控 48 Ω、40 Ω 或最强档。 [DDR 参数](software/os/vendor/tina/README.md#外置-ddr3)
+- 已反汇编 Tina SPL 库和 DevKit 的 SD/NAND Boot0、FES1，确认直接将 `dram_zq` 的低 24 位写到 PHY `0x03103140`。已查 T113 DDR3 样本均为 `0x7b7bfb`，`0x7b7bf9` 来自 F133 DDR2。取得同型号 PHY 的字段定义和 Ω 表或实板确认后，再选主控 48 Ω、40 Ω 或最强档。 [ZQ 查证与源码位置](software/os/vendor/tina/README.md#主控-zq-编码查证)
 
 ## Windows PC 遥测采集器
 

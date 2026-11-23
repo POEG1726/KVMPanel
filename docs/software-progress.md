@@ -30,7 +30,7 @@
 
 ## TODO
 
-- **T113 DDR PHY 输出阻抗**。取得 T113 DDR PHY 的 ZQ 字段定义与阻抗表后，优先设 48 Ω，其次 40 Ω，再选已确认的最强档。当前沿用 `ZQ=0x7b7bfb`。 [DDR 参数](../software/os/vendor/tina/README.md#外置-ddr3)
+- **T113 DDR PHY 输出阻抗**。已复核 Tina SPL 库和三份 DevKit 启动组件的寄存器写法。已查 T113 DDR3 配置均用 `0x7b7bfb`，另一编码 `0x7b7bf9` 出现在 F133 DDR2。需取得 T113 PHY 位域与 Ω 表或实板确认，再按 48 Ω、40 Ω、最强档顺序配置。 [ZQ 查证](../software/os/vendor/tina/README.md#主控-zq-编码查证)
 - **基础系统实板 bring-up**。按授权范围先核对供电和 UART0，再用 FEL 进 RAM 验证 DDR 训练、容量和 Linux 启动。随后验证 USB、网口、Debian SD High Speed 冷启动，以及实板断电后的文件系统。完成 3.3 V 读写测试后，再验证 UHS。 [首次上板](development.md#首次上板) · [写卡与启动](../software/os/debian/README.md)
 - **板端功能联调**。基础系统跑通后验证 LT8619C/CSI、VE 真实 JPEG 帧及 MJPEG 吞吐、USB 键鼠与存储、Windows 遥测、C906/HiFi4 RPMsg、按键、光照、温度和看门狗。确认实际面板与触摸型号后验证 DSI、供电、背光和触摸。 [板级适配清单](linux-6.18.md#结果)
 - **副屏实板验证与排版**。确认面板、触摸设备和实际分辨率后，测四个方向的触摸坐标、内存峰值、息屏恢复、帧率和 CPU 占用。横屏方案 B 与原型曲线排版仍待移植。 [当前应用设计](superpowers/specs/2026-11-20-kvmpanel-app-design.md) · [Dashboard](../software/app/dashboard/README.md)
