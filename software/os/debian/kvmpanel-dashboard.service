@@ -1,0 +1,14 @@
+[Unit]
+Description=KVMPanel local dashboard
+After=kvmd.service
+Requires=kvmd.service
+ConditionPathExists=/dev/fb0
+
+[Service]
+EnvironmentFile=-/etc/default/kvmpanel-dashboard
+ExecStart=/usr/bin/kvmpanel-dashboard
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=multi-user.target

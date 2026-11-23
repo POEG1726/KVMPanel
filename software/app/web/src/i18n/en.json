@@ -302,6 +302,8 @@
     "panel": {
       "display": "Display",
       "autoBrightness": "Auto brightness",
+      "orientation": "Rotation",
+      "rotation": { "normal": "Normal", "right": "90° right", "inverted": "180°", "left": "90° left" },
       "brightness": "Brightness",
       "offlineSleep": "Screen off when the PC is offline",
       "offlineSleepHint": "After this long without data from the PC",

@@ -4,10 +4,10 @@
 
 ## 已完成
 
+- **板端 Dashboard 与指标选择**。LVGL framebuffer 程序接入 `kvmd` 的 `board`、`telemetry` 和指标清单。主机离线时显示板子状态，支持 PE12 检查后的短按开机、四方向旋转、逐项显隐和息屏唤醒。通过 Rust、Mock、网页测试、ARM 静态构建和原生及 ARM/QEMU 无屏测试。Debian 镜像已加入 Dashboard 服务和 WS2812 内核。 [Dashboard](../software/app/dashboard/README.md) · [镜像](../software/os/debian/README.md)
 - **Windows CPU 与 DIMM 硬件读数**。支持指定 Ryzen SMU 表的核心温度、时钟域、供电读数、功耗限值和物理核心倍频。DDR5 SPD5118 温度及支持的 PMIC 告警、功率和六路电压接入 SMBus。Windows x64 构建通过，9950X3D 与两条 DIMM 实测，并核对 PMIC ADC 恢复。 [采集器与支持范围](../software/app/pc-telemetry/README.md#cpu-和-dimm-硬件读数)
 - **WS2812 板级驱动**。组合 DTB 接入 PG13 的硬件 LEDC 和四颗独立 RGB 灯，按 WS2812B-2020-V6 手册设定 GRB 和发送时序。通过 ARM zImage 构建、驱动链接和 LEDC 绑定检查。实板波形及点灯待测。 [WS2812](linux-6.18.md#ws2812)
 - **Windows PC 遥测基础采集**。原生 C 设置窗口和托盘支持调整采样间隔及指标组。Windows x64 构建和本机只读探测通过，验证基础 CPU、内存、磁盘、逐网卡及 GPU 指标。RTX 5090 管理员探测实测核心热点 31.1875 °C、显存结温 40 °C。`kvmd` 批量 HID 遥测接收已通过离线测试和 ARM 静态构建。 [采集器与验证范围](../software/app/pc-telemetry/README.md)
-- **副屏电脑离线页（原型）**。panel socket 新增每秒一次的 `board` 消息和 `pc_power_on` 动作（电脑开着时拒绝），Mock 可从关机或等待上位机状态启动。Qt 6 和 LVGL 原型都实现了竖屏和横屏的离线页、开机按钮和息屏倒计时，曲线和内存温度行也按已定规则改过。已通过 Mock 测试和两版构建，并在 Mock 下截图核对关机、等待上位机、开机后切回主屏三种状态。实际点击和按键未在窗口里测过，`kvmd` 还不发 `board`。 [Dashboard](../software/app/dashboard/README.md) · [接口](../software/app/api/README.md)
 - **T113 硬件 MJPEG 接入**。组合 DTB 启用 VE 和 IOMMU，`kvmd` 使用 Cedrus JPEG 编码并提供软件回退。ARM 内核、DTB、静态应用已构建，VE 和 IOMMU 绑定通过检查。已打包 Debian 镜像并通过 QEMU 用户态冒烟。 [编码说明](linux-6.18.md#jpegmjpeg-编码)
 - **电脑电源灯状态**。板端 `kvmd` 只读 PE12，REST 和 WebSocket 电源状态只包含 `on`。Mock、类型和网页均已同步。通过 `kvmd` 和 Mock 测试、网页构建及测试，实板电源灯读数待测。 [主板控制接线](../software/app/ipkvm/README.md#板端接口)
 - **接口与 Mock**。OpenAPI、WebSocket、panel socket 和本机 Mock 已合入 `main`。Mock 源码和测试已涵盖关闭绝对鼠标时遥测占用独立 IN 端点的规则。 [接口与运行说明](../software/app/api/README.md)
@@ -28,4 +28,4 @@
 
 - **基础系统实板 bring-up**。按授权范围先核对供电和 UART0，再用 FEL 进 RAM 验证 DDR 训练、容量和 Linux 启动。随后验证 USB、网口、Debian SD High Speed 冷启动，以及实板断电后的文件系统。完成 3.3 V 读写测试后，再验证 UHS。 [首次上板](development.md#首次上板) · [写卡与启动](../software/os/debian/README.md)
 - **板端功能联调**。基础系统跑通后验证 LT8619C/CSI、VE 真实 JPEG 帧及 MJPEG 吞吐、USB 键鼠与存储、Windows 遥测、C906/HiFi4 RPMsg、按键、光照、温度和看门狗。确认实际面板与触摸型号后验证 DSI、供电、背光和触摸。 [板级适配清单](linux-6.18.md#结果)
-- **副屏方向与正式实现**。离线页已在 Qt 和 LVGL 原型中完成。还需让 `kvmd` 发送 `board` 并处理 `pc_power_on`，补 `panel.orientation` 契约和网页设置，实现横屏主屏方案 B 和触摸坐标转换，选定框架后在 T113 上实测。原型在 `feat/panel-qt` 和 `feat/panel-proto`，尚未合入 `main`。 [当前应用设计](superpowers/specs/2026-11-20-kvmpanel-app-design.md) · [Dashboard](../software/app/dashboard/README.md) [当前应用设计](superpowers/specs/2026-11-20-kvmpanel-app-design.md)
+- **副屏实板验证与排版**。确认面板、触摸设备和实际分辨率后，测四个方向的触摸坐标、内存峰值、息屏恢复、帧率和 CPU 占用。横屏方案 B 与原型曲线排版仍待移植。 [当前应用设计](superpowers/specs/2026-11-20-kvmpanel-app-design.md) · [Dashboard](../software/app/dashboard/README.md)

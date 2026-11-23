@@ -10,6 +10,7 @@ uboot=$2
 kernel=$3
 apps=$4
 amp=${BUILDROOT_AMP_TARGET:-$apps}
+dashboard=${KVMPANEL_DASHBOARD_BINARY:-}
 web=$5
 output=$6
 files=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -117,6 +118,10 @@ install -Dm0644 "$files/firstboot.conf" "$root/etc/systemd/system/systemd-firstb
 install -Dm0644 "$files/eth0.network" "$root/etc/systemd/network/20-eth0.network"
 install -m 0644 "$files/"*.service "$root/etc/systemd/system/"
 systemctl --root="$root" enable kvmd.service systemd-networkd.service systemd-resolved.service
+if [[ -n $dashboard ]]; then
+    install -Dm0755 "$dashboard" "$root/usr/bin/kvmpanel-dashboard"
+    systemctl --root="$root" enable kvmpanel-dashboard.service
+fi
 
 # The first cold-boot profile stays at 3.3 V. Preserve the tested DT build
 # with the UHS modes as a second menu entry for bring-up.

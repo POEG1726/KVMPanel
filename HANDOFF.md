@@ -2,6 +2,13 @@
 
 最近五项有实际进展的软件工作，最新一项在顶部。全项目状态见 [软件进度](docs/software-progress.md)。
 
+## 板端 Dashboard 与指标选择
+
+核对日期 2026-11-23。
+
+- `kvmd` 每秒上报 `board`，通过 `metric_catalogue` 提供包含隐藏项的清单，检查 PE12 后才处理 `pc_power_on`。板端 Dashboard 用 LVGL framebuffer 逐项显隐、四方向旋转，主机离线时显示板子状态并可息屏唤醒。Rust、Mock、网页、ARM 静态构建及原生和 ARM/QEMU 无屏冒烟均通过。 [Dashboard](software/app/dashboard/README.md) · [协议](software/app/api/README.md#副屏-panel-socket)
+- `build/debian/kvmpanel-debian13-armhf-dashboard.img.xz` 包含副屏、`kvmd`、WS2812 和 MJPEG 内核，已离线检查文件系统、服务及组合 DTB。接手先核对实际屏、触摸设备和 /dev/fb0，再测试 USB 实板数据、开机按钮、息屏和方向。当前主屏用分组指标列表，原型的横屏方案 B 及曲线排版尚待移植。 [镜像构建](software/os/debian/README.md)
+
 ## Windows PC 遥测采集器
 
 核对日期 2026-11-23。
@@ -15,14 +22,6 @@
 
 - 组合 DTB 启用 T113 硬件 LEDC，以 PG13 驱动四颗 WS2812B-2020-V6。完成 ARM zImage 构建、驱动链接及设备树绑定检查。输出在 WSL 的 `~/work/KVMPanel/build/linux-ws2812/`。 [WS2812 接线、时序与 sysfs](docs/linux-6.18.md#ws2812)
 - 实板可用后测 PG13 的位时序和复位低电平，逐颗核对 LED1、LED2、LED4、LED5 的三色及亮度。
-
-## 副屏电脑离线页
-
-核对日期 2026-11-23。
-
-- panel socket 新增 `board`（板子自身状态，每秒一次）和 `pc_power_on`（电脑开着时回 `pc_on`）。Mock 已同步并有测试，`KVMPANEL_MOCK_PC=off|waiting` 可直接进入离线状态。 [接口说明](software/app/api/README.md)
-- Qt 6（`feat/panel-qt`）和 LVGL（`feat/panel-proto`）原型都有竖屏和横屏的离线页、开机按钮和息屏倒计时。两版都已构建，并在 Mock 下截图核对关机、等待上位机、开机后切回主屏三种状态。窗口里的实际点击和按键未测。横屏主屏方案 B 未做，横屏时暂把竖屏主屏缩小居中。 [Dashboard](software/app/dashboard/README.md)
-- 接手先让 `kvmd` 按契约发 `board` 并处理 `pc_power_on`（PE13 短按，PE12 亮时拒绝），再补 `panel.orientation` 和横屏主屏。两个原型分支尚未合入 `main`。
 
 ## T113 硬件 MJPEG
 

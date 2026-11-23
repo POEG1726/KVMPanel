@@ -18,6 +18,7 @@
     "FromPanel": {
       "oneOf": [
         { "$ref": "#/$defs/GetConfig" },
+        { "$ref": "#/$defs/MetricCatalogue" },
         { "$ref": "#/$defs/PatchConfig" },
         { "$ref": "#/$defs/Action" },
         { "$ref": "#/$defs/DeviceInfoRequest" }
@@ -102,6 +103,7 @@
         "t": { "const": "board" },
         "ts": { "type": "integer", "description": "Unix ms" },
         "pc_power": { "enum": ["on", "off", "unknown"], "description": "PC power LED input (PE12); unknown when it cannot be read" },
+        "display_asleep": { "type": "boolean", "description": "Offline sleep is active. Touch first wakes the panel." },
         "hostname": { "type": "string" },
         "version": { "type": "string", "description": "KVMPanel software version" },
         "uptime_s": { "type": "integer", "minimum": 0 },
@@ -181,6 +183,11 @@
       "type": "object", "required": ["t", "id"], "additionalProperties": false,
       "properties": { "t": { "const": "get_config" }, "id": { "$ref": "#/$defs/Id" } }
     },
+    "MetricCatalogue": {
+      "description": "The result's data array describes known metrics, including individually hidden metrics.",
+      "type": "object", "required": ["t", "id"], "additionalProperties": false,
+      "properties": { "t": { "const": "metric_catalogue" }, "id": { "$ref": "#/$defs/Id" } }
+    },
     "PatchConfig": {
       "type": "object", "required": ["t", "id", "patch"], "additionalProperties": false,
       "properties": { "t": { "const": "patch_config" }, "id": { "$ref": "#/$defs/Id" }, "patch": { "type": "object" } }
@@ -191,7 +198,7 @@
       "properties": {
         "t": { "const": "action" },
         "id": { "$ref": "#/$defs/Id" },
-        "action": { "enum": ["reboot", "shutdown", "restart_kvm", "reset_hid", "disconnect_sessions", "eject_media", "usb_apply", "pc_power_on"] }
+        "action": { "enum": ["reboot", "shutdown", "restart_kvm", "reset_hid", "disconnect_sessions", "eject_media", "usb_apply", "pc_power_on", "wake_display"] }
       }
     },
     "DeviceInfoRequest": {

@@ -1,4 +1,5 @@
 //! Trusted local display connection and the shared one-second telemetry sampler.
+mod board;
 pub mod metrics;
 
 use crate::{console::now_ms, system, validate, ApiError, App};
@@ -45,12 +46,11 @@ fn gadget_connected() -> bool {
 }
 async fn status(app: &App, pc: bool) -> io::Result<Value> {
     let app = app.clone();
-    tokio::task::spawn_blocking(move || sample_status(&app, pc))
+    tokio::task::spawn_blocking(move || sample_status(&app, pc, &system::device_info(&app)))
         .await
         .map_err(io::Error::other)
 }
-fn sample_status(app: &App, pc: bool) -> Value {
-    let info = system::device_info(app);
+fn sample_status(app: &App, pc: bool, info: &Value) -> Value {
     let speed = info["link_mbps"].as_u64().unwrap_or_default();
     let ip = info["ip"]
         .as_str()
@@ -220,6 +220,7 @@ async fn sampler(app: App, tx: broadcast::Sender<Value>, pc: watch::Sender<bool>
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut last_status = Value::Null;
     let mut last_status_time = None;
+    let mut board = board::BoardSampler::default();
     loop {
         tick.tick().await;
         let now = Instant::now();
@@ -241,21 +242,32 @@ async fn sampler(app: App, tx: broadcast::Sender<Value>, pc: watch::Sender<bool>
             pc.send_replace(connected);
             let _=tx.send(json!({"t":"pc","connected":connected,"last_seen_ts":host.last_seen.map(|(_,ts)|ts)}));
         }
-        let Ok(state) = status(&app, connected).await else {
+        let poll_app = app.clone();
+        let Ok((next_board, state, mut board_state)) = tokio::task::spawn_blocking(move || {
+            let info = system::device_info(&poll_app);
+            let state = sample_status(&poll_app, connected, &info);
+            let board_state = board.sample(&poll_app, &info, now, ts);
+            (board, state, board_state)
+        })
+        .await
+        else {
             return;
         };
+        board = next_board;
         let panel = &app.config()["panel"];
+        let mut asleep = false;
         if !app.sim {
             if connected {
                 offline_since = None;
             } else {
                 offline_since.get_or_insert(now);
             }
-            let level = brightness(
-                panel,
-                state["lux"].as_f64(),
-                offline_since.map(|start| now.duration_since(start)),
-            );
+            let activity = *app.panel_activity.lock().unwrap();
+            let idle =
+                offline_since.map(|start| now.saturating_duration_since(start.max(activity)));
+            let sleep = panel["offline_sleep_min"].as_u64().unwrap_or(5);
+            asleep = sleep > 0 && idle.is_some_and(|idle| idle >= Duration::from_secs(sleep * 60));
+            let level = brightness(panel, state["lux"].as_f64(), idle);
             if previous_brightness != Some(level) {
                 let hw = app.hw.clone();
                 if matches!(
@@ -266,6 +278,8 @@ async fn sampler(app: App, tx: broadcast::Sender<Value>, pc: watch::Sender<bool>
                 }
             }
         }
+        board_state["display_asleep"] = json!(asleep);
+        let _ = tx.send(board_state);
         if state != last_status
             || last_status_time
                 .is_none_or(|last| now.duration_since(last) >= Duration::from_secs(5))
@@ -276,12 +290,21 @@ async fn sampler(app: App, tx: broadcast::Sender<Value>, pc: watch::Sender<bool>
         }
         if connected {
             let samples = if app.sim { None } else { Some(&host.samples) };
-            let metrics = metrics::snapshot(
+            let mut catalogue_settings = panel.clone();
+            catalogue_settings["hidden_metrics"] = json!([]);
+            let mut metrics = metrics::snapshot(
                 app.started.elapsed().as_secs_f64(),
-                panel,
+                &catalogue_settings,
                 samples,
                 Some(&host.names),
             );
+            let catalogue = metrics.iter().map(|metric| {
+                json!({"id":metric["id"],"label":metric["label"],"unit":metric["unit"],"group":metric["group"]})
+            }).collect();
+            *app.panel_metrics.write().unwrap() = catalogue;
+            if let Some(hidden) = panel["hidden_metrics"].as_array() {
+                metrics.retain(|metric| !hidden.contains(&metric["id"]));
+            }
             let _ = tx.send(json!({"t":"telemetry","ts":ts,"metrics":metrics}));
         }
     }
@@ -307,6 +330,7 @@ fn request(app: &App, m: Value) -> Value {
     }
     let result: Result<Option<Value>, ApiError> = match m["t"].as_str() {
         Some("get_config") => Ok(Some((*app.config()).clone())),
+        Some("metric_catalogue") => Ok(Some(json!(*app.panel_metrics.read().unwrap()))),
         Some("patch_config") => app
             .patch_config(&m["patch"], None)
             .map(|cfg| Some((*cfg).clone())),
@@ -317,6 +341,11 @@ fn request(app: &App, m: Value) -> Value {
                 None
             }),
             "usb_apply" => app.apply_usb().map(|()| None),
+            "pc_power_on" => crate::console::panel_power_on(app).map(|()| None),
+            "wake_display" => {
+                *app.panel_activity.lock().unwrap() = Instant::now();
+                Ok(None)
+            }
             action => system::device_action(app, action).map(|()| None),
         },
         _ => Err(ApiError::new(400, "bad_message")),

@@ -132,6 +132,8 @@ export function startPanelServer(state: State, listen: Listen): Promise<Server> 
     switch (m.t) {
       case 'get_config':
         return reply({ ok: true, data: state.config });
+      case 'metric_catalogue':
+        return reply({ ok: true, data: snapshot(tick, {}, []).map(({ id, label, unit, group }) => ({ id, label, unit, group })) });
       case 'patch_config': {
         // The panel is a local trusted process: no per-section permission check.
         const r = applyConfigPatch(state, m.patch, null);

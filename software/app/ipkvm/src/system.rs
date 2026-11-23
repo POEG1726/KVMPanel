@@ -184,6 +184,10 @@ pub fn device_info(app: &App) -> Value {
         "soc_temp_c":app.hw.temperature().ok(),"lux":app.hw.lux().ok(),
         "mem":{"used":total.saturating_sub(mem_bytes("MemAvailable:")),"total":total},"data":{"used":used,"total":space}})
 }
+
+pub(crate) fn tailscale_ip() -> Option<std::net::Ipv4Addr> {
+    network::interface_ipv4(b"tailscale0")
+}
 async fn device(State(app): State<App>, h: HeaderMap) -> Result<Json<Value>, ApiError> {
     app.require(&h, "device")?;
     Ok(Json(

@@ -153,6 +153,8 @@ pub struct Inner {
     pub events: broadcast::Sender<String>,
     pub socket_closes: tokio::sync::watch::Sender<u16>,
     pub hw: Arc<dyn hardware::Hardware>,
+    panel_metrics: RwLock<Vec<Value>>,
+    panel_activity: Mutex<Instant>,
     auth: Mutex<auth::Auth>,
     cfg: config::ConfigState,
 }
@@ -171,6 +173,8 @@ impl App {
             events: broadcast::channel(256).0,
             socket_closes: tokio::sync::watch::channel(0).0,
             hw,
+            panel_metrics: Default::default(),
+            panel_activity: Mutex::new(Instant::now()),
             auth: Mutex::new(auth::Auth::open(data_dir)?),
             cfg: config::ConfigState::open(data_dir)?,
         })))

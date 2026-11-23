@@ -153,6 +153,8 @@ $env:KVMPANEL_MOCK_PC = 'off'; npm start --prefix software/app/api/mock
 | `get_config` | `result.data` 是完整配置 |
 | `patch_config`（`patch`） | 成功时 `result.data` 是新配置，失败时带 `error` 和 `detail` |
 | `action`（`reboot`、`shutdown`、`restart_kvm`、`reset_hid`、`disconnect_sessions`、`eject_media`、`usb_apply`、`pc_power_on`） | `result.ok`。`pc_power_on` 等于短按一次电脑电源键；电源灯亮着时拒绝，错误为 `pc_on`，保证副屏不会把电脑关掉 |
+| `metric_catalogue` | `result.data` 含当前已知指标的 `id`、`label`、`unit`、`group`，包括已隐藏的字段。副屏可通过 `patch_config` 更新 `panel.hidden_metrics` 和 `panel.orientation` |
+| `action`（`wake_display`） | 重置副屏离线息屏倒计时。`board.display_asleep` 为 `true` 时，副屏消费触摸作为唤醒动作 |
 | `device_info` | `result.data` 和 `GET /api/device` 相同 |
 
 **告警阈值**：`config.panel.thresholds` 的键可以是指标 id，比如 `gpu.temp`；也可以是以 `.*` 结尾的前缀，比如 `mem.dimm.*`。同一个指标同时匹配时，精确的 id 优先于前缀。在 PATCH 里把某个键设为 null 就删除这个阈值。默认值为 `cpu.tctl` 85、`gpu.mem_junction` 95、`mem.dimm.*` 60。

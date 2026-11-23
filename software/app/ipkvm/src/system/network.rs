@@ -12,6 +12,10 @@ use std::{
 use tokio::process::Command;
 
 pub(super) fn eth_ip() -> Option<Ipv4Addr> {
+    interface_ipv4(b"eth0")
+}
+
+pub(crate) fn interface_ipv4(name: &[u8]) -> Option<Ipv4Addr> {
     unsafe {
         let mut head = std::ptr::null_mut();
         if libc::getifaddrs(&mut head) != 0 {
@@ -23,7 +27,7 @@ pub(super) fn eth_ip() -> Option<Ipv4Addr> {
             let a = &*it;
             if !a.ifa_addr.is_null()
                 && (*a.ifa_addr).sa_family as i32 == libc::AF_INET
-                && CStr::from_ptr(a.ifa_name).to_bytes() == b"eth0"
+                && CStr::from_ptr(a.ifa_name).to_bytes() == name
             {
                 ip = Some(Ipv4Addr::from(
                     (*(a.ifa_addr.cast::<libc::sockaddr_in>()))
@@ -132,7 +136,9 @@ fn networkd_config(cfg: &Value) -> io::Result<String> {
             let address = server
                 .as_str()
                 .and_then(|s| s.parse::<IpAddr>().ok())
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid DNS address"))?;
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "invalid DNS address")
+                })?;
             file.push_str(&format!("DNS={address}\n"));
         }
         file.push_str("\n[DHCPv4]\nUseDNS=no\n\n[IPv6AcceptRA]\nUseDNS=no\n");
@@ -156,7 +162,12 @@ pub(super) async fn apply(app: &App, cfg: &Value) -> io::Result<()> {
         })
         .await
         .map_err(io::Error::other)??;
-        if !Command::new("networkctl").arg("reload").status().await?.success() {
+        if !Command::new("networkctl")
+            .arg("reload")
+            .status()
+            .await?
+            .success()
+        {
             return Err(io::Error::other("networkctl reload failed"));
         }
         return Ok(());

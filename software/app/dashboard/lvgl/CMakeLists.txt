@@ -1,0 +1,17 @@
+cmake_minimum_required(VERSION 3.16)
+project(kvmpanel_dashboard C)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(LVGL_DIR "$ENV{HOME}/work/KVMPanel/upstream/lvgl" CACHE PATH "LVGL source tree")
+set(LV_BUILD_CONF_PATH "${CMAKE_CURRENT_SOURCE_DIR}/lv_conf.h" CACHE PATH "" FORCE)
+set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
+set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(CONFIG_LV_USE_THORVG OFF CACHE BOOL "" FORCE)
+set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "" FORCE)
+set(LV_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory("${LVGL_DIR}" lvgl)
+
+add_executable(kvmpanel-dashboard main.c panel_sock.c third_party/cjson/cJSON.c)
+target_include_directories(kvmpanel-dashboard PRIVATE third_party/cjson)
+target_link_libraries(kvmpanel-dashboard PRIVATE lvgl m)

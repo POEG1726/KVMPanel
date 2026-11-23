@@ -4,7 +4,7 @@ import { check, login, userWith } from './helpers.js';
 
 const DEFAULTS = {
   panel: {
-    language: 'en', auto_brightness: true, brightness: 70, offline_sleep_min: 5,
+    language: 'en', orientation: 'normal', auto_brightness: true, brightness: 70, offline_sleep_min: 5,
     thresholds: { 'cpu.tctl': 85, 'gpu.mem_junction': 95, 'mem.dimm.*': 60 },
     hidden_metrics: [],
   },

@@ -49,6 +49,7 @@ impl Sessions {
 
 pub struct Console {
     power_cache: status::PowerCache,
+    power_write: Mutex<Option<std::time::Instant>>,
     status_feed: status::StatusFeed,
     edid: Mutex<Vec<u8>>,
     wol: tokio::sync::Mutex<Vec<Value>>,
@@ -71,6 +72,7 @@ impl Console {
         };
         Ok(Self {
             power_cache: Default::default(),
+            power_write: Default::default(),
             status_feed: Default::default(),
             edid: Mutex::new(DEFAULT_EDID.to_vec()),
             wol: tokio::sync::Mutex::new(wol),
@@ -86,6 +88,32 @@ impl Console {
     pub fn session_count(&self) -> usize {
         self.sessions.lock().unwrap().entries.len()
     }
+}
+
+pub(crate) fn panel_pc_power(app: &App) -> io::Result<Value> {
+    app.console.power_cache.read(|| app.hw.power())
+}
+
+pub(crate) fn panel_video(app: &App) -> Value {
+    let hdmi = video::hdmi(app);
+    let active = hdmi["signal"] == true;
+    let fps = active
+        .then(|| app.console.stats.lock().unwrap().0)
+        .filter(|fps| *fps > 0);
+    let sessions: Vec<_> = app
+        .console
+        .sessions
+        .lock()
+        .unwrap()
+        .entries
+        .values()
+        .map(|session| json!({"user":session["user"],"ip":session["ip"]}))
+        .collect();
+    json!({"sessions":sessions,"hdmi":{
+        "signal":active,"width":active.then_some(&hdmi["width"]),
+        "height":active.then_some(&hdmi["height"]),"fps":active.then_some(&hdmi["fps"])},
+        "stream":{"state":if fps.is_some(){"streaming"}else{"idle"},"fps":fps},
+        "media":app.media_status()})
 }
 
 pub(crate) fn now_ms() -> u64 {
@@ -191,6 +219,7 @@ async fn press(
     app.require(&h, "power")?;
     validate("pressPower", &v)?;
     tokio::task::spawn_blocking(move || {
+        let _guard = app.console.power_write.lock().unwrap();
         app.hw
             .press(
                 v["button"].as_str().unwrap(),
@@ -204,6 +233,20 @@ async fn press(
     .await
     .map_err(io::Error::other)??;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Serialize the live LED check with power pulses from both interfaces.
+pub(crate) fn panel_power_on(app: &App) -> Result<(), ApiError> {
+    let mut last = app.console.power_write.lock().unwrap();
+    let power = app.hw.power().map_err(ApiError::device)?;
+    if power["on"] != false || last.is_some_and(|last| last.elapsed() < Duration::from_secs(5)) {
+        return Err(ApiError::new(409, "pc_on"));
+    }
+    app.hw.press("power", 200).map_err(ApiError::device)?;
+    *last = Some(std::time::Instant::now());
+    app.console.power_cache.invalidate();
+    app.emit("status_changed");
+    Ok(())
 }
 fn mac(text: &str) -> Option<[u8; 6]> {
     text.trim()

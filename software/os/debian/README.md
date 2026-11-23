@@ -63,6 +63,8 @@ sudo bash "$project/software/os/debian/build-image.sh" "$out/base-armhf.tar" \
 
 构建脚本只生成镜像文件。Buildroot 的 FEL 诊断镜像另行按原流程构建。
 
+构建带副屏的镜像时，按 [Dashboard 构建说明](../../app/dashboard/README.md#构建与启动) 生成 ARM 静态二进制，将 `KVMPANEL_DASHBOARD_BINARY` 传给 `build-image.sh`。脚本安装并启用 `kvmpanel-dashboard.service`，存在 `/dev/fb0` 时随系统启动。触摸设备确认后，可在 `/etc/default/kvmpanel-dashboard` 设置 `KVMPANEL_TOUCH`。
+
 ## 离线验证
 
 2026-11-23 构建了板用 U-Boot、内核和 Debian SD 镜像，检查了分区、两个 ext4 文件系统、SPL 偏移和两份启动 DTB。在 512 MiB 的 QEMU Cortex-A7 客体用快照验证了首次密码设置、Vim 9.1、数据分区挂载、DHCP、网页与 `/api/health`、USB gadget 配置，以及通过 KVM API 改静态地址和 DNS。虚拟串口测试证明可写根分区时只发取消命令，systemd 清理存储后依次发送准备和待断电命令。关机阻止锁也通过测试。SD 冷启动、最后的 UART2 断电帧和实板外设请见 [当前交接](../../../HANDOFF.md)。

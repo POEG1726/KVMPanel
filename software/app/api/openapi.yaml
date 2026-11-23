@@ -1338,10 +1338,11 @@ components:
       properties:
         panel:
           type: object
-          required: [language, auto_brightness, brightness, offline_sleep_min, thresholds, hidden_metrics]
+          required: [language, orientation, auto_brightness, brightness, offline_sleep_min, thresholds, hidden_metrics]
           additionalProperties: false
           properties:
             language: { type: string, enum: [en, zh], default: en }
+            orientation: { type: string, enum: [normal, right, inverted, left], default: normal }
             auto_brightness: { type: boolean, default: true }
             brightness: { type: integer, minimum: 0, maximum: 100, default: 70 }
             offline_sleep_min: { type: integer, minimum: 0, maximum: 120, default: 5, description: '0 = never sleep' }

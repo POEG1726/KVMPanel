@@ -978,6 +978,11 @@ export interface components {
                  * @enum {string}
                  */
                 language: "en" | "zh";
+                /**
+                 * @default normal
+                 * @enum {string}
+                 */
+                orientation: "normal" | "right" | "inverted" | "left";
                 /** @default true */
                 auto_brightness: boolean;
                 /** @default 70 */

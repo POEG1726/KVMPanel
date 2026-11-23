@@ -121,6 +121,13 @@ async fn greetings_metrics_filter_threshold_and_pc_lifetime() {
     assert_eq!(temp["group"], "cpu");
     let result=p.request(json!({"t":"patch_config","id":1,"patch":{"panel":{"hidden_metrics":["cpu.bclk"],"thresholds":{"gpu.temp":70,"mem.*":53,"mem.dimm.*":55,"mem.dimm.a2":57}}}})).await;
     assert_eq!(result["ok"], true);
+    let catalog = p.request(json!({"t":"metric_catalogue","id":44})).await;
+    assert_eq!(catalog["ok"], true);
+    assert!(catalog["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m["id"] == "cpu.bclk"));
     let next = p
         .next(|v| {
             v["t"] == "telemetry"
@@ -175,6 +182,29 @@ async fn greetings_metrics_filter_threshold_and_pc_lifetime() {
         .store(true, Ordering::Relaxed);
     assert_eq!(p.next(|v| v["t"] == "pc").await["connected"], true);
     p.next(|v| v["t"] == "telemetry").await;
+}
+
+#[tokio::test]
+async fn board_status_continues_offline_and_power_on_is_idempotent() {
+    let s = Server::new().await;
+    s.app.hw.press("power", 200).unwrap();
+    s.app
+        .console
+        .sim_pc_connected
+        .store(false, Ordering::Relaxed);
+    let mut p = Panel::new(&s).await;
+    let board = p.next(|m| m["t"] == "board").await;
+    assert_eq!(board["pc_power"], "off");
+    let status = p
+        .request(json!({"t":"action","id":1,"action":"pc_power_on"}))
+        .await;
+    assert_eq!(status["ok"], true);
+    let duplicate = p
+        .request(json!({"t":"action","id":2,"action":"pc_power_on"}))
+        .await;
+    assert_eq!(duplicate["error"], "pc_on");
+    let board = p.next(|m| m["t"] == "board" && m["pc_power"] == "on").await;
+    assert!(board["uptime_s"].is_number());
 }
 
 #[tokio::test]

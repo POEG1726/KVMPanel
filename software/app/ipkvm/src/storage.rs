@@ -202,6 +202,11 @@ impl Storage {
         }
     }
 
+    pub(crate) fn sd_usage(&self) -> Option<Value> {
+        let (total, free) = self.volumes.get("sd")?.capacity().ok()?;
+        Some(json!({"used":total.saturating_sub(free),"total":total}))
+    }
+
     pub fn eject(&self) -> Result<(), ApiError> {
         let _gate = self.lun_gate.lock().unwrap();
         self.recover_luns()?;

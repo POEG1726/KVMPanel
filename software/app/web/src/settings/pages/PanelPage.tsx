@@ -8,6 +8,7 @@ import { useConfigSection } from '../useConfigSection';
 import s from '../settings.module.css';
 
 const SLEEP_MINUTES = [0, 1, 2, 5, 10, 15, 30, 60, 120];
+const ORIENTATIONS = ['normal', 'right', 'inverted', 'left'] as const;
 /** Suggestions for the threshold key: every metric id and each `prefix.*` that groups some of them. */
 const KEY_SUGGESTIONS = [...new Set(METRIC_GROUPS.flatMap((g) => g.metrics.flatMap((m) => [m, `${m.slice(0, m.lastIndexOf('.'))}.*`])))].filter((k) => k !== '.*').sort();
 
@@ -45,6 +46,11 @@ export function PanelPage() {
   return (
     <>
       <Group title={t('settings.panel.display')}>
+        <Row label={t('settings.panel.orientation')}>
+          <Select label={t('settings.panel.orientation')} value={panel.orientation}
+            options={ORIENTATIONS.map((value) => ({ value, label: t(`settings.panel.rotation.${value}`) }))}
+            onChange={(orientation) => void patch({ orientation: orientation as typeof panel.orientation })} />
+        </Row>
         <Row label={t('settings.panel.autoBrightness')}>
           <Switch label={t('settings.panel.autoBrightness')} checked={panel.auto_brightness} onChange={(auto_brightness) => void patch({ auto_brightness })} />
         </Row>

@@ -108,6 +108,10 @@ fn merge(target: &mut Value, patch: &Value, path: &str) {
     }
 }
 impl App {
+    pub(crate) fn applied_usb(&self) -> Value {
+        self.cfg.applied.read().unwrap().clone()
+    }
+
     pub fn subscribe_config(&self) -> (Arc<Value>, broadcast::Receiver<Arc<Value>>) {
         let cfg = self.cfg.value.read().unwrap();
         (cfg.clone(), self.config_updates.subscribe())

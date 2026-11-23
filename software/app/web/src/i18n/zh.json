@@ -299,6 +299,8 @@
     "panel": {
       "display": "显示",
       "autoBrightness": "自动亮度",
+      "orientation": "屏幕旋转",
+      "rotation": { "normal": "默认方向", "right": "向右 90°", "inverted": "180°", "left": "向左 90°" },
       "brightness": "亮度",
       "offlineSleep": "电脑离线后息屏",
       "offlineSleepHint": "收不到电脑数据超过这个时间后息屏",
