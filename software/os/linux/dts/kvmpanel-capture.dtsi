@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: (GPL-2.0-only OR MIT)
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/media/video-interfaces.h>
 
 &pio {
@@ -18,8 +20,10 @@
 	hdmi-receiver@32 {
 		compatible = "lontium,lt8619c";
 		reg = <0x32>;
+		reset-gpios = <&pio 2 3 GPIO_ACTIVE_LOW>;
+		interrupts-extended = <&pio 4 17 IRQ_TYPE_LEVEL_LOW>;
 
-		/* D8-D15 are wired. RESET_N has no software-controlled GPIO. */
+		/* D8-D15 are wired. GPIO15 reports the receiver's aggregate IRQ. */
 		port {
 			lt8619c_out: endpoint {
 				remote-endpoint = <&csi_in>;

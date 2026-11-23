@@ -1,0 +1,146 @@
+Subject: [PATCH] fail transfer on short writes, incomplete responses or a missing block ACK
+
+--- a/src/stc8prog.c
++++ b/src/stc8prog.c
+@@ -53,14 +53,15 @@
+ 
+     for (count = 0; retry_count > count; ++count) 
+     {
+-        serial.write(&serial, tx_detect, sizeof(tx_detect));
++        if (serial.write(&serial, tx_detect, sizeof(tx_detect)) != sizeof(tx_detect))
++            return -1;
+         if ((ret = chip_read(recv)) <= 0) {
+ #ifndef SILENT_DETECT
+             if (count & 0x1FF == 0) printf("\n");
+             if (count & 0x0F == 0) printf(".");
+ #endif
+             continue;
+-        } else if (*recv == 0x50) {
++        } else if (ret >= 22 && *recv == 0x50) {
+             return 0;
+         } else {
+ #ifndef SILENT_DETECT
+@@ -98,7 +99,8 @@
+         arg[4] = count & 0xFF;
+     }
+ 
+-    chip_write(arg, arg_size);
++    if (chip_write(arg, arg_size))
++        return -1;
+ 
+     for (count = 0; count < 0xFF; ++count)
+     {
+@@ -144,7 +146,8 @@
+             if (cnt >= 128)
+                 break;
+         }
+-        chip_write(arg, cnt + offset);
++        if (chip_write(arg, cnt + offset))
++            return -1;
+ 
+         for (count = 0; count < 10; ++count)
+         {
+@@ -153,7 +156,7 @@
+                 DEBUG_PRINTF("read nothing\n");
+                 continue;
+             }
+-            else if (*recv == stc_protocol->flash_write[arg_size] 
++            else if (ret >= 2 && *recv == stc_protocol->flash_write[arg_size]
+                 && *(recv + 1) == stc_protocol->flash_write[arg_size + 1])
+             {
+                 printf("\b\b\b\b\b\b\b%6.2f%%", addr * 100.0 / len);
+@@ -166,6 +169,8 @@
+                 return -1;
+             }
+         }
++        if (count == 10)
++            return -1;
+         fflush(stdout);
+     }
+     printf(" ");
+@@ -178,7 +183,8 @@
+     uint8_t count, arg_size = sizeof(stc_protocol->flash_erase) - 1;
+     uint8_t arg[BUF_SIZE] = {};
+     memcpy(arg, stc_protocol->flash_erase, arg_size);
+-    chip_write(arg, arg_size);
++    if (chip_write(arg, arg_size))
++        return -1;
+     for (count = 0; count < 0xFF; ++count)
+     {
+         if ((ret = chip_read(recv)) <= 0)
+@@ -208,11 +214,13 @@
+ 
+     if (chip_version < 0x72)
+     {
+-        chip_write(arg, 1);
++        if (chip_write(arg, 1))
++            return -1;
+     }
+     else
+     {
+-        chip_write(arg, arg_size);
++        if (chip_write(arg, arg_size))
++            return -1;
+     }
+ 
+     for (count = 0; count < 0xFF; ++count) 
+@@ -251,7 +259,8 @@
+     *tx_pt++ = LOBYTE(sum);
+     memcpy(tx_pt, tx_suffix, sizeof(tx_suffix));
+     tx_pt += sizeof(tx_suffix);
+-    serial.write(&serial, tx_buf, tx_pt - tx_buf);
++    if (serial.write(&serial, tx_buf, tx_pt - tx_buf) != tx_pt - tx_buf)
++        return -1;
+     DEBUG_PRINTF("TX: ");
+     for (i = 0; i < tx_pt - tx_buf; i++)
+     {
+@@ -321,6 +330,10 @@
+ 
+         case 4:
+             rx_sum = 0x68 + ch;
++            if (ch < 7) {
++                rx_flag = 0;
++                break;
++            }
+             rx_count = ch - 6;
+             rx_index = 0;
+             rx_flag = 5;
+@@ -395,9 +408,10 @@
+ int chip_read(uint8_t *recv)
+ {
+     /** rx for each rx read, buf to store whole rx */
+-    uint8_t flag, content_flag = 0, tickdown = 0, *rx = (uint8_t [BUF_SIZE]){}, *rx_p;
++    uint8_t flag = 0, content_flag = 0, tickdown = 10, *rx = (uint8_t [BUF_SIZE]){}, *rx_p;
+     //*buf = (uint8_t [BUF_SIZE]){},  
+     int ret, size = 0;
++    unsigned int polls = 0;
+ 
+     do
+     {
+@@ -410,6 +424,8 @@
+                 DEBUG_PRINTF("0x%02x | ", *(rx_p + i));
+                 // flag check
+                 flag = flag_check(*(rx_p + i));
++                if (flag == 9)
++                    return size;
+                 if (flag > 0)
+                 {
+                     tickdown = 32;
+@@ -441,7 +457,7 @@
+             DEBUG_PRINTF(".");
+         }
+         usleep(10000);
+-    } while (tickdown-- && size < BUF_SIZE && flag > 0);
++    } while (tickdown-- && size < BUF_SIZE && ++polls < 80);
+     if (size > 0)
+     {
+         for (ret = 0; ret < size; ret++)
+@@ -451,7 +467,7 @@
+         DEBUG_PRINTF("\n");
+     }
+     
+-    return size;
++    return 0;  /* No complete frame passed the checksum. */
+ }
+ 
+ /* parses a line of intel hex code, stores the data in bytes[] */

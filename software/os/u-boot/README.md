@@ -1,6 +1,6 @@
 # FEL 启动配置
 
-`configs/kvmpanel_fel_defconfig` 用于 U-Boot 2026.10。它使用 R528 的 SPL DDR3 驱动、Tina T113-i 的 DDR3 参考参数、UART0 和 RAM 环境。目标是通过 FEL 启动，等待本板验证。参数来源和 NAND 冷启动见 [T113-i 启动链](../vendor/tina/README.md)。
+`configs/kvmpanel_fel_defconfig` 用于 U-Boot 2026.10。它使用 R528 的 SPL DDR3 驱动、Tina T113-i 的 DDR3 参考参数、UART0 和 RAM 环境。目标是通过 FEL 启动，等待本板验证。DDR 参数来源和启动介质说明见 [T113-i 启动链](../vendor/tina/README.md)。
 
 ## 构建
 
@@ -11,13 +11,15 @@ project=/mnt/d/MyProj/KVMPanel
 work="$HOME/work/KVMPanel"
 ubsrc="$work/upstream/u-boot"
 ubout="$work/build/u-boot-kvmpanel-fel"
-dts="$project/software/os/linux/dts/sun8i-t113i-kvmpanel.dts"
-staged_dts="$ubsrc/dts/upstream/src/arm/allwinner/sun8i-t113i-kvmpanel.dts"
+dts="$project/software/os/linux/dts"
+staged_dts="$ubsrc/dts/upstream/src/arm/allwinner"
 
 mkdir -p "$ubout"
-test -e "$staged_dts" || ln -s "$dts" "$staged_dts"
-cmp "$dts" "$staged_dts" &&
-  cp "$project/software/os/u-boot/configs/kvmpanel_fel_defconfig" "$ubout/.config" &&
+for file in sun8i-t113i-kvmpanel.dts kvmpanel-stc-power.dtsi; do
+  test -e "$staged_dts/$file" || ln -s "$dts/$file" "$staged_dts/$file"
+  cmp "$dts/$file" "$staged_dts/$file" || exit
+done
+cp "$project/software/os/u-boot/configs/kvmpanel_fel_defconfig" "$ubout/.config" &&
   make -C "$ubsrc" O="$ubout" CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig &&
   make -C "$ubsrc" O="$ubout" CROSS_COMPILE=arm-linux-gnueabihf- -j"$(nproc)"
 ```
@@ -45,4 +47,4 @@ setenv bootargs 'console=ttyS0,115200 earlycon rdinit=/init'
 bootz 0x42000000 0x43400000:${rdsize} 0x43000000
 ```
 
-内核到达 shell 后，可查看 `/proc/meminfo`、`/sys/devices/system/cpu/online` 和启动日志。FEL 只把这些镜像传到 RAM。持久启动的 Flash 布局取决于本板上实际工作的 Boot0 和 U-Boot。
+内核到达 shell 后，可查看 `/proc/meminfo`、`/sys/devices/system/cpu/online` 和启动日志。FEL 只把这些镜像传到 RAM。本板预留 microSD 持久启动，镜像布局待实板验证。

@@ -7,7 +7,7 @@
 1. `AGENTS.md`、`README.md`
 2. 设计文档 `docs/superpowers/specs/2026-11-20-kvmpanel-app-design.md`，重点是第 3 节（硬件）、7.1（驱动范围）、9（风险）
 3. `docs/linux-6.18.md`（现状和差距）、`docs/development.md`（构建命令）
-4. 硬件：`hardware/README.md`、网表 `hardware/exports/2026-11-20/Netlist_Schematic2_2026-11-20.tel`、数据手册 `hardware/reference/datasheets/`、面板参考包 `hardware/reference/display/TD4322.zip`
+4. 硬件：[当前板级导出](../../../hardware/README.md)、数据手册 `hardware/reference/datasheets/`、面板参考包 `hardware/reference/display/TD4322.zip`。本计划保留 2026-11-20 的驱动工作范围，现版接线以硬件说明为准。
 
 ## 背景
 

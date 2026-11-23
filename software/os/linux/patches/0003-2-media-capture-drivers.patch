@@ -15,13 +15,13 @@ Signed-off-by: Codex <noreply@openai.com>
  arch/riscv/boot/dts/allwinner/sunxi-d1s-t113.dtsi  |   31 +
  drivers/media/i2c/Kconfig                          |   15 +
  drivers/media/i2c/Makefile                         |    1 +
- drivers/media/i2c/lt8619c.c                        |  600 +++++++++
+ drivers/media/i2c/lt8619c.c                        |  865 +++++++++
  drivers/media/platform/sunxi/Kconfig               |    1 +
  drivers/media/platform/sunxi/Makefile              |    1 +
  drivers/media/platform/sunxi/sun20i-csi/Kconfig    |   17 +
  drivers/media/platform/sunxi/sun20i-csi/Makefile   |    4 +
  .../media/platform/sunxi/sun20i-csi/sun20i_csi.c   | 1405 ++++++++++++++++++++
- 9 files changed, 2075 insertions(+)
+ 9 files changed, 2340 insertions(+)
 
 diff --git a/arch/riscv/boot/dts/allwinner/sunxi-d1s-t113.dtsi b/arch/riscv/boot/dts/allwinner/sunxi-d1s-t113.dtsi
 index 63e252b44..c25c85bfc 100644
@@ -112,10 +112,10 @@ index 57cdd8dc9..fc399e035 100644
  obj-$(CONFIG_VIDEO_MAX9271_LIB) += max9271.o
 diff --git a/drivers/media/i2c/lt8619c.c b/drivers/media/i2c/lt8619c.c
 new file mode 100644
-index 000000000..ae5795ccb
+index 000000000..9052ad354
 --- /dev/null
 +++ b/drivers/media/i2c/lt8619c.c
-@@ -0,0 +1,600 @@
+@@ -0,0 +1,865 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * lt8619c.c - Lontium HDMI receiver, eight-bit SDR BT.656 output
@@ -126,18 +126,38 @@ index 000000000..ae5795ccb
 + */
 +
 +#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
 +#include <linux/i2c.h>
++#include <linux/interrupt.h>
 +#include <linux/module.h>
 +#include <linux/regmap.h>
 +#include <linux/unaligned.h>
 +#include <linux/v4l2-dv-timings.h>
++#include <media/v4l2-ctrls.h>
 +#include <media/v4l2-device.h>
 +#include <media/v4l2-dv-timings.h>
++#include <media/v4l2-event.h>
 +#include <media/v4l2-fwnode.h>
 +
 +#define LT_CHIP_ID		0x6000
 +#define LT_RX_TIMING		0x6013
++#define LT_INT_POLARITY		0x602e
++#define LT_INT_ACTIVE_HIGH	BIT(0)
++#define LT_INT_MASK		0x6030
++#define LT_INT_CLEAR		0x6038
++#define LT_INT_FLAGS		0x6040
++#define LT_INT_BANKS		8
++#define LT_INT_RETRIES		3
++#define LT_GPIO_INPUT		0x6048
++#define LT_GPIO13_INPUT		BIT(5)
++#define LT_GPIO_MUX		0x604e
++#define LT_GPIO15_MUX		GENMASK(5, 4)
++#define LT_GPIO15_INT_OUT	GENMASK(5, 4)
 +#define LT_TX_TIMING		0x6061
++#define LT_GPIO_DRIVE		0x6081
++#define LT_GPIO13_DRIVE		GENMASK(7, 4)
++#define LT_GPIO15_DRIVE		GENMASK(3, 0)
++#define LT_GPIO15_DRIVE_5MA	BIT(0)
 +#define LT_OUTPUT		0x60a8
 +#define LT_OUTPUT_OFF		0x07
 +#define LT_OUTPUT_ON		0x0f
@@ -156,13 +176,22 @@ index 000000000..ae5795ccb
 +
 +struct lt8619c {
 +	struct v4l2_subdev sd;
++	struct v4l2_ctrl_handler ctrls;
 +	struct media_pad pad;
 +	struct regmap *map;
 +	struct mutex lock;	/* Timings, stream state and EDID transactions */
 +	struct v4l2_dv_timings timings;
 +	u8 edid[LT_MAX_BLOCKS * LT_EDID_BLOCK_SIZE];
 +	unsigned int blocks;
++	unsigned int empty_irqs;
 +	bool streaming;
++};
++
++/* The Preliminary Register List does not assign an IRQ bit to GPIO13. */
++static const u8 lt8619c_video_irqs[LT_INT_BANKS] = {
++	GENMASK(3, 2),	/* HSYNC detected/lost */
++	BIT(7),		/* Video Identification Code changed */
++	GENMASK(5, 2),	/* RX clock detected/lost and stable/unstable */
 +};
 +
 +static const struct regmap_range_cfg lt8619c_range = {
@@ -216,6 +245,162 @@ index 000000000..ae5795ccb
 +static struct lt8619c *to_lt(struct v4l2_subdev *sd)
 +{
 +	return container_of(sd, struct lt8619c, sd);
++}
++
++/* Only sample GPIO13 on demand. It reports cable power, even without TMDS. */
++static int lt8619c_get_volatile_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct lt8619c *lt = container_of(ctrl->handler, struct lt8619c, ctrls);
++	unsigned int val;
++	int ret;
++
++	guard(mutex)(&lt->lock);
++	ret = regmap_read(lt->map, LT_GPIO_INPUT, &val);
++	if (!ret)
++		ctrl->val = !!(val & LT_GPIO13_INPUT);
++	return ret;
++}
++
++static const struct v4l2_ctrl_ops lt8619c_ctrl_ops = {
++	.g_volatile_ctrl = lt8619c_get_volatile_ctrl,
++};
++
++static int lt8619c_subscribe_event(struct v4l2_subdev *sd, struct v4l2_fh *fh,
++				   struct v4l2_event_subscription *sub)
++{
++	if (sub->type == V4L2_EVENT_SOURCE_CHANGE)
++		return v4l2_src_change_event_subdev_subscribe(sd, fh, sub);
++	return v4l2_ctrl_subdev_subscribe_event(sd, fh, sub);
++}
++
++static const struct v4l2_subdev_core_ops lt8619c_core_ops = {
++	.subscribe_event = lt8619c_subscribe_event,
++	.unsubscribe_event = v4l2_event_subdev_unsubscribe,
++};
++
++static int lt8619c_detect(struct lt8619c *lt, struct v4l2_dv_timings *timings);
++
++/**
++ * lt8619c_ack_irqs() - Pulse active-low clear bits and restore their idle state.
++ * @lt: Receiver whose interrupt logic is active.
++ * @flags: Pending bits per interrupt bank.
++ */
++static int lt8619c_ack_irqs(struct lt8619c *lt, const u8 *flags)
++{
++	u8 clear[LT_INT_BANKS];
++	unsigned int i;
++	int ret, restore;
++
++	for (i = 0; i < ARRAY_SIZE(clear); i++)
++		clear[i] = ~flags[i];
++	ret = regmap_bulk_write(lt->map, LT_INT_CLEAR, clear, sizeof(clear));
++
++	memset(clear, 0xff, sizeof(clear));
++	restore = regmap_bulk_write(lt->map, LT_INT_CLEAR, clear, sizeof(clear));
++	return ret ? ret : restore;
++}
++
++/**
++ * lt8619c_drain_irqs() - Verify that clearing the selected IRQs released them.
++ * @lt: Receiver instance, with the I2C transaction mutex held.
++ * @seen: Set when any selected interrupt was pending.
++ */
++static int lt8619c_drain_irqs(struct lt8619c *lt, bool *seen)
++{
++	u8 flags[LT_INT_BANKS];
++	unsigned int attempt, i;
++	int ret;
++
++	for (attempt = 0; ; attempt++) {
++		bool pending = false;
++
++		ret = regmap_bulk_read(lt->map, LT_INT_FLAGS, flags, sizeof(flags));
++		if (ret)
++			return ret;
++		for (i = 0; i < ARRAY_SIZE(flags); i++) {
++			flags[i] &= lt8619c_video_irqs[i];
++			pending |= !!flags[i];
++		}
++		if (!pending)
++			return 0;
++		if (attempt == LT_INT_RETRIES)
++			return -EIO;
++		*seen = true;
++		ret = lt8619c_ack_irqs(lt, flags);
++		if (ret)
++			return ret;
++	}
++}
++
++/**
++ * lt8619c_irq_thread() - Read and acknowledge video events over the I2C bus.
++ * @irq: GPIO15 interrupt line.
++ * @data: Receiver instance.
++ */
++static irqreturn_t lt8619c_irq_thread(int irq, void *data)
++{
++	const struct v4l2_event event = {
++		.type = V4L2_EVENT_SOURCE_CHANGE,
++		.u.src_change.changes = V4L2_EVENT_SRC_CH_RESOLUTION,
++	};
++	struct lt8619c *lt = data;
++	struct v4l2_dv_timings detected;
++	bool seen = false;
++	bool changed = false;
++	int ret;
++
++	scoped_guard(mutex, &lt->lock) {
++		ret = lt8619c_drain_irqs(lt, &seen);
++		if (!ret) {
++			if (seen) {
++				lt->empty_irqs = 0;
++				/* Stream startup resets RX and can latch its own lock events. */
++				changed = !lt->streaming || lt8619c_detect(lt, &detected) ||
++					  !v4l2_match_dv_timings(&detected, &lt->timings, 150000,
++								 false);
++			} else if (++lt->empty_irqs >= LT_INT_RETRIES) {
++				/* A level-low line can stay active without any selected flags. */
++				ret = -EIO;
++			}
++		}
++	}
++	if (ret) {
++		/* A stuck level must not keep firing. Status queries stay available. */
++		disable_irq_nosync(irq);
++		dev_warn(lt->sd.dev, "disabled video IRQ after acknowledgment failure: %d\n",
++			 ret);
++		return IRQ_HANDLED;
++	}
++	if (!seen)
++		return IRQ_NONE;
++	if (changed)
++		v4l2_subdev_notify_event(&lt->sd, &event);
++	return IRQ_HANDLED;
++}
++
++/**
++ * lt8619c_configure_irq() - Route the receiver's aggregate output to GPIO15.
++ * @lt: Receiver instance.
++ */
++static int lt8619c_configure_irq(struct lt8619c *lt)
++{
++	u8 all[LT_INT_BANKS];
++	int ret;
++
++	memset(all, 0xff, sizeof(all));
++	ret = regmap_bulk_write(lt->map, LT_INT_MASK, all, sizeof(all));
++	if (ret)
++		return ret;
++	ret = lt8619c_ack_irqs(lt, all);
++	if (ret)
++		return ret;
++	ret = regmap_update_bits(lt->map, LT_INT_POLARITY, LT_INT_ACTIVE_HIGH, 0);
++	if (ret)
++		return ret;
++	ret = regmap_update_bits(lt->map, LT_GPIO_MUX, LT_GPIO15_MUX, LT_GPIO15_INT_OUT);
++	if (ret)
++		return ret;
++	return regmap_update_bits(lt->map, LT_GPIO_DRIVE, LT_GPIO15_DRIVE, LT_GPIO15_DRIVE_5MA);
 +}
 +
 +/* Leave HPD low if the sink cannot supply a complete EDID. */
@@ -590,6 +775,7 @@ index 000000000..ae5795ccb
 +};
 +
 +static const struct v4l2_subdev_ops lt8619c_ops = {
++	.core = &lt8619c_core_ops,
 +	.pad = &lt8619c_pad_ops,
 +};
 +
@@ -617,6 +803,10 @@ index 000000000..ae5795ccb
 +	ret = regmap_multi_reg_write(lt->map, init, ARRAY_SIZE(init));
 +	if (ret)
 +		return ret;
++	/* GPIO13 is wired to the source's HDMI 5 V divider. Disable its pad driver. */
++	ret = regmap_update_bits(lt->map, LT_GPIO_DRIVE, LT_GPIO13_DRIVE, 0);
++	if (ret)
++		return ret;
 +	/* Positive sync, progressive, single-channel eight-bit BT.656 encoder. */
 +	ret = regmap_update_bits(lt->map, 0x6060, 0x3f, 0x34);
 +	if (ret)
@@ -627,9 +817,40 @@ index 000000000..ae5795ccb
 +static void lt8619c_quiesce(void *data)
 +{
 +	struct lt8619c *lt = data;
++	u8 masked[LT_INT_BANKS];
 +
++	memset(masked, 0xff, sizeof(masked));
++	regmap_bulk_write(lt->map, LT_INT_MASK, masked, sizeof(masked));
 +	regmap_write(lt->map, LT_OUTPUT, LT_OUTPUT_OFF);
 +	regmap_update_bits(lt->map, LT_HPD, LT_HPD_ENABLE, 0);
++}
++
++static void lt8619c_free_controls(void *data)
++{
++	v4l2_ctrl_handler_free(data);
++}
++
++/**
++ * lt8619c_reset() - Bring the receiver out of reset before its first I2C access.
++ * @dev: I2C device owning the optional RESET_N descriptor.
++ */
++static int lt8619c_reset(struct device *dev)
++{
++	struct gpio_desc *reset;
++	int ret;
++
++	reset = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(reset))
++		return dev_err_probe(dev, PTR_ERR(reset), "failed to acquire reset GPIO\n");
++	if (reset) {
++		/* The reference driver holds RESET_N low for 100 ms, then waits 50 ms. */
++		msleep(100);
++		ret = gpiod_set_value_cansleep(reset, 0);
++		if (ret)
++			return dev_err_probe(dev, ret, "failed to release reset GPIO\n");
++		msleep(50);
++	}
++	return 0;
 +}
 +
 +static int lt8619c_probe(struct i2c_client *client)
@@ -638,7 +859,10 @@ index 000000000..ae5795ccb
 +	struct v4l2_fwnode_endpoint ep = { .bus_type = V4L2_MBUS_BT656 };
 +	struct device *dev = &client->dev;
 +	struct fwnode_handle *fwnode;
++	struct v4l2_ctrl *power;
 +	struct lt8619c *lt;
++	u8 masks[LT_INT_BANKS];
++	unsigned int i;
 +	int ret;
 +
 +	fwnode = fwnode_graph_get_next_endpoint(dev_fwnode(dev), NULL);
@@ -655,6 +879,9 @@ index 000000000..ae5795ccb
 +	lt = devm_kzalloc(dev, sizeof(*lt), GFP_KERNEL);
 +	if (!lt)
 +		return -ENOMEM;
++	ret = lt8619c_reset(dev);
++	if (ret)
++		return ret;
 +	lt->map = devm_regmap_init_i2c(client, &lt8619c_regmap);
 +	if (IS_ERR(lt->map))
 +		return PTR_ERR(lt->map);
@@ -663,7 +890,21 @@ index 000000000..ae5795ccb
 +		return ret;
 +	lt->timings = preferred;
 +	v4l2_i2c_subdev_init(&lt->sd, client, &lt8619c_ops);
-+	lt->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
++	lt->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE | V4L2_SUBDEV_FL_HAS_EVENTS;
++	ret = v4l2_ctrl_handler_init(&lt->ctrls, 1);
++	if (ret) {
++		v4l2_ctrl_handler_free(&lt->ctrls);
++		return ret;
++	}
++	ret = devm_add_action_or_reset(dev, lt8619c_free_controls, &lt->ctrls);
++	if (ret)
++		return ret;
++	power = v4l2_ctrl_new_std(&lt->ctrls, &lt8619c_ctrl_ops,
++				  V4L2_CID_DV_RX_POWER_PRESENT, 0, 1, 1, 0);
++	if (lt->ctrls.error)
++		return lt->ctrls.error;
++	power->flags |= V4L2_CTRL_FLAG_READ_ONLY | V4L2_CTRL_FLAG_VOLATILE;
++	lt->sd.ctrl_handler = &lt->ctrls;
 +	lt->sd.entity.function = MEDIA_ENT_F_VID_IF_BRIDGE;
 +	lt->pad.flags = MEDIA_PAD_FL_SOURCE;
 +	ret = media_entity_pads_init(&lt->sd.entity, 1, &lt->pad);
@@ -678,10 +919,32 @@ index 000000000..ae5795ccb
 +	ret = devm_add_action_or_reset(dev, lt8619c_quiesce, lt);
 +	if (ret)
 +		goto err_subdev;
++	if (client->irq > 0) {
++		ret = lt8619c_configure_irq(lt);
++		if (ret)
++			goto err_subdev;
++	}
 +	ret = v4l2_async_register_subdev(&lt->sd);
-+	if (!ret)
++	if (ret)
++		goto err_subdev;
++	if (client->irq <= 0)
 +		return 0;
 +
++	ret = request_threaded_irq(client->irq, NULL, lt8619c_irq_thread, IRQF_ONESHOT,
++				   dev_name(dev), lt);
++	if (ret)
++		goto err_unregister;
++
++	/* Unmask video events only after the GPIO IRQ and V4L2 subdev are ready. */
++	for (i = 0; i < ARRAY_SIZE(masks); i++)
++		masks[i] = ~lt8619c_video_irqs[i];
++	ret = regmap_bulk_write(lt->map, LT_INT_MASK, masks, sizeof(masks));
++	if (!ret)
++		return 0;
++	free_irq(client->irq, lt);
++
++err_unregister:
++	v4l2_async_unregister_subdev(&lt->sd);
 +err_subdev:
 +	v4l2_subdev_cleanup(&lt->sd);
 +err_entity:
@@ -693,6 +956,8 @@ index 000000000..ae5795ccb
 +{
 +	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 +
++	if (client->irq > 0)
++		free_irq(client->irq, to_lt(sd));
 +	v4l2_async_unregister_subdev(sd);
 +	v4l2_subdev_cleanup(sd);
 +	media_entity_cleanup(&sd->entity);

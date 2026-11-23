@@ -1,0 +1,102 @@
+Subject: [PATCH] init: coordinate KVMPanel STC poweroff with shutdown cleanup
+
+--- a/init/init.c
++++ b/init/init.c
+@@ -128,6 +128,7 @@
+ #define DEBUG_SEGV_HANDLER 0
+ 
+ #include "libbb.h"
++#include <sys/file.h>
+ #include "common_bufsiz.h"
+ #include <syslog.h>
+ #ifdef __linux__
+@@ -807,11 +808,56 @@
+  */
+ 
+ /* The SIGPWR/SIGUSR[12]/SIGTERM handler */
+-static void halt_reboot_pwoff(int sig) NORETURN;
++#define STC_HELPER "/usr/sbin/kvmpanel-stc-power"
++
++/* Use the tty and proc files opened by PID 1 before the unmount actions. */
++static int stc_power_hook(const char *command, int tty, int mounts, int swaps)
++{
++	char tty_arg[12], mounts_arg[12], swaps_arg[12];
++	char *args[] = { (char *)STC_HELPER, (char *)command, tty_arg,
++		NULL, NULL, NULL };
++	int result;
++
++	snprintf(tty_arg, sizeof(tty_arg), "%d", tty);
++	if (mounts >= 0) {
++		snprintf(mounts_arg, sizeof(mounts_arg), "%d", mounts);
++		snprintf(swaps_arg, sizeof(swaps_arg), "%d", swaps);
++		args[3] = mounts_arg;
++		args[4] = swaps_arg;
++		fcntl(mounts, F_SETFD, 0);
++		fcntl(swaps, F_SETFD, 0);
++	}
++	fcntl(tty, F_SETFD, 0);
++	result = spawn_and_wait(args);
++	fcntl(tty, F_SETFD, FD_CLOEXEC);
++	if (mounts >= 0) {
++		fcntl(mounts, F_SETFD, FD_CLOEXEC);
++		fcntl(swaps, F_SETFD, FD_CLOEXEC);
++	}
++	return result;
++}
++
+ static void halt_reboot_pwoff(int sig)
+ {
+ 	const char *m;
+ 	unsigned rb;
++	int lock = -1, tty = -1, mounts = -1, swaps = -1;
++
++	/* Refuse transitions that would kill the process holding UPDATE_HOLD. */
++	if (access(STC_HELPER, X_OK) == 0) {
++		lock = open("/run/lock/kvmpanel-stc-power",
++			O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
++		if (lock < 0 || flock(lock, LOCK_EX | LOCK_NB) < 0)
++			goto refused;
++		if (sig == SIGUSR2) {
++			tty = open("/dev/ttyS2", O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC);
++			mounts = open("/proc/self/mountinfo", O_RDONLY | O_CLOEXEC);
++			swaps = open("/proc/swaps", O_RDONLY | O_CLOEXEC);
++			if (tty < 0 || mounts < 0 || swaps < 0 ||
++				stc_power_hook("init-prepare", tty, -1, -1))
++				goto refused;
++		}
++	}
+ 
+ 	/* We may call run() and it unmasks signals,
+ 	 * including the one masked inside this signal handler.
+@@ -831,10 +877,31 @@
+ 	} else if (sig == SIGUSR2) {
+ 		m = "poweroff";
+ 		rb = RB_POWER_OFF;
++		if (tty >= 0) {
++			if (stc_power_hook("init-arm", tty, mounts, swaps)) {
++				message(L_CONSOLE, "STC poweroff could not arm after cleanup; halting");
++				m = "halt";
++				rb = RB_HALT_SYSTEM;
++			}
++			close(mounts);
++			close(swaps);
++			close(tty);
++		}
+ 	}
+ 	message(L_CONSOLE, "Requesting system %s", m);
+ 	pause_and_low_level_reboot(rb);
+ 	/* not reached */
++
++ refused:
++	message(L_CONSOLE, "STC power transition refused (UART unavailable or update active)");
++	if (swaps >= 0)
++		close(swaps);
++	if (mounts >= 0)
++		close(mounts);
++	if (tty >= 0)
++		close(tty);
++	if (lock >= 0)
++		close(lock);
+ }
+ 
+ /* Handler for QUIT - exec "restart" action,

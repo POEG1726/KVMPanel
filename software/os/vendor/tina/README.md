@@ -1,4 +1,4 @@
-# T113-i 的 DDR 和 SPI NAND 启动
+# T113-i 的 DDR 和启动介质
 
 ## 外置 DDR3
 
@@ -10,9 +10,13 @@ Tina 参考配置是 `tina-t113i-overlay/device/config/chips/t113_i/configs/evb1
 
 本项目用主线 U-Boot 的 R528 DDR3 实现承接同一组参考值，用 USB FEL 在 RAM 中运行 SPL 和 U-Boot，再传入 `zImage`、本板 DTB、Buildroot `rootfs.cpio.gz`。网表确认 USB1 直连 SoC USB0，USB2 经 CH343K 接 UART0 PB8/PB9。上板后检查 SPL 报告的内存容量和内核的 CPU 上线数。 [FEL 启动配置](../../u-boot/README.md)
 
-## SPI NAND 冷启动
+## microSD 冷启动
 
-- **接线和 ROM。** U5 按 Quad SPI 接 SPI0/CS0，VCC-PC 和 U5 电源同接 1.8 V。R46/R47 将 BOOT-SEL1/0（PC5/PC4）下拉为 `00`，硬件指南表 1-2 对应 NOR → NAND。Linux DTS 已配置 IO0–IO3 和 Quad 收发能力。BootROM 的命令、总线宽度和 W25N04KWZEIR 兼容性待实测。 [板级接线](../../../../hardware/README.md) · [T113-i 数据手册](https://dl.100ask.net/Hardware/MPU/T113i-Industrial/T113-i_Datasheet_V1.4.pdf)
+2026-11-22 版以 CARD1 microSD 为板载启动介质。验证顺序是 FEL 加载到 RAM、核对 SMHC0 的只读访问，再验证从 SD 装载 SPL 和 U-Boot。镜像布局待上板确认。 [板级接线](../../../../hardware/README.md)
+
+## 旧版的 SPI NAND 调研
+
+本版已移除板载 SPI NAND。下列记录保留 Tina 参考启动链与驱动调研结果。
+
 - **Tina 的 NAND 读取。** 参考链路是 `BROM → boot0_nand → boot_package → U-Boot → boot`。NAND 方案的 `storage_type=5`。打包程序用本板 `sys_config.bin` 更新 Boot0，U-Boot 包含在 `boot_package.fex`。参考启动环境先用 `sunxi_flash read 43000000 boot` 读逻辑 `boot` 分区，再用 `bootm 43000000` 加载 Android 格式的 `boot.img`。参考固件归档里同时有 SD 与 NAND Boot0，包内 `sys_config.fex` 的 `storage_type=1`，上面的 NAND 环境来自 `evb1_auto_nand` 源码。 [Tina 打包框架](https://github.com/100askTeam/Tina5-LinuxSDK) · [NAND 参考板配置](https://github.com/DongshanPI/T113i_DevKitF_Tina5SDK/tree/master/device/config/chips/t113_i/configs/evb1_auto_nand)
 - **W25N04KWZEIR。** Linux 6.18.64 和主线 U-Boot 2026.10 的 SPI NAND 设备表均匹配 `EF BA 23`，几何为 2048 B 数据页＋128 B OOB、64 页/擦除块、4096 块，ECC 为 8 bit/512 B。参考 `boot0_nand.fex` 和 Tina U-Boot 中未找到这个 ID 的连续字节，参考 U-Boot 中可见 W25N01GV 与 W25N02KV。主线 U-Boot 的 SPI NAND 设备表只证明 U-Boot proper 有对应驱动。Sunxi SPL 的专用 SPI 加载路径读取 NOR，无法据此确认 NAND 冷启动。
-- **上板顺序。** RAM 启动后先确认 Flash 接线，再启用 DTS 的 `&spi0`，用 `dmesg` 和 `/proc/mtd` 核对 ID 与几何。要从板载 NAND 冷启动，需要另行确认 BROM 能加载 Boot0，以及 Boot0 和 U-Boot 能按同一布局处理该 Flash 的 ECC、坏块和后续镜像。确认后才确定 NAND 的分区和内核打包格式。若 ROM 不支持该料号，可从实际接出的其他启动介质加载 U-Boot，再把 W25N04KW 给 Linux 用作数据盘。

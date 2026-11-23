@@ -110,7 +110,7 @@ python3 "$project/software/os/linux/qemu-smoke.py" \
   --log "$work/logs/kvmpanel-qemu-serial.log"
 ```
 
-QEMU 的串口、网卡和 USB 控制器使用 PL011、VirtIO 和 xHCI。T113-i 的 DDR 训练、FEL、RTL8211F、MUSB/EHCI/OHCI 和 SPI NAND 需要在实板验证。
+QEMU 的串口、网卡和 USB 控制器使用 PL011、VirtIO 和 xHCI。T113-i 的 DDR 训练、FEL、RTL8211F、MUSB/EHCI/OHCI 和 SMHC0 需要在实板验证。
 
 ## 构建 kvmd 与验证镜像
 
@@ -177,19 +177,17 @@ python3 "$project/software/os/linux/qemu-smoke.py" --diagnostics \
 1. 用 USB1 进 FEL，USB2 看 115200 8N1 串口。按 [FEL 加载步骤](../software/os/u-boot/README.md) 从 RAM 进 SPL 和 U-Boot，用 `bdinfo` 核对是否探测到 512 MiB。使用诊断镜像时，把加载步骤里的 `initramfs` 指向 `$dout/images/rootfs.cpio.gz` 并按实际文件重新计算 `rdsize`。
 2. 进入 Linux 后确认 root 登录、`cat /sys/devices/system/cpu/online` 为 `0-1`，并用 `cat /proc/meminfo` 和 `memtester 128M 1` 检查内存。记录可用内存和串口输出。
 3. 插入测试 U 盘，检查 `lsusb`、`dmesg` 和新出现的块设备，再做只读读取。检查 `/sys/class/udc` 是否有 MUSB 控制器，USB0 的 Linux 枚举需要配置 gadget 功能。
-4. 网口和 NAND 分开启用并验证。网口用 `ip link set eth0 up`、`ethtool eth0` 检查链路，再用 `udhcpc -n -q -i eth0` 获取地址并测试收发。NAND 在 RAM 启动后启用 `/soc/spi@4025000`，用 `dmesg`、`cat /proc/mtd` 和 `mtdinfo -a` 检查 W25N04KW 的识别和容量。需要确认实际指令宽度时，在 IO2、IO3 上抓读页波形。
+4. 网口和 microSD 分开验证。网口用 `ip link set eth0 up`、`ethtool eth0` 检查链路，再用 `udhcpc -n -q -i eth0` 获取地址并测试收发。CARD1 用组合 DTB 验证。先测 PF 识别时的 3.3 V 和 UHS 协商后的 1.8 V，再用 `dmesg` 和 `/sys/kernel/debug/mmc0/ios` 核对模式、实际频率、容量与只读读取。
 
-基础外设跑通后，再验证 NAND 的 BROM → Boot0 → U-Boot 链路。按实测结果决定持久启动布局、内核加载方式和根文件系统，并保留 FEL 恢复路径。
+基础外设跑通后，再验证从 microSD 冷启动。按实测结果决定持久启动布局、内核加载方式和根文件系统，并保留 FEL 恢复路径。
 
 ## 单独验证本板网口
 
-基础 DTB 指定了 RTL8211F 的地址 1、PG11 上的 25 MHz 参考时钟和 RGMII pinmux。`rgmii-id` 以 PCB 无额外时钟偏移为初始假设，需要结合实际走线验证。首次上板走通串口后，可生成临时 DTB 来测试网口，测量参考时钟和 PHY 复位并检查链路。
+当前软件按用户确认的 RTL8211F-CG 无源 25 MHz 晶体方案配置。晶体跨接 U17.36 `XTAL_IN` 和 U17.37 `XTAL_OUT`。2026-11-22 归档仍是 PG11 经 R235 驱动 `EXT_CLK`、`XTAL_IN` 接地的旧接法，新接法待核对新版导出。`3V3_MAIN` 为 PHY 主电源及 RGMII I/O，芯片开关稳压器通过 L100 产生 `PHY_1V0`。 [旧版网表](../hardware/exports/2026-11-22/Netlist_Schematic2_2026-11-22.enet) · [无源晶体参考原理图](https://dl.100ask.net/Hardware/MPU/T113i-Industrial/T113-i_Industrial-DevKit_V12_PLUS.pdf#page=4)
 
-```sh
-netdt="$kout/sun8i-t113i-kvmpanel-network.dtb"
-cp "$kout/sun8i-t113i-kvmpanel.dtb" "$netdt"
-fdtput -t s "$netdt" /soc/ethernet@4500000 status okay
-```
+- **开机和复位**。按 Rev. 1.7 核对 `3V3_MAIN` 的上升时间，常规范围为 0.5–100 ms。PC1 拉低 `PHYRSTB` 至少 10 ms，释放后留 200 ms 给 `PHY_1V0` 上升、72 ms 内部稳定时间和 Note 6 所述的保留窗口，再访问地址 1 的 MDIO。 [Realtek Rev. 1.7 §7.17、§9.3](https://www.ic-golden.com/wp-content/uploads/2024/08/rtl8211fi-cg-datasheet.pdf)
+- **关机和重上电**。连续断电重开时，确认 `3V3_MAIN` 和 `PHY_1V0` 都降到 0 V，断电间隔超过 100 ms。首次上板核对上电、重启和断电波形，以及 PHY 起振、MDIO 和 PC7 低电平中断。 [Realtek Rev. 1.7 §9.3](https://www.ic-golden.com/wp-content/uploads/2024/08/rtl8211fi-cg-datasheet.pdf)
+- **软件配置**。EMAC 已启用，设备树使用 PC1 低有效复位、10 ms 拉低和 200 ms 释放后等待，以及 PC7 低电平中断。PHY 节点由晶体提供参考时钟，PG11 已从 EMAC pinmux 去除。`rgmii-id` 待结合实际走线和千兆链路验证。 [板级 DTS](../software/os/linux/dts/sun8i-t113i-kvmpanel.dts)
 
 ## 构建应用所需的内核、模块和组合 DTB
 
@@ -208,7 +206,7 @@ export ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
 
 # 仅在新目录执行 clone 和 apply。
 git clone --shared --branch v6.18.64 "$work/upstream/linux" "$linux"
-for patch in "$files"/patches/000{1,2,3,4,5}-*.patch; do
+for patch in "$files"/patches/000{1,2,3,4,5,6,7,8}-*.patch; do
     git -C "$linux" apply "$patch"
 done
 mkdir -p "$out"

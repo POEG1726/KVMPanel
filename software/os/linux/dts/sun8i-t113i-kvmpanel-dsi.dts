@@ -13,5 +13,6 @@
 };
 
 &pio {
+	/* VCC-PD receives 1.8 V through the STC circuit's Q10. */
 	vcc-pd-supply = <&reg_1v8>;
 };

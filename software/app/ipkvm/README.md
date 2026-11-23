@@ -26,7 +26,7 @@ sim 同时监听 TCP `127.0.0.1:7701`，板上监听 Unix socket `/run/kvmd/pane
 |---|---|
 | 视频 | 用 `VIDIOC_QUERY_DV_TIMINGS` 查询 LT8619C 时序，`media-ctl` 配置 CSI，四个 mmap 缓冲采集 YU12，libjpeg-turbo 直接编码三个平面。EDID reset 恢复板级默认值，首选 1080p30，并提供 720p60 和 VGA。最后一个订阅者离开后停止采集。设备路径分别由 `KVMD_HDMI_DEVICE`、`KVMD_MEDIA_DEVICE`、`KVMD_VIDEO_DEVICE` 设置，默认是 `/dev/v4l-subdev0`、`/dev/media0`、`/dev/video0`。 |
 | USB | 枚举时从 configfs 读取设备号，打开并复用 hidg 描述符，重建或显式重置时刷新。键盘灯和上位机遥测使用 HID Output report。应用 USB 设置时调用镜像内的 `/usr/sbin/kvmpanel-gadget`。开机恢复最近一次 apply 的组合。 |
-| PC817 | 使用 libgpiod 1.x 的 `gpioget`、`gpioset`。板级部署提供 `KVMD_GPIO_CHIP`（默认 gpiochip0）和 `KVMD_GPIO_POWER`、`KVMD_GPIO_RESET`、`KVMD_GPIO_POWER_LED`、`KVMD_GPIO_HDD_LED` 的 line offset。每个映射可加 `_ACTIVE_LOW=1`。现有网表没有这些引脚的分配。 |
+| 主板控制 | 使用 libgpiod 1.x 的 `gpioget`、`gpioset`。板级部署用 `KVMD_GPIO_CHIP` 选择主 PIO（默认 gpiochip0）。按新版接线，`KVMD_GPIO_POWER=141`（PE13）、`KVMD_GPIO_RESET=131`（PE3）、`KVMD_GPIO_POWER_LED=140`（PE12）均为高有效。HDD 灯在 H1/H3 间直通，`KVMD_GPIO_HDD_LED` 无对应 GPIO。现有后端的电源状态接口需要两个灯的映射。 |
 | 显示和传感器 | 自动查找 bh1750 IIO 和 cpu-thermal 区。背光从 max_brightness 换算，存在多个设备时用 `KVMD_BACKLIGHT` 指定 sysfs 目录。 |
 | 文件和介质 | `KVMD_SD_ROOT=/mnt/sd`、`KVMD_SHARE_ROOT=/mnt/share`、`KVMD_SYSTEM_ROOT=/`。共享盘需要事先将 `KVMD_SHARE_IMAGE`（默认 SD 根目录的 share.img）挂成独立 loop 文件系统。导出时将冻结的镜像复制到同一文件系统，板端挂载这份只读快照，主机通过 LUN2 读写原镜像。导出需要约一份镜像大小的额外空间。主机刷新写缓存并卸载后，可收回共享盘。本地重新挂载原盘，主机写入的内容此时可见。存在活跃写入时切换返回 409 `share_busy`。 |
 | HTTP/HTTPS | 板端读取已保存的 bind、端口和证书。首次开启 HTTPS 且未指定证书时在数据目录 tls/ 下生成证书对。显式 `--listen` 选择固定 HTTP 地址。关闭 KVM 后通过 panel socket 重新启用。 |
@@ -41,4 +41,4 @@ sim 同时监听 TCP `127.0.0.1:7701`，板上监听 Unix socket `/run/kvmd/pane
 
 基础镜像内的 `S95kvmd` 调用同一镜像的 `/usr/sbin/kvmd --verify-update` 监督候选进程。它先验证 panel 由候选程序提供，启用网页时还检查实际 HTTP 端口的 `/api/health`。60 秒内未通过即恢复上一个应用版本并重新启动，首次升级失败时恢复镜像内置程序。启动脚本在执行候选程序前记录试用期限。若验收中途整板重启，下次开机会先恢复旧版。试运行结束后保留当前版本和上一版。部署这项保护需要更新基础镜像中的启动脚本和验证程序。[构建与 QEMU 验证](../../../docs/development.md)
 
-板端启动后读取已保存的主机名、SSH、mDNS 和看门狗设置。SSH 主机密钥位于数据分区。模拟环境的这些设置仅供客户端联调。看门狗、PC817 线号和输出有效电平都需要按最终硬件复核。
+板端启动后读取已保存的主机名、SSH、mDNS 和看门狗设置。SSH 主机密钥位于数据分区。模拟环境的这些设置仅供客户端联调。首次上板需复核看门狗、主 PIO 的 gpiochip 编号及控制信号电平。

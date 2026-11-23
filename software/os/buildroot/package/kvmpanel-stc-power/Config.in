@@ -1,0 +1,6 @@
+config BR2_PACKAGE_KVMPANEL_STC_POWER
+	bool "KVMPanel STC power"
+	depends on BR2_INIT_BUSYBOX
+	help
+	  Native UART power control and STC8G1K08A factory ISP updater.
+	  The KVMPanel BusyBox and Linux patches provide normal poweroff.

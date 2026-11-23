@@ -2,7 +2,10 @@
 /dts-v1/;
 
 #include <dt-bindings/clock/sun20i-d1-ccu.h>
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/interrupt-controller/irq.h>
 #include "sun8i-t113s.dtsi"
+#include "kvmpanel-stc-power.dtsi"
 
 / {
 	model = "KVMPanel T113-i";
@@ -57,16 +60,19 @@
 	phy-handle = <&rtl8211f>;
 	phy-mode = "rgmii-id";
 	phy-supply = <&reg_3v3_main>;
-	/* Verify the PHY reference clock, reset and RGMII delays on hardware. */
-	status = "disabled";
+	status = "okay";
 };
 
 &mdio {
 	rtl8211f: ethernet-phy@1 {
-		/* The PHY driver enables the reference clock before reading MDIO. */
 		compatible = "ethernet-phy-id001c.c916", "ethernet-phy-ieee802.3-c22";
 		reg = <1>;
-		clocks = <&ccu CLK_EMAC_25M>;
+		/* The PHY uses its own 25 MHz crystal. */
+		reset-gpios = <&pio 2 1 GPIO_ACTIVE_LOW>;
+		reset-assert-us = <10000>;
+		/* Allow crystal startup, 1 V rise and PHY settle time before MDIO. */
+		reset-deassert-us = <200000>;
+		interrupts-extended = <&pio 2 7 IRQ_TYPE_LEVEL_LOW>;
 	};
 };
 
@@ -76,39 +82,19 @@
 
 &pio {
 	vcc-pb-supply = <&reg_3v3_main>;
-	vcc-pc-supply = <&reg_1v8>;
-	vcc-pg-supply = <&reg_1v8>;
+	vcc-pc-supply = <&reg_3v3_main>;
+	vcc-pg-supply = <&reg_3v3_main>;
 
 	rgmii_pg_pins: rgmii-pg-pins {
 		pins = "PG0", "PG1", "PG2", "PG3", "PG4", "PG5", "PG6",
-		       "PG7", "PG8", "PG9", "PG10", "PG11", "PG12", "PG14", "PG15";
+		       "PG7", "PG8", "PG9", "PG10", "PG12", "PG14", "PG15";
 		function = "emac";
-	};
-
-	spi0_quad_pins: spi0-quad-pins {
-		pins = "PC6", "PC7";
-		function = "spi0";
 	};
 
 	/* UART0 is routed to U11 (CH343K) on the USB2 debug connector. */
 	uart0_pb8_pins: uart0-pb8-pins {
 		pins = "PB8", "PB9";
 		function = "uart0";
-	};
-};
-
-&spi0 {
-	pinctrl-0 = <&spi0_pins>, <&spi0_quad_pins>;
-	pinctrl-names = "default";
-	/* Enable once the board is ready for SPI NAND probing. */
-	status = "disabled";
-
-	flash@0 {
-		compatible = "spi-nand";
-		reg = <0>;
-		spi-max-frequency = <24000000>;
-		spi-rx-bus-width = <4>;
-		spi-tx-bus-width = <4>;
 	};
 };
 

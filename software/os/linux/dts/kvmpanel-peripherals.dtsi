@@ -2,8 +2,6 @@
 #include <dt-bindings/reset/sun20i-d1-ccu.h>
 
 / {
-	/* SW1-SW4 and the PC817 optocouplers U7-U10 have no routed pins. */
-
 	soc {
 		ths: thermal-sensor@2009400 {
 			compatible = "allwinner,sun20i-d1-ths";
@@ -42,8 +40,26 @@
 };
 
 &pio {
-	vcc-pd-supply = <&reg_1v8>;
+	/* F4 feeds the 1.8 V leg. The other leg uses SoC VCC-IO. */
 	vcc-pf-supply = <&reg_1v8>;
+
+	reg_pf_io: pf-vqmmc {
+		regulator-name = "PF-SD-IO";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <3300000>;
+	};
+
+	sd_data_cmd_pins: sd-data-cmd-pins {
+		pins = "PF0", "PF1", "PF3", "PF4", "PF5";
+		function = "mmc0";
+		bias-pull-up;
+	};
+
+	sd_clk_pin: sd-clk-pin {
+		pins = "PF2";
+		function = "mmc0";
+		bias-disable;
+	};
 };
 
 &i2c2 {
@@ -65,7 +81,7 @@
 		vio-supply = <&reg_1v8>;
 		#address-cells = <1>;
 		#size-cells = <0>;
-		/* CN2.35 (IRQ) and CN2.5 (reset) end at the connector. */
+		/* CN2.35 (IRQ) and CN2.5 (reset) reach PD14 and PD19. */
 		status = "disabled";
 
 		rmi4-f12@12 {
@@ -77,13 +93,23 @@
 
 &mmc0 {
 	pinctrl-names = "default";
-	pinctrl-0 = <&mmc0_pins>;
+	pinctrl-0 = <&sd_data_cmd_pins>, <&sd_clk_pin>;
 	bus-width = <4>;
-	max-frequency = <50000000>;
+	max-frequency = <150000000>;
+	vmmc-supply = <&reg_3v3_main>;
+	vqmmc-supply = <&reg_pf_io>;
+	cap-sd-highspeed;
+	sd-uhs-sdr12;
+	sd-uhs-sdr25;
+	sd-uhs-sdr50;
+	sd-uhs-sdr104;
+	sd-uhs-ddr50;
+	no-mmc;
+	no-sdio;
+	disable-wp;
+	/* Poll the removable card until the PF6 CD polarity is confirmed. */
 	broken-cd;
-	no-1-8-v;
-	/* Update the PF supply and add the card supply when the socket is wired. */
-	status = "disabled";
+	status = "okay";
 };
 
 /* Use with the ARMv7 FEL build; keep reserved if firmware owns the watchdog. */

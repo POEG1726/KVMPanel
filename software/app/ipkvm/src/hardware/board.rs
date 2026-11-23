@@ -89,7 +89,7 @@ fn gpio(field: &str) -> io::Result<(String, String, bool)> {
         .ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("unconfigured PC817 line {field}"),
+                format!("unconfigured board GPIO line {field}"),
             )
         })?;
     Ok((

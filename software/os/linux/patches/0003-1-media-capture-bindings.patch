@@ -8,8 +8,8 @@ Link: https://lore.kernel.org/linux-media/20260930154835.402684-2-tien.nguyenmin
 Signed-off-by: Codex <noreply@openai.com>
 ---
  .../bindings/media/allwinner,sun20i-d1-csi.yaml    | 114 +++++++++++++++++++++
- .../bindings/media/i2c/lontium,lt8619c.yaml        |  70 +++++++++++++
- 2 files changed, 184 insertions(+)
+ .../bindings/media/i2c/lontium,lt8619c.yaml        |  78 +++++++++++++
+ 2 files changed, 192 insertions(+)
 
 diff --git a/Documentation/devicetree/bindings/media/allwinner,sun20i-d1-csi.yaml b/Documentation/devicetree/bindings/media/allwinner,sun20i-d1-csi.yaml
 new file mode 100644
@@ -133,10 +133,10 @@ index 000000000..71860744e
 +...
 diff --git a/Documentation/devicetree/bindings/media/i2c/lontium,lt8619c.yaml b/Documentation/devicetree/bindings/media/i2c/lontium,lt8619c.yaml
 new file mode 100644
-index 000000000..1b2cc1397
+index 000000000..e7caf8381
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/media/i2c/lontium,lt8619c.yaml
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,78 @@
 +# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 +%YAML 1.2
 +---
@@ -158,6 +158,14 @@ index 000000000..1b2cc1397
 +
 +  reg:
 +    maxItems: 1
++
++  reset-gpios:
++    maxItems: 1
++    description: Active-low RESET_N pin.
++
++  interrupts:
++    maxItems: 1
++    description: Active-low aggregate interrupt driven by GPIO15.
 +
 +  port:
 +    $ref: /schemas/graph.yaml#/$defs/port-base

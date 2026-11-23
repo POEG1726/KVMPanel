@@ -253,7 +253,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Hold the PC power or reset button (PC817) for duration_ms. ≥4000 ms on power forces the PC off. The web asks for confirmation first (power permission). */
+        /** Hold the PC power or reset button for duration_ms. ≥4000 ms on power forces the PC off. The web asks for confirmation first (power permission). */
         post: operations["pressPower"];
         delete?: never;
         options?: never;

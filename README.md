@@ -7,7 +7,8 @@
 - `hardware/`：硬件工程、导出和参考资料。
 - `software/app/`：KVM 和副屏应用。
 - `software/os/`：内核、U-Boot、Buildroot 的配置、设备树和补丁。
-- `software/firmware/`：STC 辅助电源管理固件。
+- `software/firmware/stc8/`：独立构建的 [STC8 电源管理固件](software/firmware/stc8/README.md)。
+- `software/firmware/t113-amp/`：T113 AMP 固件。
 - `docs/`：必要的开发说明和适配笔记。
 - `sources/`：已下载的上游源码，本地保存，不提交进这个仓库。
 

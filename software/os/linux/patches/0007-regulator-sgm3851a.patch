@@ -1,0 +1,443 @@
+Subject: [PATCH] regulator: add SGM3851A SWIRE voltage control
+
+Drive the enable pins at probe and keep the chip at its default
+voltages unless a startup pulse sequence is configured in firmware.
+Allow userspace to set all three outputs in signed microvolts using
+the discrete voltages from the SGM3851A data sheet.
+
+Serialize commands with shutdown and mask local interrupts during
+each non-sleeping SWIRE frame.
+
+diff --git a/drivers/regulator/Kconfig b/drivers/regulator/Kconfig
+index d84f3d054..fdbccecad 100644
+--- a/drivers/regulator/Kconfig
++++ b/drivers/regulator/Kconfig
+@@ -440,6 +440,15 @@ config REGULATOR_FAN53880
+ 	  (PMIC), it is controlled by I2C and provides one BUCK, one BOOST
+ 	  and four LDO outputs.
+ 
++config REGULATOR_SGM3851A
++	tristate "SGMicro SGM3851A display bias supply"
++	depends on OF && GPIOLIB
++	help
++	  Enable the SGM3851A AMOLED outputs through their GPIOs and optionally
++	  program the output voltages over SWIRE on CTRL. The device powers up
++	  at its factory voltages unless a startup sequence is specified.
++	  Programming requires a non-sleeping GPIO for timed SWIRE commands.
++
+ config REGULATOR_GPIO
+ 	tristate "GPIO regulator support"
+ 	depends on GPIOLIB || COMPILE_TEST
+diff --git a/drivers/regulator/Makefile b/drivers/regulator/Makefile
+index b31013760..29d3dda41 100644
+--- a/drivers/regulator/Makefile
++++ b/drivers/regulator/Makefile
+@@ -52,6 +52,7 @@ obj-$(CONFIG_REGULATOR_DBX500_PRCMU) += dbx500-prcmu.o
+ obj-$(CONFIG_REGULATOR_DB8500_PRCMU) += db8500-prcmu.o
+ obj-$(CONFIG_REGULATOR_FAN53555) += fan53555.o
+ obj-$(CONFIG_REGULATOR_FAN53880) += fan53880.o
++obj-$(CONFIG_REGULATOR_SGM3851A) += sgm3851a.o
+ obj-$(CONFIG_REGULATOR_GPIO) += gpio-regulator.o
+ obj-$(CONFIG_REGULATOR_HI6421) += hi6421-regulator.o
+ obj-$(CONFIG_REGULATOR_HI6421V530) += hi6421v530-regulator.o
+diff --git a/drivers/regulator/sgm3851a.c b/drivers/regulator/sgm3851a.c
+new file mode 100644
+index 000000000..041fba403
+--- /dev/null
++++ b/drivers/regulator/sgm3851a.c
+@@ -0,0 +1,337 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * sgm3851a.c
++ * Created on Nov 22, 2026
++ * Author: @POEG1726
++ */
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/irqflags.h>
++#include <linux/kstrtox.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/property.h>
++#include <linux/regulator/consumer.h>
++#include <linux/string.h>
++#include <linux/sysfs.h>
++
++#define SGM3851A_MAX_PULSES 57
++#define SGM3851A_PULSE_US 10
++#define SGM3851A_STORE_US 80
++#define SGM3851A_INIT_US 450
++#define SGM3851A_OFF_US 100
++
++enum sgm3851a_output {
++	SGM3851A_ELVDD,
++	SGM3851A_ELVSS,
++	SGM3851A_AVDD,
++	SGM3851A_NUM_OUTPUTS,
++};
++
++/* Data sheet Table 1, in signed microvolts and rising edge counts. */
++static const struct sgm3851a_range {
++	int min_uv;
++	int max_uv;
++	int step_uv;
++	int default_uv;
++	int first_command;
++	int command_step;
++} sgm3851a_ranges[] = {
++	[SGM3851A_ELVDD] = { 4700000, 5000000, 100000, 4600000, 54, 1 },
++	[SGM3851A_ELVSS] = { -5400000, -1400000, 100000, -2500000, 1, 1 },
++	[SGM3851A_AVDD] = { 5800000, 7900000, 300000, 6100000, 49, -1 },
++};
++
++struct sgm3851a {
++	struct gpio_desc *ctrl;
++	struct gpio_desc *en_vo3;
++	struct mutex lock; /* Serialize SWIRE transactions and shutdown. */
++	int voltage_uv[SGM3851A_NUM_OUTPUTS];
++	bool enabled;
++	bool voltage_unknown;
++};
++
++/**
++ * sgm3851a_voltage_command() - Encode a discrete voltage per Table 1.
++ * @output: Output to program.
++ * @uv: Requested signed voltage in microvolts.
++ *
++ * Return: Edge count, zero for the ELVDD power-on value, or a negative errno.
++ */
++static int sgm3851a_voltage_command(enum sgm3851a_output output, int uv)
++{
++	const struct sgm3851a_range *range = &sgm3851a_ranges[output];
++	int offset;
++
++	if (output == SGM3851A_ELVDD && uv == range->default_uv)
++		return 0;
++	if (uv < range->min_uv || uv > range->max_uv)
++		return -EINVAL;
++	offset = uv - range->min_uv;
++	if (offset % range->step_uv)
++		return -EINVAL;
++
++	return range->first_command + range->command_step * (offset / range->step_uv);
++}
++
++/**
++ * sgm3851a_send() - Send one Table 1 command to a non-sleeping CTRL GPIO.
++ * @ctrl: CTRL GPIO, already high and past the initialization interval.
++ * @pulses: Number of rising edges to send.
++ *
++ * Return: Zero or the GPIO error. A partial frame may have reached the PMIC.
++ */
++static int sgm3851a_send(struct gpio_desc *ctrl, u32 pulses)
++{
++	unsigned long flags;
++	u32 i;
++	int ret = 0;
++
++	/* Both halves must stay within 2–25 us. Keep IRQs out of the frame. */
++	local_irq_save(flags);
++	for (i = 0; i < pulses; i++) {
++		ret = gpiod_set_value(ctrl, 0);
++		if (ret)
++			break;
++		udelay(SGM3851A_PULSE_US);
++		ret = gpiod_set_value(ctrl, 1);
++		if (ret)
++			break;
++		if (i + 1 < pulses)
++			udelay(SGM3851A_PULSE_US);
++	}
++	if (ret)
++		gpiod_set_value(ctrl, 1);
++	local_irq_restore(flags);
++
++	/* CTRL stays high while the PMIC accepts the preceding edge count. */
++	usleep_range(SGM3851A_STORE_US, SGM3851A_STORE_US + 30);
++	return ret;
++}
++
++/**
++ * sgm3851a_record_command() - Decode a DT startup command into cached voltage.
++ * @pmic: PMIC whose registers are write-only.
++ * @command: Edge count just sent successfully.
++ */
++static void sgm3851a_record_command(struct sgm3851a *pmic, u32 command)
++{
++	int i;
++
++	for (i = 0; i < SGM3851A_NUM_OUTPUTS; i++) {
++		const struct sgm3851a_range *range = &sgm3851a_ranges[i];
++		int steps = ((int)command - range->first_command) * range->command_step;
++
++		if (steps >= 0 && steps <= (range->max_uv - range->min_uv) / range->step_uv) {
++			pmic->voltage_uv[i] = range->min_uv + steps * range->step_uv;
++			return;
++		}
++	}
++}
++
++static ssize_t voltages_uv_show(struct device *dev, struct device_attribute *attr,
++				char *buf)
++{
++	struct sgm3851a *pmic = dev_get_drvdata(dev);
++
++	guard(mutex)(&pmic->lock);
++	if (!pmic->enabled)
++		return -ESHUTDOWN;
++	if (pmic->voltage_unknown)
++		return -EIO;
++
++	return sysfs_emit(buf, "%d %d %d\n", pmic->voltage_uv[SGM3851A_ELVDD],
++			  pmic->voltage_uv[SGM3851A_ELVSS], pmic->voltage_uv[SGM3851A_AVDD]);
++}
++
++/**
++ * voltages_uv_store() - Validate and program the ELVDD, ELVSS and AVDD tuple.
++ * @dev: PMIC device.
++ * @attr: Device attribute.
++ * @buf: Three whitespace-separated signed decimal microvolt values.
++ * @count: Number of written bytes.
++ *
++ * Return: Number of bytes accepted or a negative errno.
++ */
++static ssize_t voltages_uv_store(struct device *dev, struct device_attribute *attr,
++				 const char *buf, size_t count)
++{
++	struct sgm3851a *pmic = dev_get_drvdata(dev);
++	int uv[SGM3851A_NUM_OUTPUTS], command[SGM3851A_NUM_OUTPUTS];
++	int argc, i, ret = 0;
++	char **argv;
++
++	if (memchr(buf, '\0', count))
++		return -EINVAL;
++	argv = argv_split(GFP_KERNEL, buf, &argc);
++	if (!argv)
++		return -ENOMEM;
++	if (argc != SGM3851A_NUM_OUTPUTS) {
++		argv_free(argv);
++		return -EINVAL;
++	}
++	for (i = 0; i < SGM3851A_NUM_OUTPUTS; i++) {
++		ret = kstrtoint(argv[i], 10, &uv[i]);
++		if (ret)
++			break;
++		command[i] = sgm3851a_voltage_command(i, uv[i]);
++		if (command[i] < 0) {
++			ret = command[i];
++			break;
++		}
++	}
++	argv_free(argv);
++	if (ret)
++		return ret;
++
++	guard(mutex)(&pmic->lock);
++	if (!pmic->enabled)
++		return -ESHUTDOWN;
++	if (pmic->voltage_unknown)
++		return -EIO;
++
++	/* Restoring ELVDD to 4.6 V requires cycling VIN. Leave live rails up. */
++	if (!command[SGM3851A_ELVDD] && uv[SGM3851A_ELVDD] != pmic->voltage_uv[SGM3851A_ELVDD])
++		return -EOPNOTSUPP;
++	if (gpiod_cansleep(pmic->ctrl))
++		return -EOPNOTSUPP;
++
++	for (i = 0; i < SGM3851A_NUM_OUTPUTS; i++) {
++		if (uv[i] == pmic->voltage_uv[i])
++			continue;
++		ret = sgm3851a_send(pmic->ctrl, command[i]);
++		if (ret) {
++			/* A truncated frame can select a different command. */
++			pmic->voltage_unknown = true;
++			return ret;
++		}
++		pmic->voltage_uv[i] = uv[i];
++	}
++
++	return count;
++}
++static DEVICE_ATTR_RW(voltages_uv);
++
++static struct attribute *sgm3851a_attrs[] = {
++	&dev_attr_voltages_uv.attr,
++	NULL,
++};
++ATTRIBUTE_GROUPS(sgm3851a);
++
++static void sgm3851a_power_off(void *data)
++{
++	struct sgm3851a *pmic = data;
++
++	guard(mutex)(&pmic->lock);
++	pmic->enabled = false;
++	gpiod_set_value_cansleep(pmic->ctrl, 0);
++	gpiod_set_value_cansleep(pmic->en_vo3, 0);
++	/* Keep both inputs low for tOFF before releasing GPIOs or VIN. */
++	usleep_range(SGM3851A_OFF_US, SGM3851A_OFF_US + 50);
++}
++
++static int sgm3851a_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct sgm3851a *pmic;
++	u32 pulses[8];
++	int count = 0;
++	int i, ret;
++
++	if (device_property_present(dev, "sgmicro,swire-pulses")) {
++		count = device_property_count_u32(dev, "sgmicro,swire-pulses");
++		if (count < 1 || count > ARRAY_SIZE(pulses))
++			return dev_err_probe(dev, -EINVAL, "invalid SWIRE command count\n");
++
++		ret = device_property_read_u32_array(dev, "sgmicro,swire-pulses",
++						     pulses, count);
++		if (ret)
++			return ret;
++
++		for (i = 0; i < count; i++) {
++			if (!pulses[i] || pulses[i] > SGM3851A_MAX_PULSES ||
++			    pulses[i] == 52 || pulses[i] == 53)
++				return dev_err_probe(dev, -EINVAL, "invalid SWIRE pulse count\n");
++		}
++	}
++
++	ret = devm_regulator_get_enable(dev, "vin");
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to enable VIN\n");
++
++	pmic = devm_kzalloc(dev, sizeof(*pmic), GFP_KERNEL);
++	if (!pmic)
++		return -ENOMEM;
++
++	ret = devm_mutex_init(dev, &pmic->lock);
++	if (ret)
++		return ret;
++
++	pmic->ctrl = devm_gpiod_get(dev, "ctrl", GPIOD_OUT_LOW);
++	if (IS_ERR(pmic->ctrl))
++		return dev_err_probe(dev, PTR_ERR(pmic->ctrl), "failed to get CTRL\n");
++
++	pmic->en_vo3 = devm_gpiod_get(dev, "en-vo3", GPIOD_OUT_LOW);
++	if (IS_ERR(pmic->en_vo3))
++		return dev_err_probe(dev, PTR_ERR(pmic->en_vo3), "failed to get EN_VO3\n");
++
++	if (count && gpiod_cansleep(pmic->ctrl))
++		return dev_err_probe(dev, -EINVAL, "SWIRE requires a non-sleeping CTRL GPIO\n");
++
++	ret = devm_add_action_or_reset(dev, sgm3851a_power_off, pmic);
++	if (ret)
++		return ret;
++
++	/* Both controls are low. Allow any protection latch to reset. */
++	usleep_range(SGM3851A_OFF_US, SGM3851A_OFF_US + 50);
++
++	/* EN_VO3 enables AVDD, and the first CTRL rising edge enables ELVDD/ELVSS. */
++	ret = gpiod_set_value_cansleep(pmic->en_vo3, 1);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to enable AVDD\n");
++	ret = gpiod_set_value_cansleep(pmic->ctrl, 1);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to enable ELVDD/ELVSS\n");
++
++	/* The receiver takes up to 400 us to initialize after CTRL goes high. */
++	usleep_range(SGM3851A_INIT_US, SGM3851A_INIT_US + 100);
++	for (i = 0; i < SGM3851A_NUM_OUTPUTS; i++)
++		pmic->voltage_uv[i] = sgm3851a_ranges[i].default_uv;
++	for (i = 0; i < count; i++) {
++		ret = sgm3851a_send(pmic->ctrl, pulses[i]);
++		if (ret)
++			return dev_err_probe(dev, ret, "failed to send startup SWIRE command\n");
++		sgm3851a_record_command(pmic, pulses[i]);
++	}
++
++	pmic->enabled = true;
++	platform_set_drvdata(pdev, pmic);
++	return 0;
++}
++
++static void sgm3851a_shutdown(struct platform_device *pdev)
++{
++	sgm3851a_power_off(platform_get_drvdata(pdev));
++}
++
++static const struct of_device_id sgm3851a_of_match[] = {
++	{ .compatible = "sgmicro,sgm3851a" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, sgm3851a_of_match);
++
++static struct platform_driver sgm3851a_driver = {
++	.probe = sgm3851a_probe,
++	.shutdown = sgm3851a_shutdown,
++	.driver = {
++		.name = "sgm3851a",
++		.of_match_table = sgm3851a_of_match,
++		.dev_groups = sgm3851a_groups,
++	},
++};
++module_platform_driver(sgm3851a_driver);
++
++MODULE_DESCRIPTION("SGMicro SGM3851A display bias power supply");
++MODULE_LICENSE("GPL");
+diff --git a/Documentation/devicetree/bindings/regulator/sgmicro,sgm3851a.yaml b/Documentation/devicetree/bindings/regulator/sgmicro,sgm3851a.yaml
+new file mode 100644
+index 000000000..95b861565
+--- /dev/null
++++ b/Documentation/devicetree/bindings/regulator/sgmicro,sgm3851a.yaml
+@@ -0,0 +1,52 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/regulator/sgmicro,sgm3851a.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: SGMicro SGM3851A AMOLED power supply
++
++maintainers:
++  - POEG1726 <poeg1726@users.noreply.github.com>
++
++description:
++  GPIO controlled ELVDD, ELVSS and AVDD power supply. CTRL enables ELVDD
++  and ELVSS and accepts optional single-wire commands. EN_VO3 enables AVDD.
++
++properties:
++  compatible:
++    const: sgmicro,sgm3851a
++
++  ctrl-gpios:
++    maxItems: 1
++    description: Active-high enable and SWIRE signal.
++
++  en-vo3-gpios:
++    maxItems: 1
++    description: Active-high AVDD enable.
++
++  vin-supply:
++    description: Input supply shared by AVIN and PVIN.
++
++  sgmicro,swire-pulses:
++    description:
++      Number of rising edges for each command from Table 1 of the data
++      sheet, in transmission order. Omit to leave default output voltages
++      and use CTRL only as an enable. CTRL must be a non-sleeping GPIO
++      when this property is present.
++    $ref: /schemas/types.yaml#/definitions/uint32-array
++    minItems: 1
++    maxItems: 8
++    items:
++      minimum: 1
++      maximum: 57
++      not:
++        enum: [52, 53]
++
++required:
++  - compatible
++  - ctrl-gpios
++  - en-vo3-gpios
++  - vin-supply
++
++additionalProperties: false

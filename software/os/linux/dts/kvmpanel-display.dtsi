@@ -1,4 +1,23 @@
 // SPDX-License-Identifier: (GPL-2.0-only OR MIT)
+#include <dt-bindings/gpio/gpio.h>
+
+/ {
+	reg_3v3_disp: regulator-3v3-disp {
+		compatible = "regulator-fixed";
+		regulator-name = "3V3_DISP";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+	};
+
+	pmic {
+		compatible = "sgmicro,sgm3851a";
+		vin-supply = <&reg_3v3_disp>;
+		ctrl-gpios = <&pio 3 13 GPIO_ACTIVE_HIGH>;
+		en-vo3-gpios = <&pio 3 12 GPIO_ACTIVE_HIGH>;
+		/* Enable at the factory voltages. No SWIRE commands by default. */
+	};
+};
+
 &dsi {
 	#address-cells = <1>;
 	#size-cells = <0>;
@@ -9,9 +28,9 @@
 		vddi-supply = <&reg_1v8>;
 		vci-supply = <&reg_3v3_main>;
 		/*
-		 * CN2.28 (DISP_RST) and CN2.26 (DISP_TE) have no SoC net.
-		 * Add reset-gpios (active low) and te-gpios after routing.
-		 * Brightness is programmed via DCS. CN2 controls the SGM3851A.
+		 * CN2.28 (DISP_RST) and CN2.26 (DISP_TE) reach PD18 and PD15.
+		 * Confirm panel reset and TE polarity before adding GPIO properties.
+		 * PD12 and PD13 share the SGM3851A controls with CN2.
 		 */
 		status = "disabled";
 	};

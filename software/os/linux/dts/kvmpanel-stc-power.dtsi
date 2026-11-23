@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
+
+/ {
+	aliases {
+		serial2 = &uart2;
+	};
+};
+
+&pio {
+	uart2_pb0_pins: uart2-pb0-pins {
+		pins = "PB0", "PB1";
+		function = "uart2";
+		bias-disable;
+	};
+};
+
+&uart2 {
+	pinctrl-0 = <&uart2_pb0_pins>;
+	pinctrl-names = "default";
+	kvmpanel,stc-poweroff;
+	status = "okay";
+};
+
+&gpadc {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	status = "okay";
+
+	/* H7 KEY_ADC via Q1. Linux key mapping requires measured levels. */
+	channel@0 {
+		reg = <0>;
+	};
+};
