@@ -206,7 +206,7 @@ export ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
 
 # 仅在新目录执行 clone 和 apply。
 git clone --shared --branch v6.18.64 "$work/upstream/linux" "$linux"
-for patch in "$files"/patches/000{1,2,3,4,5,6,7,8,9}-*.patch; do
+for patch in "$files"/patches/00{01,02,03,04,05,06,07,08,09,10}-*.patch; do
     git -C "$linux" apply "$patch"
 done
 mkdir -p "$out"
@@ -241,7 +241,7 @@ find "$mout/drivers" -name 'lt8619c.ko' -o -name 'sun20i-csi.ko' -o -name 'panel
 
 ## C906 和 HiFi4
 
-组合 DTB 注册 C906、HiFi4 和它们的 mailbox。默认在 root shell 手动启动各核，固件由 Linux 从 `/lib/firmware/kvmpanel/` 加载。固件只提供 RPMsg 回环服务。Buildroot 选择 `BR2_PACKAGE_KVMPANEL_AMP=y` 后一起编译并安装两份 ELF 和 `kvmpanel-amp-ping`。普通 Buildroot 配置可以继续单独生成基础系统镜像。
+组合 DTB 注册 C906、HiFi4 和它们的 mailbox。默认在 root shell 手动启动各核，固件由 Linux 从 `/lib/firmware/kvmpanel/` 加载。C906 固件提供 RPMsg 回环。HiFi4 另外提供 USB 麦克风 PCM 桥接口，启用 USB 麦克风时由 kvmd 启动。Buildroot 选择 `BR2_PACKAGE_KVMPANEL_AMP=y` 后一起编译并安装两份 ELF 和 `kvmpanel-amp-ping`。普通 Buildroot 配置可以继续单独生成基础系统镜像。
 
 在 WSL 准备 RISC‑V bare-metal GCC 和 HiFi4 GCC 10.3，把实际编译器前缀传给 Buildroot。本次 RISC‑V 用 Ubuntu 24.04 的 `gcc-riscv64-unknown-elf` 和 `binutils-riscv64-unknown-elf`。 [HiFi4 GCC 10.3](https://github.com/YuzukiHD/FreeRTOS-HIFI4-DSP/releases/tag/Toolchains)
 
@@ -255,7 +255,7 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export RISCV_CROSS_COMPILE="$work/upstream/riscv64-elf-cross/usr/bin/riscv64-unknown-elf-"
 export XTENSA_CROSS_COMPILE="$work/upstream/xtensa-hifi4-cross/bin/xtensa-hifi4-elf-"
 make -C "$br" O="$bout" BR2_EXTERNAL="$ext" menuconfig
-# 选 KVMPanel packages 下的 C906 and HiFi4 echo firmware，然后保存。
+# 选 KVMPanel packages 下的 C906 loopback and HiFi4 USB audio firmware，然后保存。
 make -C "$br" O="$bout" BR2_EXTERNAL="$ext" -j12
 ```
 

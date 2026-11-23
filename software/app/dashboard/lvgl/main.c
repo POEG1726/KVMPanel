@@ -343,6 +343,20 @@ static void telemetry(const cJSON *list)
         }
 }
 
+/** @brief Show the local USB audio bridge state when microphone mode is enabled. */
+static const char *microphone_note(const cJSON *kvm)
+{
+    const char *status = str(kvm, "microphone_status");
+
+    if (strcmp(status, "ready") == 0)
+        return "\nUSB microphone ready";
+    if (strcmp(status, "starting") == 0)
+        return "\nUSB microphone starting";
+    if (strcmp(status, "unavailable") == 0)
+        return "\nUSB microphone unavailable";
+    return "";
+}
+
 static void board_state(const cJSON *message)
 {
     char text[192];
@@ -359,16 +373,17 @@ static void board_state(const cJSON *message)
         state = "Starting the PC…";
     const cJSON *eth = field(message, "eth");
     const cJSON *access = field(message, "access");
+    const cJSON *kvm = field(message, "kvm");
     const double speed = number(eth, "link_mbps");
-    snprintf(text, sizeof(text), "%s · %s\n%s%s%s",
+    snprintf(text, sizeof(text), "%s · %s\n%s%s%s%s",
              state, speed > 0 ? "Ethernet linked" : "Ethernet down",
-             str(access, "url"), *str(access, "tailscale_ip") ? " · " : "", str(access, "tailscale_ip"));
+             str(access, "url"), *str(access, "tailscale_ip") ? " · " : "", str(access, "tailscale_ip"),
+             microphone_note(kvm));
     lv_label_set_text(note, text);
     if (online) {
         lv_obj_set_hidden(offline, true);
     } else {
         const cJSON *ram = field(message, "mem");
-        const cJSON *kvm = field(message, "kvm");
         char temperature[24] = "—";
         const double soc = number(message, "soc_temp_c");
         if (isfinite(soc))

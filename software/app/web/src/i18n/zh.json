@@ -334,6 +334,7 @@
     },
     "usb": {
       "feature": {
+        "microphone": "USB 麦克风",
         "keyboard": "键盘",
         "mouse_rel": "相对鼠标",
         "mouse_abs": "绝对鼠标",
@@ -343,7 +344,9 @@
         "acm": "USB 串口（ACM）",
         "telemetry": "上位机数据"
       },
+      "microphoneStatus": {"starting": "正在启动", "ready": "已就绪", "unavailable": "不可用"},
       "featureHint": {
+        "microphone": "将 KVMPanel 的麦克风作为所连接 Windows 主机的音频输入",
         "keyboard": "boot 协议，BIOS 里能用",
         "mouse_rel": "BIOS 里能用",
         "mouse_abs": "",

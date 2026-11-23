@@ -1,7 +1,7 @@
 config BR2_PACKAGE_KVMPANEL_AMP
-	bool "KVMPanel C906 and HiFi4 echo firmware"
+	bool "KVMPanel C906 loopback and HiFi4 USB audio firmware"
 	help
-	  Build the two T113-i remoteproc test firmwares and install them
-	  with a command for testing the RPMsg endpoint on the board.
+	  Build T113-i remoteproc firmware for the C906 echo, HiFi4 USB
+	  microphone bridge and RPMsg diagnostics.
 	  Set RISCV_CROSS_COMPILE and XTENSA_CROSS_COMPILE if the
 	  default cross-compiler prefixes are not on PATH.

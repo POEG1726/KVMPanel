@@ -4,6 +4,7 @@
 #include "kvmpanel-capture.dtsi"
 #include "kvmpanel-display.dtsi"
 #include "kvmpanel-remoteproc.dtsi"
+#include "kvmpanel-microphones.dtsi"
 
 &iommu {
 	status = "okay";

@@ -1,0 +1,38 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
+
+/ {
+	dmic_codec: dmic-codec {
+		compatible = "dmic-codec";
+		#sound-dai-cells = <0>;
+		num-channels = <2>;
+	};
+
+	sound-dmic {
+		compatible = "simple-audio-card";
+		simple-audio-card,name = "KVMPanelDMIC";
+
+		simple-audio-card,cpu {
+			sound-dai = <&dmic>;
+		};
+
+		simple-audio-card,codec {
+			sound-dai = <&dmic_codec>;
+		};
+	};
+};
+
+&pio {
+	dmic_pb_pins: dmic-pb-pins {
+		/* PB12 supplies CLK. Both ICS-41351s share PB10 (DATA1). */
+		pins = "PB12", "PB10";
+		function = "dmic";
+		bias-disable;
+	};
+};
+
+&dmic {
+	pinctrl-names = "default";
+	pinctrl-0 = <&dmic_pb_pins>;
+	allwinner,data-lane = <1>;
+	status = "okay";
+};

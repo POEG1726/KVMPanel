@@ -9,7 +9,7 @@ import { EP_IN, EP_OUT, usbBudget, type UsbConfig } from '../usbBudget';
 import { useConfigSection } from '../useConfigSection';
 import s from '../settings.module.css';
 
-type Feature = 'keyboard' | 'mouse_rel' | 'mouse_abs' | 'mouse_merge' | 'storage' | 'net' | 'acm' | 'telemetry';
+type Feature = 'keyboard' | 'mouse_rel' | 'mouse_abs' | 'mouse_merge' | 'storage' | 'net' | 'acm' | 'telemetry' | 'microphone';
 
 /** Endpoint cost per function, shown beside each switch (spec 4.5). Telemetry's IN depends on the mice. */
 const FEATURES: readonly { key: Feature; in: string; out: string }[] = [
@@ -21,6 +21,7 @@ const FEATURES: readonly { key: Feature; in: string; out: string }[] = [
   { key: 'net', in: '2', out: '1' },
   { key: 'acm', in: '2', out: '1' },
   { key: 'telemetry', in: '0', out: '0' },
+  { key: 'microphone', in: '1', out: '0' },
 ];
 
 /** How long the "endpoints full" hint stays below the budget bar. */
@@ -53,7 +54,11 @@ export function UsbFunctionsPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const { value: usb, patch } = useConfigSection('usb');
-  const applied = useQuery({ queryKey: APPLIED_KEY, queryFn: () => unwrap(api.GET('/api/usb/applied')) });
+  const applied = useQuery({
+    queryKey: APPLIED_KEY,
+    queryFn: () => unwrap(api.GET('/api/usb/applied')),
+    refetchInterval: (query) => query.state.data?.usb.microphone ? 2000 : false,
+  });
   const server = useQuery({ queryKey: BUDGET_KEY, queryFn: () => unwrap(api.GET('/api/usb/budget')) });
   const { error, run } = useRun();
   const [tip, setTip] = useState<string | null>(null);
@@ -91,6 +96,7 @@ export function UsbFunctionsPage() {
     });
 
   const pending = !!applied.data?.pending;
+  const micStatus = applied.data?.microphone_status;
   return (
     <>
       <div className={s.bars}>
@@ -116,6 +122,9 @@ export function UsbFunctionsPage() {
                 ]}
                 onChange={(net_mode) => void change({ net_mode })}
               />
+            )}
+            {f.key === 'microphone' && micStatus && micStatus !== 'off' && (
+              <span role="status" className={s.muted}>{t('settings.usb.microphoneStatus.' + micStatus)}</span>
             )}
             <Switch
               label={t(`settings.usb.feature.${f.key}`)}

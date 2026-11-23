@@ -10,7 +10,7 @@ const DEFAULTS = {
   },
   function_key: { short: 'toggle_settings', long: 'toggle_screen' },
   usb: {
-    keyboard: true, mouse_rel: true, mouse_abs: true, mouse_merge: false, storage: true,
+    keyboard: true, mouse_rel: true, mouse_abs: true, mouse_merge: false, storage: true, microphone: false,
     net: false, net_mode: 'ncm', acm: false, telemetry: true,
   },
   web: { language: 'auto', workspace_open: 'float', remember_float: true, menubar: 'auto_hide', title: 'KVMPanel' },

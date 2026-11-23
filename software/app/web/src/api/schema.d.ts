@@ -1022,6 +1022,11 @@ export interface components {
             in_missing: number;
             out_missing: number;
         };
+        /**
+         * @description Ready means the board PCM bridge is feeding the gadget.
+         * @enum {string}
+         */
+        UsbMicrophoneStatus: "off" | "starting" | "ready" | "unavailable";
         Config: {
             host: {
                 /** @default Delete */
@@ -1085,6 +1090,11 @@ export interface components {
                 mouse_abs: boolean;
                 /** @default false */
                 mouse_merge: boolean;
+                /**
+                 * @description USB microphone on the connected PC
+                 * @default false
+                 */
+                microphone: boolean;
                 /** @default true */
                 storage: boolean;
                 /** @default false */
@@ -4525,6 +4535,7 @@ export interface operations {
                     "application/json": {
                         usb: components["schemas"]["Config"]["usb"];
                         pending: boolean;
+                        microphone_status: components["schemas"]["UsbMicrophoneStatus"];
                     };
                 };
             };

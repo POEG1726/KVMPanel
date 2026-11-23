@@ -2,6 +2,15 @@
 
 最近五项有实际进展的软件工作，最新一项在顶部。全项目状态见 [软件进度](docs/software-progress.md)。
 
+## 双麦克风与 USB 音频
+
+核对日期 2026-11-23。
+
+- **代码**。PB12/PB10 复用为 DMIC CLK/DATA1，采集 48 kHz 双声道 S24_LE，目标 PDM 时钟 3.072 MHz。HiFi4 取外侧通道供 UAC2，网页开关默认关闭，Dashboard 显示桥接状态。默认组合启用麦克风后为 5 IN / 1 OUT。 [音频接入](docs/linux-6.18.md#双麦克风与-usb-音频)
+- **构建**。Linux 6.18.64 ARM zImage、三份板级 DTB、HiFi4 ELF、ARM 静态 kvmd 与 Dashboard、网页均已构建。内核、固件和 ARM Dashboard 分别位于 WSL 的 ~/work/KVMPanel/build 下的 linux-kvmpanel-mic、t113-amp-mic 和 dashboard-mic-arm。
+- **模拟**。Rust 102 项、Mock 80 项、网页 180 项通过。512 种端点组合与 gadget 脚本一致，原有 USB 功能通过 QEMU 回归。PCM 封包和副屏四种状态通过无板验证。
+- **实板待测**。先核对新版网表，测 PB12 并分别激励内外两个声孔，再验证 HiFi4 持续吞吐、Windows 枚举和录音。dummy_hcd 不支持等时传输。外壳装好后录制风扇与人声，确定降噪、后续抽取和滤波。 [验证入口](docs/linux-6.18.md#双麦克风与-usb-音频)
+
 ## MCP 服务
 
 核对日期 2026-11-23。
@@ -34,10 +43,3 @@
 
 - `kvmd` 每秒上报 `board`，通过 `metric_catalogue` 提供包含隐藏项的清单，检查 PE12 后才处理 `pc_power_on`。板端 Dashboard 用 LVGL framebuffer 逐项显隐、四方向旋转，主机离线时显示板子状态并可息屏唤醒。Rust、Mock、网页、ARM 静态构建及原生和 ARM/QEMU 无屏冒烟均通过。 [Dashboard](software/app/dashboard/README.md) · [协议](software/app/api/README.md#副屏-panel-socket)
 - `build/debian/kvmpanel-debian13-armhf-dashboard.img.xz` 包含副屏、`kvmd`、WS2812 和 MJPEG 内核，已离线检查文件系统、服务及组合 DTB。接手先核对实际屏、触摸设备和 /dev/fb0，再测试 USB 实板数据、开机按钮、息屏和方向。当前主屏用分组指标列表，原型的横屏方案 B 及曲线排版尚待移植。 [镜像构建](software/os/debian/README.md)
-
-## WS2812 板级驱动
-
-核对日期 2026-11-23。
-
-- 组合 DTB 启用 T113 硬件 LEDC，以 PG13 驱动四颗 WS2812B-2020-V6。完成 ARM zImage 构建、驱动链接及设备树绑定检查。输出在 WSL 的 `~/work/KVMPanel/build/linux-ws2812/`。 [WS2812 接线、时序与 sysfs](docs/linux-6.18.md#ws2812)
-- 实板可用后测 PG13 的位时序和复位低电平，逐颗核对 LED1、LED2、LED4、LED5 的三色及亮度。

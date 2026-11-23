@@ -119,12 +119,14 @@ impl BoardSampler {
             "net",
             "acm",
             "telemetry",
+            "microphone",
         ]
         .into_iter()
         .filter(|name| bound && applied[*name] == true)
         .collect();
         let mut kvm = console::panel_video(app);
         kvm["usb_functions"] = json!(functions);
+        kvm["microphone_status"] = json!(app.microphone_status(bound, &applied));
         json!({"t":"board","ts":ts,"pc_power":pc_power,"hostname":hostname,
             "version":info["version"],"uptime_s":info["uptime_s"],"cpu_pct":cpu,
             "soc_temp_c":info["soc_temp_c"],"mem":info["mem"],"sd":sd,

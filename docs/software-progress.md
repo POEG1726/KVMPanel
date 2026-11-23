@@ -4,6 +4,8 @@
 
 ## 已完成
 
+- **双麦克风与 USB 音频基础链路**。PB12/PB10 用作 DMIC CLK/DATA1，禁用蜂鸣器驱动。接入 48 kHz 双声道采集、HiFi4 外侧直通、UAC2 单声道，以及 KVM 设置与 Dashboard 状态。通过 ARM 内核、DTB、kvmd、Dashboard、HiFi4 固件和网页构建，Rust、Mock、网页与 512 种端点组合测试通过。 [音频适配](linux-6.18.md#双麦克风与-usb-音频)
+
 - **MCP 服务离线实现**。板端提供标准 Streamable HTTP、22 个工具、分权限密钥、审计和网页及副屏急停。Windows 上位机通过厂商 HID 提供窗口和显示器信息、受限剪贴板和共享盘安全弹出。Rust、Mock、网页测试与 Windows x64、WSL ARM 构建通过。全部工具通过原生及 ARM Linux 来宾 HTTP 模拟。MCP Inspector 和无屏副屏验证通过。 [板端验证](../software/app/ipkvm/README.md#mcp-服务) · [上位机验证](../software/app/pc-telemetry/README.md#mcp-主机端通道)
 - **全志 DDR PHY ZQ 寄存器对照**。离线核对 R528、D1、V853 与 T113 Tina SPL 的 ZQ 写入，复核 D1 板级配置、Centauri Boot0 的 ZQ 参数和全志公开手册。已追出 H3 六个半字节到三个 ZQDR 的校准路径，并核对 T113-i 的 DX0/DX1 引脚和 240 Ω ZQ 参考。 [ZQ 查证](../software/os/vendor/tina/README.md#主控-zq-编码查证)
 - **SDC0、RGMII 与 DDR3 颗粒驱动配置**。SD 启动的 SPL、U-Boot 和 Linux 将 SDC0 设为 Level 3（典型 45 Ω），RGMII 的 PG 引脚设为 `drive-strength = <40>`。SD/FEL SPL 启用主控读端 ODT，三星 DDR3 用 `MR1=0x40` 选 40 Ω 输出和 120 Ω RTT_NOM。SD/FEL U-Boot 与三份板级 DTB 构建通过，核对了 SPL 指令和 DTB 属性。实板待复测。 [启动配置](../software/os/u-boot/README.md) · [板级设备树](linux-6.18.md#触摸光照sd-和-gpio)
@@ -26,6 +28,7 @@
 
 ## In Progress
 
+- **双麦克风实板验证与降噪**。待新版网表、板卡和外壳就绪后，核对 PDM 时钟、两路 PCM 和 Windows 录音。收集显卡风扇及语音双路样本，再定 HiFi4 的降噪参数、滤波和后续抽取。 [接手入口](linux-6.18.md#双麦克风与-usb-音频)
 - **Windows PC 遥测补充与实测**。Intel GPU 深度读数待接入。有其它 Ryzen 主机时，用 `--once` 交叉验证 BCLK 和 DRAM 带宽。有板子时验证 USB 与 Panel 显示。 [采集计划](superpowers/specs/2026-11-23-pc-telemetry-design.md)
 - **板级适配**。2026-11-22 归档与软件已用于 microSD UHS、显示电源和采集适配。待新版网表核对 RTL8211F-CG 的无源晶体接法。待实板验证 PHY 起振和链路、SGM3851A 的 SWIRE 波形和三路输出、LT8619C 的 IRQ 清除及 HDMI 采集，以及 microSD 的电压和速率。 [板级适配](linux-6.18.md) · [网口时序](development.md#单独验证本板网口)
 - **STC8 电源管理集成**。固件 1.1 加入 STC 本机硬件看门狗，已通过 SDCC 构建、状态机测试及模拟 ISP 回归。引脚分配 CSV 已记录按键理论电压。实板待验证 ADC 判定窗口、UART 电平和收发、供电与复位波形、看门狗恢复，以及外部 UPDATE_HOLD 电路。 [STC8 说明与验证](../software/firmware/stc8/README.md)

@@ -14,6 +14,7 @@ export function usbBudget(u: UsbConfig): UsbBudget {
   let inEp = 0;
   let outEp = 0;
   if (u.keyboard) inEp += 1;
+  if (u.microphone) inEp += 1;
   if (u.mouse_rel) inEp += 1;
   if (u.mouse_abs && !(u.mouse_merge && u.mouse_rel)) inEp += 1;
   if (u.storage) {

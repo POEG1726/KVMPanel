@@ -11,4 +11,6 @@
 - `dts/kvmpanel-stc-power.dtsi` 和补丁 0008：PB0/PB1 的 UART2、GPADC0 和 STC8 最终断电通知。正常关机同时使用 Buildroot 的配套 BusyBox 与串口工具。 [STC8 开发说明](../../firmware/stc8/README.md)
 - `dts/kvmpanel-peripherals.dtsi` 和 `configs/kvmpanel-peripherals.fragment` 启用 PG13 上四颗 WS2812B 的硬件 LEDC 和 Linux 多色 LED 接口。 [控制方式与验证](../../../docs/linux-6.18.md#ws2812)
 
+- `dts/kvmpanel-microphones.dtsi` 和补丁 0010 将 PB12/PB10 用作 DMIC CLK/DATA1，并选择两路 PCM 时隙。 [USB 音频](../../../docs/linux-6.18.md#双麦克风与-usb-音频)
+
 构建见 [开发说明](../../../docs/development.md)。首次上板先通过 FEL 验证 DDR 和串口，详见[板级接线](../../../hardware/README.md)。

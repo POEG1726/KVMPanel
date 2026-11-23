@@ -21,7 +21,7 @@ install -m 0644 "$archive_keyring" "$keyring"
 
 packages=systemd-sysv,libpam-systemd,dbus,systemd-resolved,systemd-timesyncd,udev
 packages=$packages,iproute2,kmod,ca-certificates,vim,dropbear-bin,gpiod,v4l-utils
-packages=$packages,ethtool,usbutils,i2c-tools,curl,e2fsprogs,xxd
+packages=$packages,ethtool,usbutils,i2c-tools,curl,e2fsprogs,xxd,alsa-utils
 
 mmdebstrap --format=tar --mode=root --variant=minbase --architectures=armhf \
     --keyring="$keyring" --include="$packages" trixie "$temp_tar" \

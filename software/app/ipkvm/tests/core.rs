@@ -41,7 +41,7 @@ async fn health_config_permissions_and_usb() {
     let original = check(&s, "GET", "/api/config", &a, None, 200, "getConfig").await;
     assert_eq!(
         original,
-        json!({"panel":{"language":"en","orientation":"normal","auto_brightness":true,"brightness":70,"offline_sleep_min":5,"thresholds":{"cpu.tctl":85,"gpu.mem_junction":95,"mem.dimm.*":60},"hidden_metrics":[]},"function_key":{"short":"toggle_settings","long":"toggle_screen"},"usb":{"keyboard":true,"mouse_rel":true,"mouse_abs":true,"mouse_merge":false,"storage":true,"net":false,"net_mode":"ncm","acm":false,"telemetry":true},"web":{"language":"auto","workspace_open":"float","remember_float":true,"menubar":"auto_hide","title":"KVMPanel"},"video":{"quality":80,"fps_max":30,"scale":"fit","frame_diff":true},"hid":{"keyboard_layout":"us","mouse_mode":"abs","wheel_dir":"normal","wheel_speed":1,"jiggler":false,"leader_key":null},"serial":{"device":null,"baud":115200},"device":{"hostname":"kvmpanel","ssh":true,"mdns":true,"watchdog":false},"kvm":{"enabled":true},"host":{"setup_key":"Delete","boot_menu_key":null,"tap_interval_ms":200,"tap_duration_s":15}})
+        json!({"panel":{"language":"en","orientation":"normal","auto_brightness":true,"brightness":70,"offline_sleep_min":5,"thresholds":{"cpu.tctl":85,"gpu.mem_junction":95,"mem.dimm.*":60},"hidden_metrics":[]},"function_key":{"short":"toggle_settings","long":"toggle_screen"},"usb":{"keyboard":true,"mouse_rel":true,"mouse_abs":true,"mouse_merge":false,"storage":true,"net":false,"net_mode":"ncm","acm":false,"telemetry":true,"microphone":false},"web":{"language":"auto","workspace_open":"float","remember_float":true,"menubar":"auto_hide","title":"KVMPanel"},"video":{"quality":80,"fps_max":30,"scale":"fit","frame_diff":true},"hid":{"keyboard_layout":"us","mouse_mode":"abs","wheel_dir":"normal","wheel_speed":1,"jiggler":false,"leader_key":null},"serial":{"device":null,"baud":115200},"device":{"hostname":"kvmpanel","ssh":true,"mdns":true,"watchdog":false},"kvm":{"enabled":true},"host":{"setup_key":"Delete","boot_menu_key":null,"tap_interval_ms":200,"tap_duration_s":15}})
     );
     assert_eq!(
         check(&s, "GET", "/api/usb/budget", &a, None, 200, "getUsbBudget").await,
@@ -84,7 +84,7 @@ async fn health_config_permissions_and_usb() {
         .await["pending"],
         false
     );
-    let changed=check(&s,"PATCH","/api/config",&a,Some(json!({"usb":{"mouse_abs":false},"panel":{"brightness":30,"thresholds":{"gpu.temp":80}}})),200,"patchConfig").await;
+    let changed=check(&s,"PATCH","/api/config",&a,Some(json!({"usb":{"mouse_abs":false,"microphone":true},"panel":{"brightness":30,"thresholds":{"gpu.temp":80}}})),200,"patchConfig").await;
     assert_eq!(changed["panel"]["brightness"], 30);
     assert_eq!(changed["panel"]["thresholds"]["gpu.temp"], 80);
     assert!(check(
@@ -121,6 +121,8 @@ async fn health_config_permissions_and_usb() {
     .await;
     assert_eq!(pending["pending"], true);
     assert_eq!(pending["usb"]["mouse_abs"], true);
+    assert_eq!(pending["usb"]["microphone"], false);
+    assert_eq!(pending["microphone_status"], "off");
     let mut events = s.app.events.subscribe();
     assert_eq!(
         check(&s, "POST", "/api/usb/apply", &a, None, 202, "applyUsb").await,
@@ -139,6 +141,8 @@ async fn health_config_permissions_and_usb() {
     .await;
     assert_eq!(applied["pending"], false);
     assert_eq!(applied["usb"]["mouse_abs"], false);
+    assert_eq!(applied["usb"]["microphone"], true);
+    assert_eq!(applied["microphone_status"], "ready");
     let restored = App::new(s.dir.path(), true).unwrap();
     assert_eq!(restored.config(), s.app.config());
     let bad = s
@@ -368,6 +372,8 @@ async fn endpoint_combinations() {
     let base = s.app.config()["usb"].clone();
     for (patch, input, output) in [
         (json!({"net":true}), 6, 2),
+        (json!({"microphone":true}), 5, 1),
+        (json!({"microphone":true,"mouse_merge":true,"net":true}), 6, 2),
         (json!({"mouse_merge":true}), 3, 1),
         (json!({"mouse_merge":true,"net":true}), 5, 2),
         (

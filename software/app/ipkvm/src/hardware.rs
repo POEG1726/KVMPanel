@@ -7,12 +7,22 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+mod audio;
 mod board;
 pub(crate) mod hid;
 pub(crate) mod layout;
 mod pattern;
 mod video;
+
+#[doc(hidden)]
+pub fn usb_audio_worker(parent: u32) -> io::Result<()> {
+    audio::worker(parent)
+}
+
 pub trait Hardware: Send + Sync {
+    fn microphone_status(&self) -> &'static str {
+        "ready"
+    }
     fn stop_video(&self) {}
     fn usb_bound(&self) -> io::Result<bool>;
     fn apply_usb(&self, usb: &Value, media: &[(OsString, OsString)]) -> io::Result<()>;

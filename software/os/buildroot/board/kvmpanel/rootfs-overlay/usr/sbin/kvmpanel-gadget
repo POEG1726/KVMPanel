@@ -9,7 +9,7 @@ usage() {
 kvmpanel-gadget [start|stop|budget]
 Set environment variables to select the functions (0 or 1).
   KEYBOARD=1 REL_MOUSE=1 ABS_MOUSE=1 MERGE_MICE=0 TELEMETRY=1 STORAGE=1
-  NETWORK=off|ncm|rndis (default off)  ACM=0
+  NETWORK=off|ncm|rndis (default off)  ACM=0 MICROPHONE=0
   CDROM_IMAGE= DISK_IMAGE= SHARE_IMAGE=    absolute paths; empty = no media
   DISK_RO=1 SHARE_RO=1   unmount locally before exporting a writable image
   UDC=                   required only when several controllers are present
@@ -52,15 +52,16 @@ telemetry=${TELEMETRY:-1}
 storage=${STORAGE:-1}
 network=${NETWORK:-off}
 acm=${ACM:-0}
+microphone=${MICROPHONE:-0}
 disk_ro=${DISK_RO:-1}
 share_ro=${SHARE_RO:-1}
-for switch in "$keyboard" "$relative" "$absolute" "$merge" "$telemetry" "$storage" "$acm" "$disk_ro" "$share_ro"; do
+for switch in "$keyboard" "$relative" "$absolute" "$merge" "$telemetry" "$storage" "$acm" "$microphone" "$disk_ro" "$share_ro"; do
 	case "$switch" in 0|1) ;; *) fail "invalid switch '$switch' (use 0 or 1)" ;; esac
 done
 merged=$((relative * absolute * merge))
 standalone=$((telemetry * (1-absolute)))
 case "$network" in off) net=0 ;; ncm|rndis) net=1 ;; *) fail "invalid NETWORK" ;; esac
-inputs=$((keyboard + relative + absolute - merged + standalone + storage + 2 * (net + acm)))
+inputs=$((keyboard + relative + absolute - merged + standalone + storage + microphone + 2 * (net + acm)))
 outputs=$((storage + net + acm))
 echo "USB0 endpoints: IN $inputs/5, OUT $outputs/5"
 [ "$inputs" -le 5 ] && [ "$outputs" -le 5 ] || fail "endpoint budget exceeded"
@@ -96,8 +97,8 @@ echo KVMPanel > "$c/strings/0x409/configuration"
 
 link_function() { ln -s "$f/$1" "$c/"; }
 
-if [ "$net" = 1 ] || [ "$acm" = 1 ]; then
-	# Advertise the interface associations used by CDC functions.
+if [ "$net" = 1 ] || [ "$acm" = 1 ] || [ "$microphone" = 1 ]; then
+	# Advertise the interface associations used by CDC and UAC2.
 	echo 0xef > "$g/bDeviceClass"
 	echo 2 > "$g/bDeviceSubClass"
 	echo 1 > "$g/bDeviceProtocol"
@@ -189,5 +190,21 @@ if [ "$storage" = 1 ]; then
 	link_function mass_storage.media
 fi
 if [ "$acm" = 1 ]; then mkdir "$f/acm.console"; link_function acm.console; fi
+if [ "$microphone" = 1 ]; then
+	audio=$f/uac2.microphone
+	mkdir "$audio"
+	# Gadget ALSA playback is USB IN. Disable USB OUT and USB AudioControl interrupts.
+	echo 0 > "$audio/c_chmask"
+	echo 4 > "$audio/p_chmask"
+	echo 48000 > "$audio/p_srate"
+	echo 3 > "$audio/p_ssize"
+	echo 4 > "$audio/p_hs_bint"
+	echo 0 > "$audio/p_mute_present"
+	echo 0 > "$audio/p_volume_present"
+	echo 513 > "$audio/p_terminal_type"
+	echo 'KVMPanel Microphone' > "$audio/function_name"
+	echo 'KVMPanel Microphone' > "$audio/p_it_name"
+	link_function uac2.microphone
+fi
 printf '%s\n' "$UDC" > "$g/UDC"
 trap - EXIT HUP INT TERM

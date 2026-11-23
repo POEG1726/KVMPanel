@@ -332,6 +332,7 @@
     },
     "usb": {
       "feature": {
+        "microphone": "USB microphone",
         "keyboard": "Keyboard",
         "mouse_rel": "Relative mouse",
         "mouse_abs": "Absolute mouse",
@@ -341,7 +342,9 @@
         "acm": "USB serial (ACM)",
         "telemetry": "PC data"
       },
+      "microphoneStatus": {"starting": "Starting", "ready": "Ready", "unavailable": "Unavailable"},
       "featureHint": {
+        "microphone": "Use KVMPanel as an audio input on the connected Windows PC",
         "keyboard": "Boot protocol; works in the BIOS",
         "mouse_rel": "Works in the BIOS",
         "mouse_abs": "",

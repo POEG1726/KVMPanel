@@ -195,6 +195,18 @@ async fn board_status_continues_offline_and_power_on_is_idempotent() {
     let mut p = Panel::new(&s).await;
     let board = p.next(|m| m["t"] == "board").await;
     assert_eq!(board["pc_power"], "off");
+    assert_eq!(board["kvm"]["microphone_status"], "off");
+    s.app
+        .patch_config(&json!({"usb":{"microphone":true}}), None)
+        .unwrap();
+    s.app.apply_usb().unwrap();
+    let audio = p
+        .next(|m| m["t"] == "board" && m["kvm"]["microphone_status"] == "ready")
+        .await;
+    assert!(audio["kvm"]["usb_functions"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("microphone")));
     let status = p
         .request(json!({"t":"action","id":1,"action":"pc_power_on"}))
         .await;

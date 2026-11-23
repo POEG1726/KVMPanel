@@ -1,5 +1,7 @@
 # kvmd
 
+在「USB 功能」应用麦克风设置后，板上 kvmd 启动 HiFi4 PCM 桥。Windows 通过 USB Audio 2.0 接收外侧麦克风的 48 kHz、24 位单声道。麦克风默认关闭，启用占一个等时 IN 端点。 [接线、模式和端点预算](../../../docs/linux-6.18.md#双麦克风与-usb-音频)
+
 在 Linux/WSL 中使用 Rust stable。初始账号为 `admin`，密码为 `admin`，首次登录返回 `must_change_password`。在仓库根目录运行以下命令，HTTP 监听 127.0.0.1:8800。
 
 ```sh

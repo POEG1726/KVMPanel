@@ -3,6 +3,8 @@ use kvmd::{router, App};
 use std::{io, path::PathBuf};
 #[derive(Parser)]
 struct Args {
+    #[arg(long, hide = true)]
+    usb_audio_worker: Option<u32>,
     #[arg(long)]
     sim: bool,
     #[arg(long, hide = true)]
@@ -21,6 +23,9 @@ struct Args {
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let args = Args::parse();
+    if let Some(parent) = args.usb_audio_worker {
+        return kvmd::hardware::usb_audio_worker(parent);
+    }
     let dir = args.data_dir.unwrap_or_else(|| {
         if args.sim {
             "./kvmd-sim".into()

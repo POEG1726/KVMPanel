@@ -66,6 +66,8 @@ sudo bash "$project/software/os/debian/build-image.sh" "$out/base-armhf.tar" \
 
 构建脚本只生成镜像文件。Buildroot 的 FEL 诊断镜像另行按原流程构建。
 
+带 USB 麦克风支持的镜像使用新版 bootstrap 安装 aplay、arecord，并从启用了 BR2_PACKAGE_KVMPANEL_AMP 的 Buildroot 目标复制本版 HiFi4 固件。 [音频接入与验证](../../../docs/linux-6.18.md#双麦克风与-usb-音频)
+
 构建带副屏的镜像时，按 [Dashboard 构建说明](../../app/dashboard/README.md#构建与启动) 生成 ARM 静态二进制，将 `KVMPANEL_DASHBOARD_BINARY` 传给 `build-image.sh`。脚本安装并启用 `kvmpanel-dashboard.service`，存在 `/dev/fb0` 时随系统启动。触摸设备确认后，可在 `/etc/default/kvmpanel-dashboard` 设置 `KVMPANEL_TOUCH`。
 
 ## 离线验证

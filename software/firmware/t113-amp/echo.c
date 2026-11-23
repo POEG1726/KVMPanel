@@ -171,6 +171,36 @@ void kick_arm(void)
 		*reg(mailbox, MBOX_FIFO) = table.rings[0].notify;
 }
 
+#ifdef HIFI4
+/**
+ * @brief Bridge one block of ALSA S24_LE stereo to packed USB S24_3LE mono.
+ * @retval Reply size, or zero for an ordinary echo packet.
+ */
+static unsigned microphone_packet(volatile const uint8_t *in, unsigned len,
+                                  volatile uint8_t *out)
+{
+	static const uint8_t request[] = { 'K', 'V', 'A', '1' };
+	static const uint8_t response[] = { 'K', 'V', 'O', '1' };
+	enum { TAG_SIZE = 4, FRAMES = 60, INPUT_BYTES = FRAMES * 8 };
+
+	if (len != TAG_SIZE && len != TAG_SIZE + INPUT_BYTES)
+		return 0;
+	for (unsigned i = 0; i < TAG_SIZE; i++)
+		if (in[i] != request[i])
+			return 0;
+	for (unsigned i = 0; i < TAG_SIZE; i++)
+		out[i] = response[i];
+	if (len == TAG_SIZE)
+		return TAG_SIZE;
+
+	/* The outward-facing mic occupies the first slot. Keep its 24 bits intact. */
+	for (unsigned frame = 0; frame < FRAMES; frame++)
+		for (unsigned byte = 0; byte < 3; byte++)
+			out[TAG_SIZE + frame * 3 + byte] = in[TAG_SIZE + frame * 8 + byte];
+	return TAG_SIZE + FRAMES * 3;
+}
+#endif
+
 /**
  * @brief Announce one RPMsg endpoint and echo host packets on dedicated rings.
  */
@@ -228,8 +258,18 @@ __attribute__((noreturn)) void echo_run(void)
 		tx->reserved = 0;
 		tx->len = (uint16_t)len;
 		tx->flags = 0;
-		for (uint32_t i = 0; i < len; i++)
-			tx->data[i] = payload[i];
+#ifdef HIFI4
+		unsigned audio_len = rx ? microphone_packet(payload, len, tx->data) : 0;
+
+		if (audio_len) {
+			len = audio_len;
+			tx->len = (uint16_t)len;
+		} else
+#endif
+		{
+			for (uint32_t i = 0; i < len; i++)
+				tx->data[i] = payload[i];
+		}
 
 		complete(TX_RING, tx_id, sizeof(*tx) + len);
 		if (rx) {

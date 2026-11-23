@@ -23,6 +23,7 @@
 | 温度 / 看门狗 | D1 THS、SID 校准、thermal zone、系统 WDT 节点已编译 | 校准读数、固件所有权、喂狗与受控复位 |
 | 自身关机 | STC8 的 UART2 协议、内核最终断电帧和 Debian systemd 关机钩子已实现。模拟 UART 已验证存储清理后的准备和待断电命令 | 实测最终断电帧、文件系统状态、主轨掉电和恢复时序 |
 | C906 / HiFi4 | remoteproc、mailbox、RPMsg 和两份回环固件已构建并打包 | 两核的时钟、复位、共享内存可见性、独立及同时回环 |
+| 双麦克风 / USB Audio | DATA1 通道映射、24 位 HiFi4 直通、UAC2 与 USB 预算已接入 | PDM 时钟及两路实际声道、RPMsg 持续吞吐、Windows 枚举和录音 |
 
 ## C906、HiFi4 与 GPADC
 
@@ -71,6 +72,16 @@ printf '%s\n' '4600000 -2500000 6100000' > /sys/bus/platform/devices/pmic/voltag
 每个绝对鼠标 Input 报告都是 7 字节，首字节为 report ID `0x02`，后接 6 字节鼠标数据；单独或合并鼠标、开关遥测时均相同。每个厂商遥测 Output 报告都是 64 字节，首字节为 `0x03`，后接 63 字节数据。启用绝对鼠标时两者共用接口。关闭绝对鼠标且启用遥测时，遥测独占一个 IN，相对鼠标保持无编号的 boot 报告（subclass 1、protocol 2）。默认组合仍使用独立的无编号 boot 相对鼠标。HID 的 `no_out_endpoint=1` 使主机的 SET_REPORT 走 EP0。QEMU host 读到三个独立 LUN 的标记，并从 hidraw 到 /dev/hidgN 逐字节比对了默认的 64 字节报告。NCM、RNDIS、ACM 的合法组合已解绑重建并配置成功。
 
 T113-i 手册 USB2.0 OTG 一节给出 EP1–EP5 各一个 IN、一个 OUT，FIFO 共 8 KiB + 64 B。默认组合实测用 4 IN / 1 OUT。6.18.64 的 sunxi MUSB 五端点表按每方向 512 B 单缓冲配置。脚本在绑定前计算预算，dummy_hcd 无法测出 T113-i 的端点上限或 FIFO 行为。MUSB、冷启动 BIOS、Windows hidapi 和实际多 LUN 主机兼容性待实板验证。
+
+## 双麦克风与 USB 音频
+
+两颗 ICS-41351 共用 PB12（DMIC_CLK）和 PB10（DMIC_DATA1）。外侧 SELECT 接 3.3 V，按左声道进入 PCM 通道 0，内侧 SELECT 接 GND，按右声道进入通道 1。麦克风手册中的 DATA1/DATA2 是同一根 PDM 数据线上的两个时隙。T113-i 的 DATA1 是物理引脚。板级 DTS 选择 lane 1，驱动使能 DMIC_EN 的 bit 2/3，并把物理时隙 2/3 映射到两个 FIFO 输出。板级内核配置禁用 GPIO 和 PWM 蜂鸣器驱动。新版网表和实板声道待复核。 [麦克风手册](https://invensense.tdk.com/wp-content/uploads/2020/07/DS-000157-ICS-41351-v1.4.pdf) · [DMIC 驱动补丁](../software/os/linux/patches/0010-sunxi-dmic-data-lane.patch)
+
+音频桥以 48 kHz 让 T113-i DMIC 使用 64× 硬件抽取，PB12 的目标 PDM 时钟是 3.072 MHz。这是 T113-i 标准采样档位的最高 PDM 时钟，也是在麦克风 2.97–3.3 MHz 高性能模式内的典型值。麦克风由时钟选模式，SELECT 用来选声道。Linux 输出 48 kHz 双声道 S24_LE，经 RPMsg 送到 HiFi4，当前取外侧通道并打包成 48 kHz 单声道 S24_3LE，再送入 UAC2。沿用 DMIC 驱动的硬件高通设置。软件抽取和滤波待定。 [T113-i 用户手册 §8.2.5.3](https://www.scribd.com/document/995591368/T113-i-Series-User-Manual-V2-2) · [麦克风手册表 2、6](https://invensense.tdk.com/wp-content/uploads/2020/07/DS-000157-ICS-41351-v1.4.pdf)
+
+在 KVM 的「USB 功能」启用麦克风并应用后，Windows 10 1703 及以上可用内置 USB Audio 2.0 驱动识别 KVMPanel 麦克风。麦克风默认关闭，启用默认组合后合计 **5 IN / 1 OUT**。麦克风功能占一个等时 IN，USB 音频 OUT 和控制中断端点均关闭。合并鼠标后，麦克风与 NCM、RNDIS 或 ACM 同开仍需 6 个 IN，须再释放一个 IN。Dashboard 显示音频桥的启动、就绪和不可用状态。「就绪」表示桥已向 USB 音频播放进程送出 PCM。 [Windows USB Audio 2.0 驱动](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/usb-2-0-audio-drivers)
+
+使用包含本次 HiFi4 固件和 ALSA 工具的镜像。首次上板先测 PB12 并分别对着两个声孔录音，核对 PCM 声道顺序、纯风扇和说话时的电平。随后在 Windows 选择 KVMPanel 输入，验证录音、停止重开、USB 重枚举和默认组合的键鼠、遥测、虚拟介质。HiFi4 降噪候选是带语音保护的 NLMS。用内侧通道估计与主通道相关的风扇噪声，人声出现时冻结自适应并降低抵消量。装好外壳后，用两路实录和外侧原声比较，再定参数。 [镜像准备](../software/os/debian/README.md)
 
 ## LT8619C 和并行 CSI
 

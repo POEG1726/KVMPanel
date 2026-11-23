@@ -24,7 +24,7 @@ function statusMessage(state: State) {
   };
 }
 
-const USB_FUNCTIONS = ['keyboard', 'mouse_rel', 'mouse_abs', 'storage', 'net', 'acm', 'telemetry'] as const;
+const USB_FUNCTIONS = ['keyboard', 'mouse_rel', 'mouse_abs', 'storage', 'net', 'acm', 'telemetry', 'microphone'] as const;
 
 /** The board's own state for the PC-offline page (panel.schema.json Board). */
 export function boardMessage(state: State, tick: number) {
@@ -59,6 +59,7 @@ export function boardMessage(state: State, tick: number) {
       stream: streaming ? { state: 'streaming' as const, fps } : { state: 'idle' as const, fps: null },
       media: { mounted: mounted ? mounted.split('/').pop()! : null, mode: state.media.mode },
       usb_functions: USB_FUNCTIONS.filter((f) => state.usbApplied[f] === true),
+      microphone_status: state.usbApplied.microphone === true ? 'ready' : 'off',
     },
   };
 }

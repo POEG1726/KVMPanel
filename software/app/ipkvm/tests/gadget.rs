@@ -14,9 +14,10 @@ fn every_usb_budget_matches_the_shipped_script() {
         ("storage", "STORAGE"),
         ("net", "NETWORK"),
         ("acm", "ACM"),
+        ("microphone", "MICROPHONE"),
         ("telemetry", "TELEMETRY"),
     ];
-    for mask in 0..256 {
+    for mask in 0..(1 << fields.len()) {
         let mut usb = json!({"net_mode":"ncm"});
         let mut sh = Command::new("sh");
         sh.arg(&script).arg("budget");

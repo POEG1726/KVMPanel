@@ -64,6 +64,7 @@ export function registerConfig(app: FastifyInstance, state: State) {
 
   app.get('/api/usb/applied', { preHandler: requirePerm(state) }, async () => ({
     usb: state.usbApplied,
+    microphone_status: state.usbApplied.microphone === true ? 'ready' : 'off',
     pending: JSON.stringify(state.usbApplied) !== JSON.stringify(state.config.usb),
   }));
 

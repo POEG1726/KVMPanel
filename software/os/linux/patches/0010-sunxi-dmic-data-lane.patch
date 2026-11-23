@@ -1,0 +1,96 @@
+From: POEG1726 <poeg1726@users.noreply.github.com>
+Subject: [PATCH] ASoC: sun50i-dmic: select one wired PDM data lane
+
+A board can wire the two microphone slots to DATA1 with DATA0 unused.
+Select the physical channel enables and remap the selected pair into
+the first two FIFO slots when a data lane is specified.
+---
+--- a/Documentation/devicetree/bindings/sound/allwinner,sun50i-h6-dmic.yaml
++++ b/Documentation/devicetree/bindings/sound/allwinner,sun50i-h6-dmic.yaml
+@@ -51,6 +51,11 @@
+   resets:
+     maxItems: 1
+ 
++  allwinner,data-lane:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    maximum: 3
++    description: Physical PDM data input carrying the left and right microphone slots.
++
+ required:
+   - "#sound-dai-cells"
+   - compatible
+--- a/sound/soc/sunxi/sun50i-dmic.c
++++ b/sound/soc/sunxi/sun50i-dmic.c
+@@ -10,6 +10,7 @@
+ #include <linux/module.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
++#include <linux/property.h>
+ #include <linux/reset.h>
+ #include <sound/dmaengine_pcm.h>
+ #include <sound/pcm_params.h>
+@@ -42,6 +43,7 @@
+ #define SUN50I_DMIC_CH_NUM			(0x24)
+ 	#define SUN50I_DMIC_CH_NUM_N(v)				((v) << 0)
+ 	#define SUN50I_DMIC_CH_NUM_N_MASK			GENMASK(2, 0)
++#define SUN50I_DMIC_CH_MAP			(0x28)
+ #define SUN50I_DMIC_CNT				(0x2c)
+ 	#define SUN50I_DMIC_CNT_N				(1 << 0)
+ #define SUN50I_DMIC_D0D1_VOL_CTR		(0x30)
+@@ -62,6 +64,7 @@
+ 	struct clk *dmic_clk;
+ 	struct clk *bus_clk;
+ 	struct reset_control *rst;
++	int data_lane;
+ 	struct regmap *regmap;
+ 	struct snd_dmaengine_dai_dma_data dma_params_rx;
+ };
+@@ -98,6 +101,10 @@
+ 			SUN50I_DMIC_RXFIFO_CTL_FLUSH);
+ 	regmap_write(host->regmap, SUN50I_DMIC_CNT, SUN50I_DMIC_CNT_N);
+ 
++	if (host->data_lane >= 0)
++		return snd_pcm_hw_constraint_minmax(substream->runtime,
++				SNDRV_PCM_HW_PARAM_CHANNELS, 1, 2);
++
+ 	return 0;
+ }
+ 
+@@ -111,6 +118,15 @@
+ 	unsigned int channels = params_channels(params);
+ 	unsigned int chan_en = (1 << channels) - 1;
+ 	struct sun50i_dmic_dev *host = snd_soc_dai_get_drvdata(cpu_dai);
++
++	if (host->data_lane >= 0) {
++		unsigned int slot = 2 * host->data_lane;
++
++		/* Map FIFO slots 0/1 to the selected pin and enable its PDM channels. */
++		regmap_update_bits(host->regmap, SUN50I_DMIC_CH_MAP, GENMASK(7, 0),
++				   slot | ((slot + 1) << 4));
++		chan_en <<= slot;
++	}
+ 
+ 	/* DMIC num is N+1 */
+ 	regmap_update_bits(host->regmap, SUN50I_DMIC_CH_NUM,
+@@ -343,12 +359,21 @@
+ {
+ 	struct sun50i_dmic_dev *host;
+ 	struct resource *res;
++	u32 lane;
+ 	int ret;
+ 	void __iomem *base;
+ 
+ 	host = devm_kzalloc(&pdev->dev, sizeof(*host), GFP_KERNEL);
+ 	if (!host)
+ 		return -ENOMEM;
++
++	host->data_lane = -1;
++	if (device_property_present(&pdev->dev, "allwinner,data-lane")) {
++		ret = device_property_read_u32(&pdev->dev, "allwinner,data-lane", &lane);
++		if (ret || lane > 3)
++			return dev_err_probe(&pdev->dev, -EINVAL, "Invalid PDM data lane\n");
++		host->data_lane = lane;
++	}
+ 
+ 	/* Get the addresses */
+ 	base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);

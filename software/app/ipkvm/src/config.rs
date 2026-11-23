@@ -86,6 +86,7 @@ pub fn usb_budget(u: &Value) -> Value {
         + (abs && !(rel && on("mouse_merge"))) as usize
         + (on("telemetry") && !abs) as usize
         + on("storage") as usize
+        + on("microphone") as usize
         + 2 * dual;
     let output = on("storage") as usize + dual;
     json!({"in":input,"out":output,"fits":input<=5 && output<=5,"in_missing":input.saturating_sub(5),"out_missing":output.saturating_sub(5)})
@@ -110,6 +111,14 @@ fn merge(target: &mut Value, patch: &Value, path: &str) {
 impl App {
     pub(crate) fn applied_usb(&self) -> Value {
         self.cfg.applied.read().unwrap().clone()
+    }
+
+    pub(crate) fn microphone_status(&self, bound: bool, applied: &Value) -> &'static str {
+        if bound && applied["microphone"] == true {
+            self.hw.microphone_status()
+        } else {
+            "off"
+        }
     }
 
     pub fn subscribe_config(&self) -> (Arc<Value>, broadcast::Receiver<Arc<Value>>) {
@@ -249,6 +258,7 @@ async fn applied(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>, ApiE
             "mouse_rel",
             "mouse_abs",
             "telemetry",
+            "microphone",
             "storage",
             "net",
             "acm",
@@ -257,7 +267,8 @@ async fn applied(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>, ApiE
         }
     }
     Ok(Json(
-        json!({"usb":actual,"pending":actual!=a.config()["usb"]}),
+        json!({"usb":actual,"pending":actual!=a.config()["usb"],
+               "microphone_status":a.microphone_status(bound, &actual)}),
     ))
 }
 async fn apply(State(a): State<App>, h: HeaderMap) -> Result<impl IntoResponse, ApiError> {

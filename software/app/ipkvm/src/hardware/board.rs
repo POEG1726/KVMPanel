@@ -1,4 +1,5 @@
 use super::{
+    audio::Audio,
     hid::Hid,
     video::{hdmi_device, Video},
     Hardware,
@@ -72,6 +73,7 @@ fn usb_args(usb: &Value) -> Vec<(&'static str, String)> {
         ("telemetry", "TELEMETRY"),
         ("storage", "STORAGE"),
         ("acm", "ACM"),
+        ("microphone", "MICROPHONE"),
     ] {
         args.push((key, if usb[field] == true { "1" } else { "0" }.into()));
     }
@@ -114,12 +116,17 @@ fn indicator(field: &str) -> io::Result<bool> {
 
 #[derive(Default)]
 pub(super) struct Board {
+    audio: Mutex<Audio>,
     hid: Mutex<Hid>,
     enumeration: Mutex<()>,
     video: Mutex<Video>,
     pulse: Mutex<()>,
 }
 impl Hardware for Board {
+    fn microphone_status(&self) -> &'static str {
+        self.audio.lock().unwrap().status()
+    }
+
     fn usb_bound(&self) -> io::Result<bool> {
         match fs::read_to_string("/sys/kernel/config/usb_gadget/kvmpanel/UDC") {
             Ok(name) => Ok(!name.trim().is_empty()),
@@ -135,6 +142,8 @@ impl Hardware for Board {
     }
     fn apply_usb(&self, usb: &Value, media: &[(OsString, OsString)]) -> io::Result<()> {
         let _enumeration = self.enumeration.lock().unwrap();
+        let mut audio = self.audio.lock().unwrap();
+        audio.stop();
         // Release old device file descriptions before configfs unbind. Input during
         // re-enumeration observes absent ports without waiting on the external script.
         *self.hid.lock().unwrap() = Hid::default();
@@ -147,6 +156,9 @@ impl Hardware for Board {
                 .envs(media.iter().map(|(k, v)| (k, v))))?;
             let fresh = Hid::enumerate()?;
             *self.hid.lock().unwrap() = fresh;
+            if usb["microphone"] == true {
+                audio.start();
+            }
         }
         Ok(())
     }

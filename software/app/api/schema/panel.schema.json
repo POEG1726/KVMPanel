@@ -145,7 +145,7 @@
           }
         },
         "kvm": {
-          "type": "object", "required": ["sessions", "hdmi", "stream", "media", "usb_functions"], "additionalProperties": false,
+          "type": "object", "required": ["sessions", "hdmi", "stream", "media", "usb_functions", "microphone_status"], "additionalProperties": false,
           "properties": {
             "sessions": {
               "description": "Open remote console sessions",
@@ -164,10 +164,13 @@
               "type": "object", "required": ["mounted", "mode"], "additionalProperties": false,
               "properties": { "mounted": { "type": ["string", "null"], "description": "Image file name" }, "mode": { "enum": ["cdrom", "disk", null] } }
             },
+            "microphone_status": {
+              "enum": ["off", "starting", "ready", "unavailable"]
+            },
             "usb_functions": {
               "description": "Gadget functions running now (the applied set, not pending config)",
               "type": "array",
-              "items": { "enum": ["keyboard", "mouse_rel", "mouse_abs", "storage", "net", "acm", "telemetry"] }
+              "items": { "enum": ["keyboard", "mouse_rel", "mouse_abs", "storage", "net", "acm", "telemetry", "microphone"] }
             }
           }
         }
