@@ -34,14 +34,23 @@ export function registerStream(app: FastifyInstance, state: State) {
     };
     const stop = () => clearTimeout(timer);
     stops.add(stop);
+    state.activeStreams += 1;
     tick();
-    socket.on('close', () => { stop(); stops.delete(stop); });
+    socket.on('close', () => {
+      stop();
+      stops.delete(stop);
+      if (!paused) state.activeStreams -= 1;
+    });
     socket.on('message', (data, isBinary) => {
       if (isBinary) return;
       try {
         const m = JSON.parse(data.toString());
-        if (m?.t === 'pause') paused = true;
+        if (m?.t === 'pause' && !paused) {
+          paused = true;
+          state.activeStreams -= 1;
+        }
         if (m?.t === 'resume') {
+          if (paused) state.activeStreams += 1;
           paused = false;
           // Contract: resume always pushes the current frame at once, regardless of frame_diff.
           if (state.hdmi.signal && socket.readyState === 1) socket.send(mockFrame(frame), { binary: true });

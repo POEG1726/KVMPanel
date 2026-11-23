@@ -87,6 +87,10 @@ export interface State {
   pc: { connected: boolean; last_seen_ts: number | null };
   /** Number of open /api/ws console connections. */
   consoleSessions: number;
+  /** User and source IP of each open /api/ws connection. */
+  consoleClients: { user: string; ip: string }[];
+  /** Open /api/stream sockets that are not paused. */
+  activeStreams: number;
   mcpEnabled: boolean;
   update: { channel: 'stable' | 'preview'; server: string };
   updateJobs: Map<string, { id: string; state: 'running' | 'done' | 'failed'; progress: number }>;
@@ -135,6 +139,8 @@ export function createState(opts: { now?: () => number; sleep?: (ms: number) => 
     startedAt: (opts.now ?? Date.now)(),
     pc: { connected: true, last_seen_ts: null },
     consoleSessions: 0,
+    consoleClients: [],
+    activeStreams: 0,
     mcpEnabled: false,
     update: { channel: 'stable', server: 'https://updates.example.invalid/kvmpanel' },
     updateJobs: new Map(),

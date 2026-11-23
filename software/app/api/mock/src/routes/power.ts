@@ -10,13 +10,31 @@ export function normalizeMac(raw: string): string | null {
   return m ? m.slice(1).join(':').toLowerCase() : null;
 }
 
+/** How long the mock PC takes from power-on until its host program sends telemetry. */
+export const HOST_APP_BOOT_MS = 8000;
+
+/**
+ * Sets the mock PC power LED. Powering off also drops the host program link; powering on
+ * brings it back after HOST_APP_BOOT_MS, so the panel walks through off -> waiting -> data.
+ */
+export function setPcPower(state: State, on: boolean): void {
+  const was = state.power.on;
+  state.power.on = on;
+  if (on && !was) {
+    setTimeout(() => {
+      if (state.power.on) state.pc.connected = true;
+    }, HOST_APP_BOOT_MS).unref();
+  }
+  if (!on) state.pc.connected = false;
+}
+
 export function registerPower(app: FastifyInstance, state: State) {
   app.get('/api/power', { preHandler: requirePerm(state, 'console') }, async () => ({ ...state.power }));
 
   app.post('/api/power/press', { preHandler: [requirePerm(state, 'power'), bodyGuard('pressPower')] }, async (req, reply) => {
     const { button, duration_ms } = req.body as { button: 'power' | 'reset'; duration_ms: number };
     if (button === 'power') {
-      state.power.on = duration_ms >= LONG_PRESS_MS ? false : !state.power.on;
+      setPcPower(state, duration_ms >= LONG_PRESS_MS ? false : !state.power.on);
     }
     state.events.emit('status_changed');
     return reply.code(204).send();

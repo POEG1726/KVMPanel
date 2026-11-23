@@ -103,12 +103,52 @@ describe('panel socket', () => {
     const p = await open();
     await p.next((m) => m.t === 'telemetry');
     app.kvm.pc.connected = false;
-    const pc = await p.next((m) => m.t === 'pc');
+    const pc = await p.next((m) => m.t === 'pc' && m.connected === false);
     expect(validToPanel(pc)).toBe(true);
     expect(pc.connected).toBe(false);
     p.all.length = 0;
     await new Promise((r) => setTimeout(r, 1500));
     expect(p.all.filter((m) => m.t === 'telemetry')).toHaveLength(0);
+  });
+
+  it('streams the board state every second, including while the PC is off', async () => {
+    const p = await open();
+    const first = await p.next((m) => m.t === 'board');
+    expect(validToPanel(first), JSON.stringify(validToPanel.errors)).toBe(true);
+    expect(first).toMatchObject({
+      pc_power: 'on', hostname: 'kvmpanel', version: '0.1.0',
+      eth: { iface: 'eth0', link_mbps: 1000, duplex: 'full' },
+      access: { url: 'http://kvmpanel.local', tailscale_ip: null },
+      kvm: { sessions: [], stream: { state: 'idle', fps: null }, media: { mounted: null, mode: null } },
+    });
+    expect(first.kvm.usb_functions).toEqual(['keyboard', 'mouse_rel', 'mouse_abs', 'storage', 'telemetry']);
+    expect(first.kvm.hdmi).toEqual({ signal: true, width: 1920, height: 1080, fps: 60 });
+
+    app.kvm.power.on = false;
+    app.kvm.pc.connected = false;
+    const off = await p.next((m) => m.t === 'board' && m.pc_power === 'off', 1500);
+    expect(validToPanel(off), JSON.stringify(validToPanel.errors)).toBe(true);
+    expect(off.kvm.hdmi).toEqual({ signal: false, width: null, height: null, fps: null });
+    const status = await p.next((m) => m.t === 'status' && m.pc.state === 'off');
+    expect(validToPanel(status)).toBe(true);
+  });
+
+  it('powers the PC on only while it is off', async () => {
+    const p = await open();
+    await p.next((m) => m.t === 'hello');
+    expect(await p.next((m) => m.t === 'pc')).toMatchObject({ connected: true });
+    p.send({ t: 'action', id: 5, action: 'pc_power_on' });
+    expect(await p.next((m) => m.t === 'result' && m.id === 5)).toEqual({ t: 'result', id: 5, ok: false, error: 'pc_on' });
+    expect(app.kvm.power.on).toBe(true);
+
+    app.kvm.power.on = false;
+    app.kvm.pc.connected = false;
+    p.send({ t: 'action', id: 6, action: 'pc_power_on' });
+    expect(await p.next((m) => m.t === 'result' && m.id === 6)).toEqual({ t: 'result', id: 6, ok: true });
+    expect(app.kvm.power.on).toBe(true);
+    expect(app.kvm.pc.connected).toBe(false);
+    const status = await p.next((m) => m.t === 'status' && m.pc.state === 'partial');
+    expect(validToPanel(status)).toBe(true);
   });
 
   it('answers a bad line with bad_message and keeps serving', async () => {

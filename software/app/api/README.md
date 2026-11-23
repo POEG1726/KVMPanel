@@ -68,6 +68,12 @@ npm test --prefix software/app/api/mock
 
 Mock 的测试会对照 `openapi.yaml` 校验每一个响应。初始账号为 `admin` / `admin`。
 
+调副屏离线状态页时，用环境变量 `KVMPANEL_MOCK_PC` 指定电脑的初始状态：`on`（默认）、`off`（电源灯灭）或 `waiting`（开着机，但上位机没有数据）。电脑关着时，副屏的开机动作或网页电源键会把它打开，8 秒后上位机开始发数据。网页长按关机后，上位机连接随之断开。
+
+```powershell
+$env:KVMPANEL_MOCK_PC = 'off'; npm start --prefix software/app/api/mock
+```
+
 ## 事件和输入：`/api/ws`
 
 - 要求已登录且有 `console` 权限。未登录以 4401 关闭，没有 `console` 权限以 4403 关闭。
@@ -133,9 +139,10 @@ Mock 的测试会对照 `openapi.yaml` 校验每一个响应。初始账号为 `
 |---|---|
 | `hello` | 连上时第一条，带 `version` |
 | `config` | 完整配置。连上时推一次，此后每次变更都推，不管改动来自网页还是副屏 |
-| `status` | 右上角状态栏用：`eth`、`pc`、`usb_a`、`kvm.sessions`，另有 `lux`。变化时推，另外每 5 秒推一次 |
+| `status` | 右上角状态栏用：`eth`、`pc`、`usb_a`、`kvm.sessions`，另有 `lux`。连上时推一次，变化时推，另外每 5 秒推一次 |
 | `telemetry` | 每秒一次：`ts` 加上 `metrics[]`，每项是 `{id,label,unit,value,min,max,warn?,group}`。**电脑上不存在的项（比如空的内存槽）不出现在 `metrics` 里**，副屏只显示收到的项；`value` 为 null 表示这一项存在、但这一秒没读到。`warn` 已经合并了 `config.panel.thresholds`。`hidden_metrics` 里的项不发 |
-| `pc` | 上位机连接状态变化。断开期间不发 `telemetry`，副屏切到“等待电脑数据”画面 |
+| `pc` | 上位机连接状态。连上 socket 时推一次，此后每次变化都推。断开期间不发 `telemetry`，副屏切到离线状态页 |
+| `board` | 每秒一次，不管电脑是否连着：电脑电源灯 `pc_power`（`on`/`off`/`unknown`）、主机名、版本、运行时间、板子 CPU、SoC 温度、内存和 SD 用量、`eth`（链路速率、双工、MAC、板子自己的收发 bit/s）、`access`（访问地址、Tailscale IP）、`kvm`（远程会话、HDMI 输入、视频流、虚拟介质、正在运行的 USB 功能）。离线状态页用它，字段见 `/Board` |
 | `kvm_restarting` | 网页端的 KVM 服务正在重启，副屏自身不受影响 |
 | `result` | 对请求的回复，`id` 和请求相同。如果请求那一行本身无法解析，回复里没有 `id`，错误为 `bad_message` |
 
@@ -145,7 +152,7 @@ Mock 的测试会对照 `openapi.yaml` 校验每一个响应。初始账号为 `
 |---|---|
 | `get_config` | `result.data` 是完整配置 |
 | `patch_config`（`patch`） | 成功时 `result.data` 是新配置，失败时带 `error` 和 `detail` |
-| `action`（`reboot`、`shutdown`、`restart_kvm`、`reset_hid`、`disconnect_sessions`、`eject_media`、`usb_apply`） | `result.ok` |
+| `action`（`reboot`、`shutdown`、`restart_kvm`、`reset_hid`、`disconnect_sessions`、`eject_media`、`usb_apply`、`pc_power_on`） | `result.ok`。`pc_power_on` 等于短按一次电脑电源键；电源灯亮着时拒绝，错误为 `pc_on`，保证副屏不会把电脑关掉 |
 | `device_info` | `result.data` 和 `GET /api/device` 相同 |
 
 **告警阈值**：`config.panel.thresholds` 的键可以是指标 id，比如 `gpu.temp`；也可以是以 `.*` 结尾的前缀，比如 `mem.dimm.*`。同一个指标同时匹配时，精确的 id 优先于前缀。在 PATCH 里把某个键设为 null 就删除这个阈值。默认值为 `cpu.tctl` 85、`gpu.mem_junction` 95、`mem.dimm.*` 60。

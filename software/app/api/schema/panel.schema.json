@@ -9,6 +9,7 @@
         { "$ref": "#/$defs/Telemetry" },
         { "$ref": "#/$defs/Pc" },
         { "$ref": "#/$defs/Status" },
+        { "$ref": "#/$defs/Board" },
         { "$ref": "#/$defs/Config" },
         { "$ref": "#/$defs/KvmRestarting" },
         { "$ref": "#/$defs/Result" }
@@ -88,6 +89,73 @@
         "lux": { "type": ["number", "null"] }
       }
     },
+    "Usage": {
+      "type": "object", "required": ["used", "total"], "additionalProperties": false,
+      "properties": { "used": { "type": "number", "minimum": 0, "description": "Bytes" }, "total": { "type": "number", "minimum": 0, "description": "Bytes" } }
+    },
+    "Board": {
+      "description": "KVMPanel's own state, once per second whether or not the PC is connected; drives the PC-offline page",
+      "type": "object",
+      "required": ["t", "ts", "pc_power", "hostname", "version", "uptime_s", "cpu_pct", "soc_temp_c", "mem", "sd", "eth", "access", "kvm"],
+      "additionalProperties": false,
+      "properties": {
+        "t": { "const": "board" },
+        "ts": { "type": "integer", "description": "Unix ms" },
+        "pc_power": { "enum": ["on", "off", "unknown"], "description": "PC power LED input (PE12); unknown when it cannot be read" },
+        "hostname": { "type": "string" },
+        "version": { "type": "string", "description": "KVMPanel software version" },
+        "uptime_s": { "type": "integer", "minimum": 0 },
+        "cpu_pct": { "type": "number", "minimum": 0, "maximum": 100, "description": "Board CPU load over both cores" },
+        "soc_temp_c": { "type": ["number", "null"] },
+        "mem": { "$ref": "#/$defs/Usage" },
+        "sd": { "oneOf": [{ "$ref": "#/$defs/Usage" }, { "type": "null" }], "description": "SD card data partition; null without a card" },
+        "eth": {
+          "type": "object", "required": ["iface", "link_mbps", "duplex", "mac", "rx_bps", "tx_bps"], "additionalProperties": false,
+          "properties": {
+            "iface": { "type": "string" },
+            "link_mbps": { "type": "integer", "minimum": 0, "description": "0 while the link is down" },
+            "duplex": { "enum": ["full", "half", null] },
+            "mac": { "type": "string" },
+            "rx_bps": { "type": "number", "minimum": 0, "description": "Bits per second received by the board itself" },
+            "tx_bps": { "type": "number", "minimum": 0, "description": "Bits per second sent by the board itself" }
+          }
+        },
+        "access": {
+          "type": "object", "required": ["url", "tailscale_ip"], "additionalProperties": false,
+          "properties": {
+            "url": { "type": "string", "description": "e.g. https://kvmpanel.local (http:// while HTTPS is off)" },
+            "tailscale_ip": { "type": ["string", "null"], "description": "null while Tailscale is not running" }
+          }
+        },
+        "kvm": {
+          "type": "object", "required": ["sessions", "hdmi", "stream", "media", "usb_functions"], "additionalProperties": false,
+          "properties": {
+            "sessions": {
+              "description": "Open remote console sessions",
+              "type": "array",
+              "items": { "type": "object", "required": ["user", "ip"], "additionalProperties": false, "properties": { "user": { "type": "string" }, "ip": { "type": "string" } } }
+            },
+            "hdmi": {
+              "type": "object", "required": ["signal", "width", "height", "fps"], "additionalProperties": false,
+              "properties": { "signal": { "type": "boolean" }, "width": { "type": ["integer", "null"] }, "height": { "type": ["integer", "null"] }, "fps": { "type": ["number", "null"] } }
+            },
+            "stream": {
+              "type": "object", "required": ["state", "fps"], "additionalProperties": false,
+              "properties": { "state": { "enum": ["idle", "streaming"] }, "fps": { "type": ["number", "null"], "description": "null while idle" } }
+            },
+            "media": {
+              "type": "object", "required": ["mounted", "mode"], "additionalProperties": false,
+              "properties": { "mounted": { "type": ["string", "null"], "description": "Image file name" }, "mode": { "enum": ["cdrom", "disk", null] } }
+            },
+            "usb_functions": {
+              "description": "Gadget functions running now (the applied set, not pending config)",
+              "type": "array",
+              "items": { "enum": ["keyboard", "mouse_rel", "mouse_abs", "storage", "net", "acm", "telemetry"] }
+            }
+          }
+        }
+      }
+    },
     "Config": {
       "description": "Whole Config (openapi.yaml components/schemas/Config) on connect and after every change",
       "type": "object", "required": ["t", "config"], "additionalProperties": false,
@@ -118,11 +186,12 @@
       "properties": { "t": { "const": "patch_config" }, "id": { "$ref": "#/$defs/Id" }, "patch": { "type": "object" } }
     },
     "Action": {
+      "description": "pc_power_on is a short press of the PC power button (PE13). It is refused with error pc_on while the power LED is lit, so the panel can never switch the PC off.",
       "type": "object", "required": ["t", "id", "action"], "additionalProperties": false,
       "properties": {
         "t": { "const": "action" },
         "id": { "$ref": "#/$defs/Id" },
-        "action": { "enum": ["reboot", "shutdown", "restart_kvm", "reset_hid", "disconnect_sessions", "eject_media", "usb_apply"] }
+        "action": { "enum": ["reboot", "shutdown", "restart_kvm", "reset_hid", "disconnect_sessions", "eject_media", "usb_apply", "pc_power_on"] }
       }
     },
     "DeviceInfoRequest": {
