@@ -2,6 +2,12 @@
 
 最近五项有实际进展的软件工作，最新一项在顶部。全项目状态见 [软件进度](docs/software-progress.md)。
 
+## Windows PC 遥测采集计划
+
+核对日期 2026-11-23。
+
+- 已精简为日常负载、温度、常用频率、功耗、容量和实际吞吐。每张网卡独立上报，Panel 自选字段。已核对现有契约和 Qt/LVGL 原型的旧字段。 [采集计划](docs/superpowers/specs/2026-11-23-pc-telemetry-design.md)
+- 接手先在不同硬件主机跑只读探测，再按计划同步正式清单、Mock、`kvmd` 和副屏布局，完成 HID 批传和实测。原型当前仍提供早期指标。 [实施顺序](docs/superpowers/specs/2026-11-23-pc-telemetry-design.md#实施顺序)
 
 ## 副屏电脑离线页
 
@@ -18,13 +24,6 @@
 - 已移植 Cedrus JPEG 编码和 T113 IOMMU，`kvmd` 自动发现 `cedrus-enc`，缺失或编码失败时回退 libjpeg-turbo。已构建 ARM 内核、组合 DTB 和静态应用，核对 DT 绑定及 NV12 填充。 [编码说明](docs/linux-6.18.md#jpegmjpeg-编码)
 - 测试镜像为 `build/debian/kvmpanel-debian13-armhf-mjpeg.img.xz`。已检查分区和文件系统。QEMU 用 virt 内核验证了登录、KVM 健康接口、USB gadget 和模拟 STC 关机。
 - 接手上板先确认 JPEG 输出、颜色和 VE 完成中断，再测 LT8619C → CSI → KVM 网页的帧率和 CPU 实占。用 `KVMD_MJPEG_DEVICE=off` 对照软件编码。
-
-## Windows PC 遥测采集计划
-
-核对日期 2026-11-23。
-
-- 已核对截图与现有契约。清单纳入截图的非风扇传感器及每个 Windows 网络适配器。设备和指标动态发现，Panel 自行绑定显示内容。 [采集计划](docs/superpowers/specs/2026-11-23-pc-telemetry-design.md)
-- 接手先做只读探测，在截图机器和不同硬件主机核对来源覆盖，再实现设备清单、Mock 和正式 HID 批传。真实采集及 USB 吞吐待验证。 [现有接口](software/app/ipkvm/README.md#副屏与遥测)
 
 ## 电脑电源灯状态
 
