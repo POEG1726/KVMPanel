@@ -7,7 +7,7 @@
 核对日期 2026-11-23。
 
 - 原生 C/Win32 采集器带设置窗口和托盘。Windows x64 构建通过，本机验证 CPU、内存、磁盘、逐网卡和 GPU 基础指标。RTX 5090 管理员探测同时取得核心温度 29 °C、核心热点 31.1875 °C 和显存结温 40 °C。普通权限访问 PawnIO 被拒时仍可采集核心温度及显存结温。 [采集器与只读探测](software/app/pc-telemetry/README.md)
-- 本机验证 Ryzen 时钟域、功耗限值、倍频、供电读数和两条 DDR5 的 SPD 温度、PMIC 告警、功率及六路电压，另已加锁核对 ADC 恢复。按 ZenStates 寄存器路径接入内部 PLL BCLK，本机 `--once` 读取 100 MHz。接手用 `--once` 核对其它主板和非默认频率，再测实板 USB。DRAM 读写带宽和 Intel GPU 深度读取待实现。 [CPU 和 DIMM 采集](software/app/pc-telemetry/README.md#cpu-和-dimm-硬件读数)
+- 本机验证 Ryzen 时钟域、供电读数、倍频、功耗限值和两条 DDR5 的 SPD 温度、PMIC 告警、功率及六路电压，另已加锁核对 ADC 恢复。内部 PLL BCLK 实测 100 MHz，SMU DRAM 带宽已通过顺序读写负载区分两个方向。接手用 `--once` 核对其他主板、非默认 BCLK、9800X3D 和 5600X 的带宽，再测实板 USB。Intel GPU 深度读取待实现。 [CPU 和 DIMM 采集](software/app/pc-telemetry/README.md#cpu-和-dimm-硬件读数)
 
 ## 板端 Dashboard 与指标选择
 

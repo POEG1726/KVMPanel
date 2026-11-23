@@ -15,12 +15,13 @@ typedef struct {
     unsigned version, floats, cores;
     unsigned fclk, uclk, mclk, soc_v;
     unsigned core_power, core_voltage, core_temp;
+    unsigned dram_read, dram_write;
 } RyzenProfile;
 
 static const RyzenProfile profiles[] = {
-    {"AMD Ryzen 7 9800X3D", 0x620105, 457, 8, 71, 75, 79, 83, 333, 309, 317},
-    {"AMD Ryzen 9 9950X3D", 0x620205, 613, 16, 71, 75, 79, 83, 301, 317, 333},
-    {"AMD Ryzen 5 5600X", 0x380905, 372, 6, 48, 50, 51, 45, 0, 0, 0},
+    {"AMD Ryzen 7 9800X3D", 0x620105, 457, 8, 71, 75, 79, 83, 333, 309, 317, 96, 97},
+    {"AMD Ryzen 9 9950X3D", 0x620205, 613, 16, 71, 75, 79, 83, 301, 317, 333, 96, 97},
+    {"AMD Ryzen 5 5600X", 0x380905, 372, 6, 48, 50, 51, 45, 0, 0, 0, 68, 69},
 };
 
 struct Ryzen {
@@ -183,6 +184,14 @@ void ryzen_sample(Ryzen *ryzen, Sample *sample, unsigned groups)
     const float *v = ryzen->values;
     const BOOL granite = p->version != 0x380905;
     const uint64_t key = identity(p->brand, strlen(p->brand));
+    if (groups & MEMORY) {
+        /* The SMU reports average DRAM traffic in GB/s. The panel protocol uses B/s. */
+        const double read = v[p->dram_read], write = v[p->dram_write];
+        if (read >= 0 && read <= 200)
+            device_metric(sample, "mem", key, "dram_read", NULL, read * 1e9);
+        if (write >= 0 && write <= 200)
+            device_metric(sample, "mem", key, "dram_write", NULL, write * 1e9);
+    }
     if ((groups & CPU) && granite && v[11] > 0 && v[11] <= 115)
         metric_put(sample, "cpu.tctl", "", v[11]);
     if (groups & TUNING) {

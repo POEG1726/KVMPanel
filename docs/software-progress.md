@@ -4,6 +4,7 @@
 
 ## 已完成
 
+- **Windows Ryzen DRAM 带宽**。通过已有 SMU 表独立采集实际读写流量，Panel 使用 B/s。Windows x64 构建、板端 Panel 测试及 9950X3D 顺序读写负载验证通过，实板 USB、9800X3D 和 5600X 待复测。 [带宽来源与验证](../software/app/pc-telemetry/README.md#cpu-和-dimm-硬件读数)
 - **Windows Ryzen BCLK**。从 FCH 内部 PLL 读取超频参考频率。Windows x64 构建及 9950X3D 实测通过，读到 100 MHz。缺少 DLL 时按预期省略该值。板端 Panel 测试通过，实板 USB、其它主板和非默认频率待测。 [BCLK 采集](../software/app/pc-telemetry/README.md#cpu-和-dimm-硬件读数)
 - **板端 Dashboard 与指标选择**。LVGL framebuffer 程序接入 `kvmd` 的 `board`、`telemetry` 和指标清单。主机离线时显示板子状态，支持 PE12 检查后的短按开机、四方向旋转、逐项显隐和息屏唤醒。通过 Rust、Mock、网页测试、ARM 静态构建和原生及 ARM/QEMU 无屏测试。Debian 镜像已加入 Dashboard 服务和 WS2812 内核。 [Dashboard](../software/app/dashboard/README.md) · [镜像](../software/os/debian/README.md)
 - **Windows CPU 与 DIMM 硬件读数**。支持指定 Ryzen SMU 表的核心温度、时钟域、供电读数、功耗限值和物理核心倍频。DDR5 SPD5118 温度及支持的 PMIC 告警、功率和六路电压接入 SMBus。Windows x64 构建通过，9950X3D 与两条 DIMM 实测，并核对 PMIC ADC 恢复。 [采集器与支持范围](../software/app/pc-telemetry/README.md#cpu-和-dimm-硬件读数)
@@ -21,7 +22,7 @@
 
 ## In Progress
 
-- **Windows PC 遥测补充与实测**。继续核对 DRAM 实际读写带宽的硬件来源，ZenStates 的频率和时序读取不提供该读数。Intel GPU 深度读数、其他主机及实板 USB 待验证。 [采集计划](superpowers/specs/2026-11-23-pc-telemetry-design.md)
+- **Windows PC 遥测补充与实测**。Intel GPU 深度读数待接入。有其它 Ryzen 主机时，用 `--once` 交叉验证 BCLK 和 DRAM 带宽。有板子时验证 USB 与 Panel 显示。 [采集计划](superpowers/specs/2026-11-23-pc-telemetry-design.md)
 - **板级适配**。2026-11-22 归档与软件已用于 microSD UHS、显示电源和采集适配。待新版网表核对 RTL8211F-CG 的无源晶体接法。待实板验证 PHY 起振和链路、SGM3851A 的 SWIRE 波形和三路输出、LT8619C 的 IRQ 清除及 HDMI 采集，以及 microSD 的电压和速率。 [板级适配](linux-6.18.md) · [网口时序](development.md#单独验证本板网口)
 - **STC8 电源管理集成**。固件 1.1 加入 STC 本机硬件看门狗，已通过 SDCC 构建、状态机测试及模拟 ISP 回归。引脚分配 CSV 已记录按键理论电压。实板待验证 ADC 判定窗口、UART 电平和收发、供电与复位波形、看门狗恢复，以及外部 UPDATE_HOLD 电路。 [STC8 说明与验证](../software/firmware/stc8/README.md)
 

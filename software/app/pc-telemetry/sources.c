@@ -570,7 +570,7 @@ void sources_sample(Sources *sources, Sample *sample, unsigned groups)
     }
     if (groups & CPU)
         cpu_sample(sources, sample);
-    if (groups & (CPU | TUNING)) {
+    if (groups & (CPU | MEMORY | TUNING)) {
         if (!sources->ryzen_attempted) {
             sources->ryzen_attempted = TRUE;
             sources->ryzen = ryzen_open(&sources->ryzen_access_denied);

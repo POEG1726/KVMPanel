@@ -286,7 +286,8 @@ fn instance_metric(id: &str, names: Option<&DeviceNames>) -> Option<Metric> {
         | ("dimm", "pmic_hot" | "pmic_ov" | "pmic_uv")
         | ("net", "link" | "physical") => (field, "", 1.),
         ("gpu", "vram_used" | "vram_total" | "shared_used") => (field, "GB", 64.),
-        ("mem", "dram_read" | "dram_write") => (field, "B/s", 200e9),
+        ("mem", "dram_read") => ("DRAM read", "B/s", 200e9),
+        ("mem", "dram_write") => ("DRAM write", "B/s", 200e9),
         ("disk", "read" | "write") => (field, "B/s", 10e9),
         ("net", "rx" | "tx") => (field, "B/s", 1.25e9),
         ("net", "rx_link" | "tx_link") => (field, "b/s", 10e9),
