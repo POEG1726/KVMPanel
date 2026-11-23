@@ -1,6 +1,7 @@
 /* LVGL dashboard prototype (spike). Env:
  *   KVM_PANEL_ADDR   host:port of the panel socket (default 127.0.0.1:7701)
  *   KVM_SCALE        window downscale, 1 or 2 (default 2 -> 540x960 window, rendering stays 1080x1920)
+ *   KVM_LANDSCAPE    1 = 1920x1080 screen (panel mounted sideways)
  *   KVM_FPS          frame cap (default 30, 0 = uncapped)
  *   KVM_BLUR         0 disables the backdrop blur on the tiles (default on)
  *   KVM_SNAPSHOT     write a full-resolution PPM of the screen here ...
@@ -91,13 +92,15 @@ int main(void)
 
     int fps = env_int("KVM_FPS", 30);
     uint32_t period = fps > 0 ? 1000 / fps : 1;
-    lv_display_t * disp = x11_out_create(1080, 1920, env_int("KVM_SCALE", 2));
+    const bool landscape = env_int("KVM_LANDSCAPE", 0) != 0;
+    const int w = landscape ? 1920 : 1080, h = landscape ? 1080 : 1920;
+    lv_display_t * disp = x11_out_create(w, h, env_int("KVM_SCALE", 2));
     lv_timer_set_period(lv_display_get_refr_timer(disp), period);
 
     fonts_init();
     lv_obj_t * scr = lv_screen_active();
-    bg_init(scr);
-    ui_create(scr);
+    bg_init(scr, w, h);
+    ui_create(scr, w, h);
 
     char host[64] = "127.0.0.1";
     int port = 7701;

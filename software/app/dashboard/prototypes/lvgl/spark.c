@@ -59,8 +59,16 @@ static void px_over(uint8_t * p, lv_color_t c, int a)
     p[3] = (uint8_t)oa;
 }
 
-void spark_draw(spark_t * s, int n, const hist_t * const * series, const lv_color_t * colors, float lo, float hi)
+/* Draws newest-left (design rule): series are mirrored so index 0 is the newest sample. */
+void spark_draw(spark_t * s, int n, const hist_t * const * in, const lv_color_t * colors, float lo, float hi)
 {
+    hist_t mirrored[4];
+    const hist_t * series[4];
+    if(n > 4) n = 4;
+    for(int si = 0; si < n; si++) {
+        for(int i = 0; i < HIST_N; i++) mirrored[si].v[i] = in[si]->v[HIST_N - 1 - i];
+        series[si] = &mirrored[si];
+    }
     uint8_t * data = s->buf->data;
     uint32_t stride = s->buf->header.stride;
     lv_draw_buf_clear(s->buf, NULL);

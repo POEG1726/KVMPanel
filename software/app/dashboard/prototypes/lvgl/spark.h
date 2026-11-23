@@ -11,7 +11,7 @@ typedef struct {
 void hist_init(hist_t * h);
 void hist_push(hist_t * h, float v);
 
-/* Framed chart (dark bg, thin border, faint grid lines). The plot is rendered into a canvas only when
+/* Framed chart (dark bg, thin border, faint grid lines), newest sample at the left edge. The plot is rendered into a canvas only when
  * data changes (1 Hz); per frame LVGL just blits it. */
 typedef struct {
     lv_obj_t * frame;

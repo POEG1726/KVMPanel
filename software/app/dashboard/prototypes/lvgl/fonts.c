@@ -6,6 +6,12 @@ const lv_font_t * font_body;
 const lv_font_t * font_value;
 const lv_font_t * font_title;
 const lv_font_t * font_small;
+const lv_font_t * font_brand;
+const lv_font_t * font_hero;
+const lv_font_t * font_sub;
+const lv_font_t * font_url;
+const lv_font_t * font_ip;
+const lv_font_t * font_ip_l;
 
 static void * slurp(const char * path, size_t * n)
 {
@@ -54,6 +60,7 @@ void fonts_init(void)
     if(!rd || !sd) {
         fprintf(stderr, "fonts: no TTF found, falling back to Montserrat\n");
         font_body = font_value = font_title = font_small = &lv_font_montserrat_28;
+        font_brand = font_hero = font_sub = font_url = font_ip = font_ip_l = &lv_font_montserrat_28;
         return;
     }
     printf("fonts: %s, %s\n", ru, su);
@@ -61,4 +68,10 @@ void fonts_init(void)
     font_value = lv_tiny_ttf_create_data(sd, sn, 32);
     font_title = lv_tiny_ttf_create_data(rd, rn, 26);
     font_small = lv_tiny_ttf_create_data(rd, rn, 23);
+    font_brand = lv_tiny_ttf_create_data(sd, sn, 33);
+    font_hero = lv_tiny_ttf_create_data(sd, sn, 53);
+    font_sub = lv_tiny_ttf_create_data(rd, rn, 27);
+    font_url = lv_tiny_ttf_create_data(rd, rn, 37);
+    font_ip = lv_tiny_ttf_create_data(sd, sn, 84);
+    font_ip_l = lv_tiny_ttf_create_data(sd, sn, 74);
 }

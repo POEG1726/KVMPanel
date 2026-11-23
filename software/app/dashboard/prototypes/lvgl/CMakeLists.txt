@@ -26,6 +26,7 @@ add_executable(proto_lvgl
   bg.c
   spark.c
   ui.c
+  offline.c
   panel_sock.c
   third_party/cjson/cJSON.c
 )

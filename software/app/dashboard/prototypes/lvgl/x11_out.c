@@ -3,6 +3,7 @@
 #include "x11_out.h"
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/keysym.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +17,27 @@ static int W, H, S, WW, WH;
 static uint32_t * fb;
 static unsigned frames;
 static bool alive = true;
+/* Input: left button = touch, Return/space = OK, Tab/arrows move key focus. */
+static int32_t ptr_x, ptr_y;
+static bool ptr_down;
+static uint32_t key_last;
+static bool key_down;
+static unsigned inputs;
+
+static void pointer_read(lv_indev_t * indev, lv_indev_data_t * d)
+{
+    (void)indev;
+    d->point.x = ptr_x;
+    d->point.y = ptr_y;
+    d->state = ptr_down ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+}
+
+static void keypad_read(lv_indev_t * indev, lv_indev_data_t * d)
+{
+    (void)indev;
+    d->key = key_last;
+    d->state = key_down ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+}
 
 static void convert(int x1, int y1, int x2, int y2)
 {
@@ -68,7 +90,8 @@ lv_display_t * x11_out_create(int w, int h, int scale)
     XSetWMNormalHints(dpy, win, &hints);
     wm_delete = XInternAtom(dpy, "WM_DELETE_WINDOW", False);
     XSetWMProtocols(dpy, win, &wm_delete, 1);
-    XSelectInput(dpy, win, ExposureMask | StructureNotifyMask);
+    XSelectInput(dpy, win, ExposureMask | StructureNotifyMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask |
+                               KeyPressMask | KeyReleaseMask);
     gc = XCreateGC(dpy, win, 0, NULL);
     img = XCreateImage(dpy, DefaultVisual(dpy, scr), DefaultDepth(dpy, scr), ZPixmap, 0,
                        calloc((size_t)WW * WH, 4), WW, WH, 32, 0);
@@ -81,6 +104,16 @@ lv_display_t * x11_out_create(int w, int h, int scale)
     fb = aligned_alloc(64, sz);
     lv_display_set_buffers(disp, fb, NULL, sz, LV_DISPLAY_RENDER_MODE_DIRECT);
     lv_display_set_flush_cb(disp, flush_cb);
+
+    lv_indev_t * ptr = lv_indev_create();
+    lv_indev_set_type(ptr, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(ptr, pointer_read);
+    lv_group_t * g = lv_group_create();
+    lv_group_set_default(g);
+    lv_indev_t * kp = lv_indev_create();
+    lv_indev_set_type(kp, LV_INDEV_TYPE_KEYPAD);
+    lv_indev_set_read_cb(kp, keypad_read);
+    lv_indev_set_group(kp, g);
     return disp;
 }
 
@@ -91,6 +124,28 @@ bool x11_out_pump(void)
         XNextEvent(dpy, &ev);
         if(ev.type == Expose) XPutImage(dpy, win, gc, img, 0, 0, 0, 0, WW, WH);
         else if(ev.type == ClientMessage && (Atom)ev.xclient.data.l[0] == wm_delete) alive = false;
+        else if((ev.type == ButtonPress || ev.type == ButtonRelease) && ev.xbutton.button == Button1) {
+            ptr_x = ev.xbutton.x * S;
+            ptr_y = ev.xbutton.y * S;
+            ptr_down = ev.type == ButtonPress;
+            inputs++;
+        }
+        else if(ev.type == MotionNotify) {
+            ptr_x = ev.xmotion.x * S;
+            ptr_y = ev.xmotion.y * S;
+        }
+        else if(ev.type == KeyPress || ev.type == KeyRelease) {
+            KeySym k = XLookupKeysym(&ev.xkey, 0);
+            uint32_t key = k == XK_Return || k == XK_KP_Enter || k == XK_space ? LV_KEY_ENTER
+                         : k == XK_Tab || k == XK_Down || k == XK_Right    ? LV_KEY_NEXT
+                         : k == XK_Up || k == XK_Left                      ? LV_KEY_PREV
+                         : k == XK_Escape                                  ? LV_KEY_ESC
+                                                                           : 0;
+            if(ev.type == KeyPress) inputs++;
+            if(!key) continue;
+            key_last = key;
+            key_down = ev.type == KeyPress;
+        }
     }
     return alive;
 }
@@ -98,4 +153,9 @@ bool x11_out_pump(void)
 unsigned x11_out_frames(void)
 {
     return frames;
+}
+
+unsigned x11_out_inputs(void)
+{
+    return inputs;
 }

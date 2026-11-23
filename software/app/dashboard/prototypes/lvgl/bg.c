@@ -1,25 +1,15 @@
-/* Background "E2" from e2-v5.html, scaled 420 -> 1080 px (x2.57).
+/* Background "E2" from e2-v5.html, scaled 420 -> 1080 px (x2.57) on the short side.
  * CSS: .bg inset -20%, filter blur(40px), opacity .3 + .5 * load; blobs 55% wide, mix-blend screen,
  * alternate ease-in-out drift. Here each blob is pre-rendered once as a blurred disc (ARGB8888) and
  * only its position changes per frame; it is drawn with additive blending (close to "screen" on a
  * dark base). The CSS scale() part of the drift is not reproduced (scaled image draws are much slower).
- * Grid: 24 px (62 px) cells, rgba(94,196,255,.25) x opacity .25, scrolls one cell per 8 s, fades in
- * over the top 30% and out over the bottom 30%. */
+ * The scrolling grid of the first mockups was removed from the design.
+ * Calm mode (PC-offline page): the green blob turns teal and the intensity follows the board's CPU. */
 #include "bg.h"
 #include <math.h>
 
-#define SCR_W 1080
-#define SCR_H 1920
-#define BG_X (-SCR_W / 5) /* inset -20% */
-#define BG_Y (-SCR_H / 5)
-#define BG_W (SCR_W * 7 / 5)
-#define BG_H (SCR_H * 7 / 5)
-#define BLOB_D (BG_W * 55 / 100)
 #define BLUR_SIGMA 103.0 /* 40 px CSS blur x 2.57 */
 #define BLOB_PAD 280     /* alpha < 1/255 beyond ~2.7 sigma */
-#define BLOB_S (BLOB_D + 2 * BLOB_PAD)
-#define GRID_STEP 61.71f
-#define GRID_PERIOD_MS 8000
 
 typedef struct {
     uint32_t color;
@@ -29,22 +19,20 @@ typedef struct {
     lv_draw_buf_t * img;
 } blob_t;
 
-static blob_t blobs[3] = {
-    {0x1e6fd9, BG_X + BG_W * 5 / 100, BG_Y + BG_H * 5 / 100, BLOB_D * 40 / 100, BLOB_D * 60 / 100, 18000, NULL},
-    {0x1fa36b, BG_X + BG_W - BLOB_D, BG_Y + BG_H * 40 / 100, -BLOB_D * 50 / 100, -BLOB_D * 40 / 100, 22000, NULL},
-    {0x8a4fd8, BG_X + BG_W * 15 / 100, BG_Y + BG_H - BLOB_D, BLOB_D * 30 / 100, -BLOB_D * 70 / 100, 26000, NULL},
-};
-
+static blob_t blobs[3];
+static lv_draw_buf_t * teal; /* blob 2 in calm mode, made on first use */
+static int blob_d, blob_s;
 static lv_obj_t * screen;
 static float intensity = 0.55f, target = 0.55f;
+static bool calm, paused;
 
 static lv_draw_buf_t * make_blob(uint32_t rgb)
 {
-    lv_draw_buf_t * b = lv_draw_buf_create(BLOB_S, BLOB_S, LV_COLOR_FORMAT_ARGB8888, 0);
-    const double c = BLOB_S / 2.0, r0 = BLOB_D / 2.0, k = 1.0 / (BLUR_SIGMA * sqrt(2.0));
-    for(int y = 0; y < BLOB_S; y++) {
+    lv_draw_buf_t * b = lv_draw_buf_create(blob_s, blob_s, LV_COLOR_FORMAT_ARGB8888, 0);
+    const double c = blob_s / 2.0, r0 = blob_d / 2.0, k = 1.0 / (BLUR_SIGMA * sqrt(2.0));
+    for(int y = 0; y < blob_s; y++) {
         uint8_t * row = b->data + y * b->header.stride;
-        for(int x = 0; x < BLOB_S; x++) {
+        for(int x = 0; x < blob_s; x++) {
             double r = hypot(x + 0.5 - c, y + 0.5 - c);
             double a = 0.5 * erfc((r - r0) * k);
             row[x * 4 + 0] = rgb & 0xff;
@@ -54,16 +42,6 @@ static lv_draw_buf_t * make_blob(uint32_t rgb)
         }
     }
     return b;
-}
-
-/* Top/bottom fade of the grid mask: transparent -> opaque at 30%, opaque -> transparent from 70%. */
-static float grid_mask(float y)
-{
-    float t = y / SCR_H;
-    if(t <= 0 || t >= 1) return 0;
-    if(t < 0.3f) return t / 0.3f;
-    if(t > 0.7f) return (1 - t) / 0.3f;
-    return 1;
 }
 
 static void draw_cb(lv_event_t * e)
@@ -82,54 +60,53 @@ static void draw_cb(lv_event_t * e)
         float ease = (1 - cosf((float)M_PI * p)) / 2; /* ease-in-out */
         int x = b->x + (int)(b->dx * ease) - BLOB_PAD;
         int y = b->y + (int)(b->dy * ease) - BLOB_PAD;
-        lv_area_t a = {x, y, x + BLOB_S - 1, y + BLOB_S - 1};
-        id.src = b->img;
+        lv_area_t a = {x, y, x + blob_s - 1, y + blob_s - 1};
+        id.src = calm && i == 1 ? teal : b->img;
         lv_draw_image(layer, &id, &a);
-    }
-
-    return; /* grid removed from the design */
-    lv_draw_rect_dsc_t rd;
-    lv_draw_rect_dsc_init(&rd);
-    rd.bg_color = lv_color_hex(0x5ec4ff);
-    const int max_opa = 16; /* .25 * .25 */
-    float off = (now % GRID_PERIOD_MS) * GRID_STEP / GRID_PERIOD_MS;
-    for(float y = off - GRID_STEP; y < SCR_H; y += GRID_STEP) {
-        int yi = (int)y;
-        rd.bg_opa = (lv_opa_t)(max_opa * grid_mask(yi));
-        if(!rd.bg_opa) continue;
-        lv_area_t a = {0, yi, SCR_W - 1, yi + 1};
-        lv_draw_rect(layer, &rd, &a);
-    }
-    /* Vertical lines are static; draw them in short segments so the fade mask applies. */
-    const int seg = 48;
-    for(int s = 0; s < SCR_H; s += seg) {
-        rd.bg_opa = (lv_opa_t)(max_opa * grid_mask(s + seg / 2));
-        if(!rd.bg_opa) continue;
-        for(float x = 0; x < SCR_W; x += GRID_STEP) {
-            lv_area_t a = {(int)x, s, (int)x + 1, s + seg - 1};
-            lv_draw_rect(layer, &rd, &a);
-        }
     }
 }
 
-void bg_init(lv_obj_t * scr)
+void bg_init(lv_obj_t * scr, int w, int h)
 {
     screen = scr;
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x07090d), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+
+    /* CSS box inset -20% (1.4 x the screen); blob = 55% of the box width. In landscape that would
+     * be 1478 px discs (~50 MB of images), so the disc size follows the short side as in portrait. */
+    const int bx = -w / 5, by = -h / 5, bw = w * 7 / 5, bh = h * 7 / 5;
+    const int short_side = w < h ? w : h;
+    blob_d = short_side * 7 / 5 * 55 / 100;
+    blob_s = blob_d + 2 * BLOB_PAD;
+    const int d = blob_d;
+    blobs[0] = (blob_t){0x1e6fd9, bx + bw * 5 / 100, by + bh * 5 / 100, d * 40 / 100, d * 60 / 100, 18000, NULL};
+    blobs[1] = (blob_t){0x1fa36b, bx + bw - d, by + bh * 40 / 100, -d * 50 / 100, -d * 40 / 100, 22000, NULL};
+    blobs[2] = (blob_t){0x8a4fd8, bx + bw * 15 / 100, by + bh - d, d * 30 / 100, -d * 70 / 100, 26000, NULL};
     for(int i = 0; i < 3; i++) blobs[i].img = make_blob(blobs[i].color);
     lv_obj_add_event_cb(scr, draw_cb, LV_EVENT_DRAW_MAIN_END, NULL);
 }
 
 void bg_tick(void)
 {
+    if(paused) return;
     intensity += (target - intensity) * 0.05f;
     lv_obj_invalidate(screen);
 }
 
 void bg_set_load(float load)
 {
-    if(load < 0) load = 0;
+    if(isnan(load) || load < 0) load = 0;
     if(load > 100) load = 100;
-    target = 0.3f + 0.5f * load / 100.0f;
+    target = calm ? 0.18f + 0.25f * load / 100.0f : 0.3f + 0.5f * load / 100.0f;
+}
+
+void bg_set_calm(bool on)
+{
+    if(on && !teal) teal = make_blob(0x1a8f86);
+    calm = on;
+}
+
+void bg_set_paused(bool on)
+{
+    paused = on;
 }

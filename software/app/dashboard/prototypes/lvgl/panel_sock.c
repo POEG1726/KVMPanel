@@ -90,6 +90,18 @@ static void poll_cb(lv_timer_t * t)
     }
 }
 
+bool panel_sock_send(const char * line)
+{
+    if(state != CONNECTED) return false;
+    size_t n = strlen(line);
+    /* Requests are tiny; the kernel buffer takes them whole. */
+    if(send(fd, line, n, MSG_NOSIGNAL) != (ssize_t)n || send(fd, "\n", 1, MSG_NOSIGNAL) != 1) {
+        drop("send failed");
+        return false;
+    }
+    return true;
+}
+
 void panel_sock_start(const char * host, int port, panel_msg_cb cb)
 {
     on_msg = cb;
