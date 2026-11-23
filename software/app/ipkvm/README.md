@@ -16,6 +16,8 @@ cargo run --manifest-path software/app/ipkvm/Cargo.toml -- --sim \
 
 正式 Windows 上位机的设备发现、指标清单和实施顺序见 [遥测采集计划](../../../docs/superpowers/specs/2026-11-23-pc-telemetry-design.md)。
 
+[Windows 采集器](../pc-telemetry/README.md) 沿用 HID Output report 3。支持批量 `id=value`、会话心跳和设备名，也兼容原有单项报告。新版会话按采样周期判断缺样，支持低频采集、多个 GPU、磁盘和网卡。动态设备指标通过现有 panel socket 的 `telemetry` 消息上报。
+
 sim 同时监听 TCP `127.0.0.1:7701`，板上监听 Unix socket `/run/kvmd/panel.sock`。可用 `--panel` 或 `KVMPANEL_PANEL_SOCK` 指定地址。TCP panel 信任本机进程，仅接受回环监听地址。
 
 临时上位机协议使用 HID 厂商 Output report（EP0 SET_REPORT）。每份报告恰好 64 字节。首字节为报告 ID `0x03`，余下 63 字节为 ASCII `指标ID=值`，尾部补零。例如 `cpu.tctl=64.25` 或 `mem.dimm.a1=null`。指标 ID、单位与量程沿用副屏契约，数值必须有限。未知 ID、坏包、非零填充会被丢弃。每份有效报告更新一项，副屏每秒收到一次汇总，只含上位机报告过的指标。本秒没有更新的已知指标取 null。槽位名取自 `mem.dimm.<槽位>`，临时解码器每次连接最多保留 256 个不同槽位名。模拟器仅报告 A2、B2。三秒没有有效报告即判定上位机离线，恢复后从新收到的样本开始。正式上位机协议确定后可替换 `panel::metrics::ReportDecoder`。PC 模拟器直接生成指标。

@@ -3,7 +3,7 @@ pub mod metrics;
 
 use crate::{console::now_ms, system, validate, ApiError, App};
 use futures_util::StreamExt;
-use metrics::{ReportDecoder, Samples, TextReportDecoder};
+use metrics::{DeviceNames, Samples, VendorReport};
 use serde_json::{json, Value};
 use std::{
     fs, io,
@@ -80,11 +80,18 @@ fn sample_status(app: &App, pc: bool) -> Value {
 struct Host {
     samples: Samples,
     last_seen: Option<(Instant, u64)>,
+    session: Option<(u64, Duration)>,
+    received: std::collections::BTreeMap<String, Instant>,
+    names: DeviceNames,
 }
 impl Host {
     fn ingest(&mut self, id: String, value: Option<f64>, now: Instant, ts: u64) {
         if !self.online(now) {
-            self.samples.clear();
+            *self = Self::default();
+        }
+        const MAX_METRICS: usize = 768;
+        if self.samples.len() >= MAX_METRICS && !self.samples.contains_key(&id) {
+            return;
         }
         // Slot labels in vendor reports are dynamic. Bound their retained inventory
         // independently of the fixed CPU/GPU metrics on the 512 MiB board.
@@ -100,11 +107,56 @@ impl Host {
         {
             return;
         }
+        if self.session.is_some() {
+            self.received.insert(id.clone(), now);
+        }
         self.samples.insert(id, value);
         self.last_seen = Some((now, ts));
     }
 
+    fn report(&mut self, report: VendorReport, now: Instant, ts: u64) {
+        match report {
+            VendorReport::Hello(id, interval) => {
+                if !self.online(now) || self.session.is_none_or(|(current, _)| current != id) {
+                    *self = Self::default();
+                }
+                self.session = Some((id, Duration::from_millis(interval)));
+                self.last_seen = Some((now, ts));
+            }
+            VendorReport::DeviceName(id, name) if self.online(now) && self.session.is_some() => {
+                if self.names.len() < 768 || self.names.contains_key(&id) {
+                    self.names.insert(id, name);
+                }
+            }
+            VendorReport::Values(items) => {
+                for (id, value) in items {
+                    self.ingest(id, value, now, ts);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn snapshot(&mut self) -> Self {
+        self.snapshot_at(Instant::now())
+    }
+
+    fn snapshot_at(&mut self, now: Instant) -> Self {
+        if let Some((_, interval)) = self.session {
+            let freshness = (interval * 2 + Duration::from_secs(1)).max(Duration::from_secs(4));
+            self.received.retain(|id, timestamp| {
+                let age = now.saturating_duration_since(*timestamp);
+                if age >= freshness * 2 {
+                    self.samples.remove(id);
+                    return false;
+                }
+                if age >= freshness {
+                    self.samples.insert(id.clone(), None);
+                }
+                true
+            });
+            return self.clone();
+        }
         let captured = self.clone();
         // Preserve the reported inventory. A missed sample in the next second
         // is null, rather than displaying the previous measurement as fresh.
@@ -125,10 +177,10 @@ async fn collect(app: App, host: Arc<Mutex<Host>>) {
         poll.tick().await;
         let hw = app.hw.clone();
         if let Ok(Ok(Some(raw))) = tokio::task::spawn_blocking(move || hw.telemetry()).await {
-            if let Some((id, value)) = TextReportDecoder.decode(&raw) {
+            if let Some(report) = metrics::vendor_report(&raw) {
                 host.lock()
                     .unwrap()
-                    .ingest(id, value, Instant::now(), now_ms());
+                    .report(report, Instant::now(), now_ms());
             }
         }
     }
@@ -224,7 +276,12 @@ async fn sampler(app: App, tx: broadcast::Sender<Value>, pc: watch::Sender<bool>
         }
         if connected {
             let samples = if app.sim { None } else { Some(&host.samples) };
-            let metrics = metrics::snapshot(app.started.elapsed().as_secs_f64(), panel, samples);
+            let metrics = metrics::snapshot(
+                app.started.elapsed().as_secs_f64(),
+                panel,
+                samples,
+                Some(&host.names),
+            );
             let _ = tx.send(json!({"t":"telemetry","ts":ts,"metrics":metrics}));
         }
     }
@@ -445,7 +502,53 @@ pub async fn serve(app: App, addr: &str) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::metrics::{ReportDecoder, TextReportDecoder};
     use super::*;
+
+    #[test]
+    fn usb_session_keeps_slow_junction_readings_and_clears_old_devices() {
+        fn packet(payload: &str) -> VendorReport {
+            let mut bytes = [0; 64];
+            bytes[0] = 3;
+            bytes[1..1 + payload.len()].copy_from_slice(payload.as_bytes());
+            metrics::vendor_report(&bytes).unwrap()
+        }
+        let now = Instant::now();
+        let mut host = Host::default();
+        host.report(packet("!0000000000000001:10000"), now, 0);
+        host.report(packet(":gpu.1234abcd1234abcd=RTX 5090"), now, 0);
+        host.report(
+            packet("gpu.1234abcd1234abcd.mem_junction=61\nmem.used=18"),
+            now,
+            0,
+        );
+        let captured = host.snapshot_at(now + Duration::from_secs(5));
+        let readings = metrics::snapshot(
+            0.,
+            &json!({}),
+            Some(&captured.samples),
+            Some(&captured.names),
+        );
+        assert!(readings
+            .iter()
+            .any(|metric| metric["id"] == "gpu.1234abcd1234abcd.mem_junction"
+                && metric["label"] == "RTX 5090 · Memory junction"
+                && metric["value"] == 61.0
+                && metric["unit"] == "°C"));
+        assert_eq!(captured.samples["mem.used"], Some(18.0));
+
+        let later = now + Duration::from_secs(22);
+        host.report(packet("!0000000000000001:10000"), later, 22_000);
+        // The host was offline, so a new heartbeat alone must not revive stale measurements.
+        assert!(host.snapshot_at(later).samples.is_empty());
+        host.report(
+            packet("gpu.1234abcd1234abcd.mem_junction=62"),
+            later,
+            22_000,
+        );
+        host.report(packet("!0000000000000002:10000"), later, 22_000);
+        assert!(host.snapshot_at(later).samples.is_empty());
+    }
     #[test]
     fn missing_metrics_are_omitted_but_reported_slots_survive_a_missing_read() {
         let mut host = Host::default();
@@ -456,7 +559,7 @@ mod tests {
         let (id, value) = TextReportDecoder.decode(&report).unwrap();
         host.ingest(id, value, Instant::now(), 1000);
         for expected in [json!(46.5), Value::Null] {
-            let m = metrics::snapshot(0., &json!({}), Some(&host.snapshot().samples));
+            let m = metrics::snapshot(0., &json!({}), Some(&host.snapshot().samples), None);
             assert_eq!(m.len(), 1);
             assert_eq!(m[0]["id"], "mem.dimm.c1");
             assert_eq!(m[0]["value"], expected);

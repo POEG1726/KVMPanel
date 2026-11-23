@@ -44,6 +44,8 @@ PC 用连续两次 64 位字节计数的差值和单调时钟间隔计算 B/s，
 
 ## 实施顺序
 
+现有 [原生 C 采集器](../../../software/app/pc-telemetry/README.md) 直接读取 Windows、NVAPI、NVML、ADL，支持通过已安装的 PawnIO 读取 Blackwell 热点。各来源的当前覆盖及待实现的超频字段以采集器说明为准。
+
 1. 用 Windows 只读探测器在截图机器和不同 CPU/GPU 组合上核对保留字段，覆盖电源限制、DRAM 带宽、DIMM PMIC、核显、多网卡、缺传感器及热插拔。
 2. 把采集清单、指标类型和缺样规则写入契约和 Mock，同步副屏布局，检查采集器只上报清单内指标。
 3. 实现 Windows 采集器、HID 批量发送和 `kvmd` 接收。实板测多网卡独立流量、连接恢复、USB 吞吐和采样开销。

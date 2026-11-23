@@ -237,11 +237,110 @@ fn dimm_slot(id: &str) -> Option<&str> {
     .then_some(slot)
 }
 pub type Samples = BTreeMap<String, Option<f64>>;
+pub type DeviceNames = BTreeMap<String, String>;
 
-pub fn snapshot(t: f64, config: &Value, samples: Option<&Samples>) -> Vec<Value> {
+/// Split an instance metric into the short device key and the field.
+fn device_key(id: &str) -> Option<(&str, &str)> {
+    let (device, field) = id.rsplit_once('.')?;
+    let (kind, key) = device.split_once('.')?;
+    (matches!(kind, "cpu" | "gpu" | "mem" | "dimm" | "disk" | "net")
+        && key.len() == 16
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+    .then_some((device, field))
+}
+
+fn instance_metric(id: &str, names: Option<&DeviceNames>) -> Option<Metric> {
+    let (device, field) = device_key(id)?;
+    let (kind, _) = device.split_once('.')?;
+    let (label, unit, max) = match (kind, field) {
+        ("cpu", "core_load") | ("gpu", "load") => ("Load", "%", 100.),
+        ("cpu" | "gpu", "clock") => ("Core clock", "MHz", 7000.),
+        ("gpu", "mem_clock") | ("mem", "mclk" | "uclk" | "fclk") => (field, "MHz", 4000.),
+        ("cpu", "bclk") => ("BCLK", "MHz", 120.),
+        ("cpu", "ratio") => ("Core ratio", "×", 75.),
+        ("cpu", "tctl") => ("CPU temperature", "°C", 110.),
+        ("cpu", "vrm_temp" | "ccd_temp") => (field, "°C", 115.),
+        ("gpu" | "disk", "temp") => ("Temperature", "°C", 110.),
+        ("gpu", "hotspot") => ("Hot spot", "°C", 120.),
+        ("gpu", "mem_junction") => ("Memory junction", "°C", 120.),
+        ("gpu", "mem_temp") => ("Memory temperature", "°C", 120.),
+        ("dimm", "spd_temp") => ("SPD temperature", "°C", 85.),
+        ("cpu", "vid" | "vcore" | "soc_v" | "misc_v" | "mc_v")
+        | ("gpu", "core_v" | "memory_v" | "pcie_v" | "aux_v")
+        | ("dimm", "vdd" | "vddq" | "vpp") => (field, "V", 15.),
+        ("cpu", "core_a" | "soc_a" | "tdc" | "edc" | "tdc_limit" | "edc_limit")
+        | ("gpu", "core_a") => (field, "A", 250.),
+        ("cpu", "package_power" | "ppt" | "ppt_limit" | "pl1" | "pl2")
+        | ("gpu" | "dimm", "power")
+        | ("gpu", "power_limit" | "power_rated" | "power_max") => (field, "W", 700.),
+        ("cpu", "ppt_pct" | "ppt_fast_pct" | "tdc_pct" | "edc_pct" | "thermal_pct") => {
+            (field, "%", 100.)
+        }
+        ("cpu", "throttle" | "prochot_cpu" | "prochot_ext")
+        | ("dimm", "pmic_hot" | "pmic_ov" | "pmic_uv")
+        | ("net", "link" | "physical") => (field, "", 1.),
+        ("gpu", "vram_used" | "vram_total" | "shared_used") => (field, "GB", 64.),
+        ("mem", "dram_read" | "dram_write") => (field, "B/s", 200e9),
+        ("disk", "read" | "write") => (field, "B/s", 10e9),
+        ("net", "rx" | "tx") => (field, "B/s", 1.25e9),
+        ("net", "rx_link" | "tx_link") => (field, "b/s", 10e9),
+        ("net", "signal") => ("Signal", "%", 100.),
+        _ => return None,
+    };
+    let group = match kind {
+        "cpu" => "cpu",
+        "gpu" => "gpu",
+        "mem" | "dimm" => "mem",
+        _ => "sys",
+    };
+    let label = names
+        .and_then(|names| names.get(device))
+        .map_or_else(|| label.to_owned(), |name| format!("{name} · {label}"));
+    let mut metric = Metric::new(id, &label, unit, (0., max), group, 0.);
+    metric.warn = match (kind, field) {
+        ("gpu", "mem_junction") => Some(95.),
+        ("cpu", "tctl") => Some(85.),
+        ("dimm", "spd_temp") => Some(60.),
+        _ => None,
+    };
+    Some(metric)
+}
+
+pub fn snapshot(
+    t: f64,
+    config: &Value,
+    samples: Option<&Samples>,
+    names: Option<&DeviceNames>,
+) -> Vec<Value> {
     let thresholds = config["thresholds"].as_object();
     let hidden = config["hidden_metrics"].as_array();
-    catalogue(t,samples).into_iter().filter_map(|metric| {
+    let mut metrics = catalogue(t, samples);
+    if let Some(samples) = samples {
+        metrics.extend(samples.keys().filter_map(|id| instance_metric(id, names)));
+        if samples.contains_key("cpu.clock") {
+            metrics.push(Metric::new(
+                "cpu.clock",
+                "CPU frequency",
+                "MHz",
+                (0., 7000.),
+                "cpu",
+                0.,
+            ));
+        }
+        if samples.contains_key("mem.total") {
+            metrics.push(Metric::new(
+                "mem.total",
+                "Total",
+                "GB",
+                (0., 256.),
+                "mem",
+                0.,
+            ));
+        }
+    }
+    metrics.into_iter().filter_map(|metric| {
         if hidden.is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(&metric.id))) {
             return None;
         }
@@ -265,38 +364,90 @@ pub trait ReportDecoder {
 pub struct TextReportDecoder;
 impl ReportDecoder for TextReportDecoder {
     fn decode(&self, report: &[u8]) -> Option<(String, Option<f64>)> {
-        if report.len() != 64 || report[0] != 3 {
-            return None;
-        }
-        let payload = &report[1..];
-        let end = payload
-            .iter()
-            .position(|b| *b == 0)
-            .unwrap_or(payload.len());
-        if payload[end..].iter().any(|b| *b != 0) {
-            return None;
-        }
-        let (id, raw) = std::str::from_utf8(&payload[..end]).ok()?.split_once('=')?;
-        static KNOWN: LazyLock<HashSet<String>> = LazyLock::new(|| {
-            catalogue(0., None)
-                .into_iter()
-                .map(|metric| metric.id)
-                .collect()
-        });
-        if !KNOWN.contains(id) && dimm_slot(id).is_none() {
-            return None;
-        }
-        let value = if raw == "null" {
-            None
-        } else {
-            let n: f64 = raw.parse().ok()?;
-            if !n.is_finite() {
-                return None;
-            }
-            Some(n)
-        };
-        Some((id.into(), value))
+        decode_line(payload(report)?)
     }
+}
+
+fn payload(report: &[u8]) -> Option<&str> {
+    if report.len() != 64 || report[0] != 3 {
+        return None;
+    }
+    let payload = &report[1..];
+    let end = payload
+        .iter()
+        .position(|b| *b == 0)
+        .unwrap_or(payload.len());
+    if payload[end..].iter().any(|b| *b != 0) {
+        return None;
+    }
+    std::str::from_utf8(&payload[..end]).ok()
+}
+
+fn decode_line(line: &str) -> Option<(String, Option<f64>)> {
+    let (id, raw) = line.split_once('=')?;
+    static KNOWN: LazyLock<HashSet<String>> = LazyLock::new(|| {
+        catalogue(0., None)
+            .into_iter()
+            .map(|metric| metric.id)
+            .collect()
+    });
+    if !KNOWN.contains(id)
+        && !matches!(id, "mem.total" | "cpu.clock")
+        && dimm_slot(id).is_none()
+        && instance_metric(id, None).is_none()
+    {
+        return None;
+    }
+    let value = if raw == "null" {
+        None
+    } else {
+        let n: f64 = raw.parse().ok()?;
+        if !n.is_finite() {
+            return None;
+        }
+        Some(n)
+    };
+    Some((id.into(), value))
+}
+
+pub enum VendorReport {
+    Hello(u64, u64),
+    DeviceName(String, String),
+    Values(Vec<(String, Option<f64>)>),
+}
+
+pub fn vendor_report(report: &[u8]) -> Option<VendorReport> {
+    let payload = payload(report)?;
+    if let Some(hello) = payload.strip_prefix('!') {
+        let (session, interval) = hello.split_once(':')?;
+        let interval: u64 = interval.parse().ok()?;
+        if session.len() != 16 || !(250..=60_000).contains(&interval) {
+            return None;
+        }
+        return Some(VendorReport::Hello(
+            u64::from_str_radix(session, 16).ok()?,
+            interval,
+        ));
+    }
+    if let Some(name) = payload.strip_prefix(':') {
+        let (device, label) = name.split_once('=')?;
+        if label.trim().is_empty() || label.chars().any(char::is_control) {
+            return None;
+        }
+        device_key(&format!("{device}.name"))?;
+        return Some(VendorReport::DeviceName(device.into(), label.trim().into()));
+    }
+    if payload.contains('\n') {
+        return Some(VendorReport::Values(
+            payload
+                .split('\n')
+                .map(decode_line)
+                .collect::<Option<Vec<_>>>()?,
+        ));
+    }
+    Some(VendorReport::Values(
+        vec![TextReportDecoder.decode(report)?],
+    ))
 }
 
 #[cfg(test)]

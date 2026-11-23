@@ -2,12 +2,12 @@
 
 最近五项有实际进展的软件工作，最新一项在顶部。全项目状态见 [软件进度](docs/software-progress.md)。
 
-## Windows PC 遥测采集计划
+## Windows PC 遥测采集器
 
 核对日期 2026-11-23。
 
-- 已核对截图、厂商资料和现有字段。采集计划包含电压、电流、功耗限制、BCLK、倍频、FCLK、UCLK、MCLK、DRAM 读写带宽和 DDR5 PMIC 关键读数。网卡独立上报，Panel 自选字段。 [采集计划](docs/superpowers/specs/2026-11-23-pc-telemetry-design.md)
-- 接手先在不同硬件主机跑只读探测，再按计划同步正式清单、Mock、`kvmd` 和副屏布局，完成 HID 批传和实测。原型当前仍提供早期指标。 [实施顺序](docs/superpowers/specs/2026-11-23-pc-telemetry-design.md#实施顺序)
+- 原生 C/Win32 采集器带设置窗口和托盘。Windows x64 构建通过，本机验证 CPU、内存、磁盘、逐网卡和 GPU 基础指标。RTX 5090 管理员探测同时取得核心温度 29 °C、核心热点 31.1875 °C 和显存结温 40 °C。普通权限访问 PawnIO 被拒时仍可采集核心温度及显存结温。 [采集器与只读探测](software/app/pc-telemetry/README.md)
+- `kvmd` 已接收批量 HID 遥测、设备名和会话心跳，离线测试和 ARM 静态构建通过。接手用 `--once` 核对其他显卡，再测实板 USB 收发并接入正式 Dashboard 的字段选择。CPU 超频与供电读数、DRAM 带宽、DIMM 温度和 PMIC 仍需硬件采集实现。 [采集计划](docs/superpowers/specs/2026-11-23-pc-telemetry-design.md) · [板端协议](software/app/pc-telemetry/README.md#usb-与-panel)
 
 ## 副屏电脑离线页
 
