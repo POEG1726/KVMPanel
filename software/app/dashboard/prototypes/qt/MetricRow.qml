@@ -9,6 +9,8 @@ Item {
     property color tint
     property int decimals: 0
     property bool ofMax: false      // "24.0 / 32 GB"
+    property var fmt: null          // optional value -> text
+    property real labelWidth: 0     // > 0: fixed label column, the sparkline stretches (landscape)
 
     width: parent.width
     height: 18 * S
@@ -29,7 +31,7 @@ Item {
     Sparkline {
         id: spark
         x: parent.width - 96 * S - 6 * S - width
-        width: 84 * S
+        width: row.labelWidth > 0 ? Math.max(20 * S, parent.width - row.labelWidth - 96 * S - 12 * S) : 84 * S
         height: 18 * S
         source: panel
         metrics: [row.metric]
@@ -46,6 +48,7 @@ Item {
         font.weight: Font.DemiBold
         text: {
             if (isNaN(row.v)) return "--"
+            if (row.fmt) return row.fmt(row.v)
             const u = panel.unit(row.metric)
             const s = row.v.toFixed(row.decimals)
             if (row.ofMax) return s + " / " + Math.round(panel.max(row.metric)) + " " + u

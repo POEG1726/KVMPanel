@@ -12,6 +12,7 @@ class BlobLayer : public QQuickPaintedItem
     Q_PROPERTY(qreal t MEMBER m_t WRITE setT NOTIFY changed)                    // seconds
     Q_PROPERTY(qreal intensity MEMBER m_intensity WRITE setIntensity NOTIFY changed)
     Q_PROPERTY(int downscale MEMBER m_down NOTIFY changed)
+    Q_PROPERTY(bool calm MEMBER m_calm WRITE setCalm NOTIFY changed)            // dim teal palette (PC-offline page)
 
 public:
     explicit BlobLayer(QQuickItem *parent = nullptr);
@@ -19,6 +20,7 @@ public:
 
     void setT(qreal t) { m_t = t; compose(); }
     void setIntensity(qreal i) { m_intensity = i; compose(); }
+    void setCalm(bool c) { if (c == m_calm) return; m_calm = c; emit changed(); compose(); }
 
 signals:
     void changed();
@@ -31,4 +33,5 @@ private:
     QImage m_blobs[3];
     QImage m_layer, m_buf;
     QSize m_builtFor;
+    bool m_calm = false, m_builtCalm = false;
 };

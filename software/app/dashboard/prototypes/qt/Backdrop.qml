@@ -6,6 +6,8 @@ import Proto 1.0
 Item {
     id: bd
     property real intensity: 0.55     // 0.3 + 0.5 * max(cpu.load, gpu.load) / 100
+    property bool calm: false         // dim teal palette of the PC-offline page
+    property bool running: true       // false while the screen is off
     property real t: 0                // seconds since start
     readonly property double t0: Date.now()
 
@@ -14,7 +16,7 @@ Item {
 
     Timer {
         interval: Math.max(1, Math.round(1000 / animFps))
-        running: true
+        running: bd.running
         repeat: true
         onTriggered: {
             bd.shown += (bd.intensity - bd.shown) * 0.1
@@ -25,6 +27,7 @@ Item {
     BlobLayer {
         anchors.fill: parent
         intensity: bd.shown
+        calm: bd.calm
         t: bd.t
     }
 

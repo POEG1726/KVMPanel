@@ -1,4 +1,4 @@
-// Qt Quick dashboard prototype: software scene graph, 1080x1920 portrait canvas, data from the panel socket.
+// Qt Quick dashboard prototype: software scene graph, 1080x1920 (or --landscape 1920x1080) canvas, data from the panel socket.
 #include "bloblayer.h"
 #include "panelclient.h"
 #include "sparkline.h"
@@ -26,7 +26,8 @@ int main(int argc, char *argv[])
     cli.addOptions({
         {"host", "panel socket host", "host", qEnvironmentVariable("KVMPANEL_PANEL_HOST", "127.0.0.1")},
         {"port", "panel socket port", "port", qEnvironmentVariable("KVMPANEL_PANEL_PORT", "7701")},
-        {"scale", "window scale of the 1080x1920 canvas", "f", "0.5"},
+        {"scale", "window scale of the canvas", "f", "0.5"},
+        {"landscape", "1920x1080 canvas (screen mounted sideways)"},
         {"fps", "background animation tick rate", "n", "30"},
         {"screenshot", "grab the window to this PNG after --delay ms and quit", "png"},
         {"delay", "screenshot delay (ms)", "ms", "5000"},
@@ -44,7 +45,8 @@ int main(int argc, char *argv[])
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("panel", &panel);
     engine.rootContext()->setContextProperty("viewScale", scale);
-    engine.rootContext()->setContextProperty("S", 1080.0 / 420.0);   // mockup px -> screen px
+    engine.rootContext()->setContextProperty("landscape", cli.isSet("landscape"));
+    engine.rootContext()->setContextProperty("S", 1080.0 / 420.0);   // mockup px -> screen px (short side 1080 in both orientations)
     engine.rootContext()->setContextProperty("animFps", cli.value("fps").toInt());
     engine.load(QUrl("qrc:/Dashboard.qml"));
     if (engine.rootObjects().isEmpty()) return 1;

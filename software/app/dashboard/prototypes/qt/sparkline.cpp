@@ -55,12 +55,12 @@ void Sparkline::paint(QPainter *p)
         const int n = m->hist.size();
         const qreal range = m->max - m->min == 0 ? 1 : m->max - m->min;
 
-        // Newest sample at the right edge; null samples break the line.
+        // Newest sample at the left edge, older ones move right (design rule); null samples break the line.
         QVector<QVector<QPointF>> runs(1);
         for (int i = 0; i < n; ++i) {
             const double v = m->hist[i];
             if (std::isnan(v)) { if (!runs.last().isEmpty()) runs.append(QVector<QPointF>()); continue; }
-            const qreal x = (vw - 1) - (n - 1 - i) * step;
+            const qreal x = 1 + (n - 1 - i) * step;
             const qreal y = yb - qBound(0.0, (v - m->min) / range, 1.0) * span;
             runs.last().append(QPointF(X(x), Y(y)));
         }

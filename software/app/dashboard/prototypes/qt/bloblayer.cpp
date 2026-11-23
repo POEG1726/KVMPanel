@@ -52,15 +52,15 @@ QImage makeBlob(const QColor &c, qreal d, qreal sigma)
     return img;
 }
 
-// Mockup geometry in 1080x1920 canvas px. CSS: .bg inset -20% -> box (-216,-384) 1512x2688,
-// blob = 55% of its width, blur(40px) at 420 px frame width, keyframes translate(% of blob) + scale.
-struct BlobDef { const char *color; qreal left, top, dx, dy, scale, dur; };
-constexpr qreal kD = 0.55 * 1512;
-constexpr qreal kSigma = 40 * 1080.0 / 420;
+// Mockup geometry as fractions of the CSS .bg box (inset -20%, so 1.4 x the canvas): blob = 55% of
+// the box width; left/top place the blob in the box (1 = flush right/bottom), blur(40px) at 420 px
+// of the short side, keyframes translate(% of blob) + scale. On 1080x1920 this gives the old
+// absolute numbers (blob 1 at -140.4, -249.6 ...).
+struct BlobDef { const char *color, *calm; qreal fx, fy, dx, dy, scale, dur; };
 const BlobDef kBlobs[3] = {
-    {"#1e6fd9", -140.4, -249.6, 0.4, 0.6, 1.2, 18},
-    {"#1fa36b", 464.4, 691.2, -0.5, -0.4, 0.8, 22},
-    {"#8a4fd8", 10.8, 1472.4, 0.3, -0.7, 1.3, 26},
+    {"#1e6fd9", "#1e6fd9", 0.05, 0.05, 0.4, 0.6, 1.2, 18},
+    {"#1fa36b", "#1a8f86", 1.00, 0.40, -0.5, -0.4, 0.8, 22},   // right: 0 / top: 40%; teal on the offline page
+    {"#8a4fd8", "#8a4fd8", 0.15, 1.00, 0.3, -0.7, 1.3, 26},   // left: 15% / bottom: 0
 };
 
 } // namespace
@@ -77,11 +77,15 @@ void BlobLayer::compose()
     if (width() < 1 || height() < 1) return;
     const qreal f = 1.0 / m_down;
     const QSize small(qCeil(width() * f), qCeil(height() * f));
-    if (small != m_builtFor) {
-        for (int i = 0; i < 3; ++i) m_blobs[i] = makeBlob(QColor(kBlobs[i].color), kD * f, kSigma * f);
+    const qreal bx = -0.2 * width(), by = -0.2 * height(), bw = 1.4 * width(), bh = 1.4 * height();
+    const qreal kD = 0.55 * bw;
+    if (small != m_builtFor || m_calm != m_builtCalm) {
+        const qreal sigma = 40 * qMin(width(), height()) / 420;
+        for (int i = 0; i < 3; ++i) m_blobs[i] = makeBlob(QColor(m_calm ? kBlobs[i].calm : kBlobs[i].color), kD * f, sigma * f);
         m_layer = QImage(small, QImage::Format_ARGB32_Premultiplied);
         m_buf = QImage(small, QImage::Format_RGB32);
         m_builtFor = small;
+        m_builtCalm = m_calm;
     }
 
     // Blobs screen-blended with each other (CSS mix-blend-mode: screen inside the .bg group)...
@@ -91,8 +95,9 @@ void BlobLayer::compose()
     for (int i = 0; i < 3; ++i) {
         const BlobDef &b = kBlobs[i];
         const qreal p = (1 - std::cos(M_PI * m_t / b.dur)) / 2;   // ease-in-out, alternate
-        const qreal cx = (b.left + kD / 2 + b.dx * kD * p) * f;
-        const qreal cy = (b.top + kD / 2 + b.dy * kD * p) * f;
+        const qreal left = bx + (b.fx == 1.0 ? bw - kD : b.fx * bw), top = by + (b.fy == 1.0 ? bh - kD : b.fy * bh);
+        const qreal cx = (left + kD / 2 + b.dx * kD * p) * f;
+        const qreal cy = (top + kD / 2 + b.dy * kD * p) * f;
         const qreal s = 1 + (b.scale - 1) * p;
         lp.setCompositionMode(i == 0 ? QPainter::CompositionMode_SourceOver : QPainter::CompositionMode_Screen);
         lp.save();

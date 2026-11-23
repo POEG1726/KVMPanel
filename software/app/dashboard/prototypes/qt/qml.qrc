@@ -7,5 +7,9 @@
         <file>Bar.qml</file>
         <file>Chip.qml</file>
         <file>T.qml</file>
+        <file>MainScreen.qml</file>
+        <file>OfflinePage.qml</file>
+        <file>KvRow.qml</file>
+        <file>StatusBar.qml</file>
     </qresource>
 </RCC>
