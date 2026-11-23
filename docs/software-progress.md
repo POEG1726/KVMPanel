@@ -4,6 +4,7 @@
 
 ## 已完成
 
+- **副屏电脑离线页（原型）**。panel socket 新增每秒一次的 `board` 消息和 `pc_power_on` 动作（电脑开着时拒绝），Mock 可从关机或等待上位机状态启动。Qt 6 和 LVGL 原型都实现了竖屏和横屏的离线页、开机按钮和息屏倒计时，曲线和内存温度行也按已定规则改过。已通过 Mock 测试和两版构建，并在 Mock 下截图核对关机、等待上位机、开机后切回主屏三种状态。实际点击和按键未在窗口里测过，`kvmd` 还不发 `board`。 [Dashboard](../software/app/dashboard/README.md) · [接口](../software/app/api/README.md)
 - **T113 硬件 MJPEG 接入**。组合 DTB 启用 VE 和 IOMMU，`kvmd` 使用 Cedrus JPEG 编码并提供软件回退。ARM 内核、DTB、静态应用已构建，VE 和 IOMMU 绑定通过检查。已打包 Debian 镜像并通过 QEMU 用户态冒烟。 [编码说明](linux-6.18.md#jpegmjpeg-编码)
 - **Windows PC 遥测采集计划**。截图中的非风扇指标已逐组纳入清单，补充了每块网络适配器，并定义跨硬件发现、采样状态与 Panel 的显示选择。已核对截图和现有契约。 [采集计划](superpowers/specs/2026-11-23-pc-telemetry-design.md)
 - **电脑电源灯状态**。板端 `kvmd` 只读 PE12，REST 和 WebSocket 电源状态只包含 `on`。Mock、类型和网页均已同步。通过 `kvmd` 和 Mock 测试、网页构建及测试，实板电源灯读数待测。 [主板控制接线](../software/app/ipkvm/README.md#板端接口)
@@ -25,4 +26,4 @@
 - **Windows PC 遥测实现**。先探测不同主机的传感器覆盖，再实现设备清单契约、Windows 采集器、正式 HID 批传和 Panel 选择。现有 Mock 和临时 HID 可用于联调。 [实施顺序](superpowers/specs/2026-11-23-pc-telemetry-design.md#实施顺序)
 - **基础系统实板 bring-up**。按授权范围先核对供电和 UART0，再用 FEL 进 RAM 验证 DDR 训练、容量和 Linux 启动。随后验证 USB、网口、Debian SD High Speed 冷启动，以及实板断电后的文件系统。完成 3.3 V 读写测试后，再验证 UHS。 [首次上板](development.md#首次上板) · [写卡与启动](../software/os/debian/README.md)
 - **板端功能联调**。基础系统跑通后验证 LT8619C/CSI、VE 真实 JPEG 帧及 MJPEG 吞吐、USB 键鼠与存储、Windows 遥测、C906/HiFi4 RPMsg、按键、光照、温度和看门狗。确认实际面板与触摸型号后验证 DSI、供电、背光和触摸。 [板级适配清单](linux-6.18.md#结果)
-- **副屏方向、离线状态页与正式实现**。已有离线状态和开机动作的契约与 Mock。补 `panel.orientation` 契约、`kvmd` 离线数据和网页设置。对比三版原型后选定框架，补横屏、触摸坐标转换和 T113 实测。 [当前应用设计](superpowers/specs/2026-11-20-kvmpanel-app-design.md)
+- **副屏方向与正式实现**。离线页已在 Qt 和 LVGL 原型中完成。还需让 `kvmd` 发送 `board` 并处理 `pc_power_on`，补 `panel.orientation` 契约和网页设置，实现横屏主屏方案 B 和触摸坐标转换，选定框架后在 T113 上实测。原型在 `feat/panel-qt` 和 `feat/panel-proto`，尚未合入 `main`。 [当前应用设计](superpowers/specs/2026-11-20-kvmpanel-app-design.md) · [Dashboard](../software/app/dashboard/README.md) [当前应用设计](superpowers/specs/2026-11-20-kvmpanel-app-design.md)

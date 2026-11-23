@@ -2,6 +2,15 @@
 
 最近五项有实际进展的软件工作，最新一项在顶部。全项目状态见 [软件进度](docs/software-progress.md)。
 
+
+## 副屏电脑离线页
+
+核对日期 2026-11-23。
+
+- panel socket 新增 `board`（板子自身状态，每秒一次）和 `pc_power_on`（电脑开着时回 `pc_on`）。Mock 已同步并有测试，`KVMPANEL_MOCK_PC=off|waiting` 可直接进入离线状态。 [接口说明](software/app/api/README.md)
+- Qt 6（`feat/panel-qt`）和 LVGL（`feat/panel-proto`）原型都有竖屏和横屏的离线页、开机按钮和息屏倒计时。两版都已构建，并在 Mock 下截图核对关机、等待上位机、开机后切回主屏三种状态。窗口里的实际点击和按键未测。横屏主屏方案 B 未做，横屏时暂把竖屏主屏缩小居中。 [Dashboard](software/app/dashboard/README.md)
+- 接手先让 `kvmd` 按契约发 `board` 并处理 `pc_power_on`（PE13 短按，PE12 亮时拒绝），再补 `panel.orientation` 和横屏主屏。两个原型分支尚未合入 `main`。
+
 ## T113 硬件 MJPEG
 
 核对日期 2026-11-23。
@@ -32,11 +41,3 @@
 - 离线通过分区、文件系统和 DTB 检查。QEMU 验证首次密码设置、Vim、数据分区、KVM 网页、USB gadget、网络配置、关机阻止锁及模拟 STC8 UART 的准备和待断电帧。QEMU 通过内核直启。
 - 512 MiB QEMU 中，Debian 启动采样最高为 108.6 MiB，空闲 30 秒平均 70.7 MiB。已有配置时旧 Buildroot 的 initramfs 与 ext4 分别平均 71.3 和 50.1 MiB。实板 KVM 负载内存待测。 [内存对照](software/os/buildroot/README.md#qemu-内存占用)
 - 上板从默认 High Speed 冷启动和串口登录开始，核对 SD 读写、以太网、KVM 外设和内核发出的 UART2 最终断电帧。FEL 与 Buildroot initramfs 可用于诊断。 [首次上板](docs/development.md#首次上板)
-
-## 板级网口、显示电源与 HDMI 采集
-
-核对日期 2026-11-23。
-
-- RTL8211F-CG 的设备树已启用 EMAC，改用本地无源 25 MHz 晶体，配置 PC1 复位和 PC7 中断。SGM3851A 新增 `voltages_uv`，按手册编码并保留默认上电。LT8619C 通过 PC3 复位，使用 GPIO15/PE17 上报视频时序变化，通过 GPIO13 查询 HDMI 5 V。2026-11-22 版 microSD UHS 适配已一起构建。 [板级配置与操作](docs/linux-6.18.md)
-- 已构建 Linux 6.18.64 ARM `zImage`、基础 DTB、DSI DTB 和组合 DTB，另行编译并链接了 LT8619C 与 SGM3851A 的 ARM 模块。组合 DTB 通过相关绑定检查。SGM3851A 编码测试覆盖表 1 的 53 个电压命令。构建输出位于 WSL 的 `~/work/KVMPanel/build/linux-phy-display-integration/`。
-- 接手先核对新版 PHY 晶体网表。从供电、UART0、FEL 和 DDR 开始实板验证，随后测 PHY 时钟、复位和链路，不接面板测 SWIRE 与输出电压，并用示波器和 V4L2 核对 IRQ、HDMI 5 V、EDID 和采集。CARD1 待测 PF 电压、UHS 调谐和冷启动。 [网口时序](docs/development.md#单独验证本板网口) · [首次上板](docs/development.md#首次上板) · [LT8619C 步骤](docs/linux-6.18.md#lt8619c-和并行-csi)
