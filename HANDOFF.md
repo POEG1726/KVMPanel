@@ -9,6 +9,7 @@
 - SDC0 从 SD 启动的 SPL 起设 Level 3（典型 45 Ω），U-Boot 和 Linux 写入同一档。Linux 的 RGMII PG 引脚设 `drive-strength = <40>`。DDR3 颗粒用 `MR1=0x40` 配置 40 Ω 输出和 120 Ω RTT_NOM，T113 DDR PHY 读端 ODT 已开启。 [启动配置](software/os/u-boot/README.md) · [板级设备树](docs/linux-6.18.md#触摸光照sd-和-gpio)
 - SD/FEL U-Boot 和三份 Linux 板级 DTB 已构建，核对了 SPL 写入 SDC0 档位与 MR1 的指令及 DTB 属性。产物在 WSL 的 `~/work/KVMPanel/build/` 下，目录为 `u-boot-kvmpanel-drive-sd`、`u-boot-kvmpanel-drive-fel` 和 `linux-kvmpanel-drive`。旧镜像使用旧设置。有板后先用 FEL 复测 DDR 训练、容量和读写，再测 SD 冷启动、UHS 和 RGMII 千兆收发。 [首次上板](docs/development.md#首次上板)
 - 已反汇编 T113、V853 Tina SPL 和 T113-i DevKit 的 SD/NAND Boot0、FES1，确认 DDR3 参考 `0x7b7bfb` 的低 24 位直写 PHY `0x03103140`。已核对 H3 的六个半字节与三个 ZQDR 的对应关系，以及 T113-i 原厂 DX0、DX1 引脚分组。待同型号寄存器资料或实板电气测量确认两者的对应、输出驱动字段和 Ω 编码后，再选主控 48 Ω、40 Ω 或最强档。 [ZQ 查证与源码位置](software/os/vendor/tina/README.md#主控-zq-编码查证)
+- R528 和 D1 的 Tina SPL 走相同 ZQCR 写入路径。D1-H 哪吒配置及 Centauri DDR3 Boot0 用 `0x7b7bfb`，D1s DDR2 配置用 `0x7b7bf9`。R528 V1.8、D1-H V1.0 公开了 240 Ω 参考电阻修调寄存器，ZQCR 引脚映射及档位待确认。 [R528 与 D1 资料](software/os/vendor/tina/README.md#r528-与-d1-的板级配置和寄存器)
 
 ## Windows PC 遥测采集器
 
