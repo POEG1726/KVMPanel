@@ -78,3 +78,5 @@ sudo bash "$project/software/os/debian/build-image.sh" "$out/base-armhf.tar" \
 | 第二次启动后空闲 30 秒 | 76.5 MiB |
 
 空闲 30 秒占用 69.6～76.5 MiB，平均 70.7 MiB，窗口结束时可用 422.6 MiB。`kvmd` 首次与第二次启动的采样时点峰值 RSS（`VmHWM`）分别为 6.7 和 36.2 MiB，空闲窗口结束时的 PSS 为 36.2 MiB。采样进程的 RSS 约 0.4 MiB，计入系统占用。测量时 Vim 未启动，无活跃 KVM 会话。实板 HDMI 采集、编码、显示和 DMA 缓冲的峰值待测。
+
+旧版用户态已用相同测试内核、采样方式和已有 `/data` 复测。 [Buildroot 内存对照](../buildroot/README.md#qemu-内存占用)
