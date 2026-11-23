@@ -6,9 +6,10 @@
 
 核对日期 2026-11-23。
 
-- 现状：`kvmd` 只有 MCP 开关、单把 key 管理，以及 `/api/mcp/v1/screenshot`、`/api/mcp/v1/hid` 两个 Bearer REST 接口，还没有 MCP 协议服务。 [system.rs](software/app/ipkvm/src/system.rs)
-- 设计已定稿，实现交给 Codex。范围：标准 Streamable HTTP 入口 `/api/mcp/v1`，多把分权限 key，观察、输入、电源、介质和主机隐私五类工具，开机守护，按 `config.host` 设置的键进 BIOS，副屏和 WS2812 提示，功能键急停，操作日志，以及经厂商 HID Input report 4 的主机端程序通道。剪贴板默认关；OCR 这一版不做，之后在 T113 上试 PP-OCR。 [MCP 设计](docs/superpowers/specs/2026-11-23-mcp-design.md)
-- 尚无代码、构建或模拟结果。接手按设计第 3 节的契约顺序开工，验证按第 13 节分别记录。
+- **代码**。`/api/mcp/v1` 和 22 个工具已落地，保留 Bearer REST 截图和 HID。分权限密钥、人工接管、电源与介质确认、网页和副屏停止、WS2812 提示及操作日志已接入。Windows 程序用 HID Input 4 和 Output 3 交换请求和回复，剪贴板默认关闭。 [API 契约](software/app/api/README.md#mcp) · [HID 协议](software/app/api/host-agent.md)
+- **构建**。网页、原生和 ARM Dashboard、WSL ARM 静态 `kvmd`、Windows x64 构建通过。ARM `kvmd` 去符号后为 13,030,312 字节，较 MCP 前增加 944 KiB。 [板端构建与验证](software/app/ipkvm/README.md#mcp-服务) · [Windows 构建与模拟](software/app/pc-telemetry/README.md#mcp-主机端通道)
+- **模拟**。Rust 102 项、Mock 79 项、网页 179 项通过。原生和 ARM Linux 来宾中的 `kvmd --sim` 经 HTTP 覆盖全部 22 个工具，包括可写介质确认和强关途中急停。MCP Inspector 验证了截图、点击、开机守护和进 BIOS。无屏副屏验证了横幅和停止，Unix panel socket 联调取消了正在长按的模拟按键。Windows 验证了 `info`、`clipboard`、`eject` 和默认关闭。
+- **实板待测**。接手从 [设计 §13](docs/superpowers/specs/2026-11-23-mcp-design.md#13-验证) 开始，核对 USB 双向吞吐、真实 LUN 2 弹出、绝对坐标、GPIO 急停、BIOS 连按、启动时间线、WS2812 和实际触摸。物理功能键接入按第 10 节留给板级联调。
 
 ## T113 接口驱动强度
 

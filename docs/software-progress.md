@@ -4,6 +4,7 @@
 
 ## 已完成
 
+- **MCP 服务离线实现**。板端提供标准 Streamable HTTP、22 个工具、分权限密钥、审计和网页及副屏急停。Windows 上位机通过厂商 HID 提供窗口和显示器信息、受限剪贴板和共享盘安全弹出。Rust、Mock、网页测试与 Windows x64、WSL ARM 构建通过。全部工具通过原生及 ARM Linux 来宾 HTTP 模拟。MCP Inspector 和无屏副屏验证通过。 [板端验证](../software/app/ipkvm/README.md#mcp-服务) · [上位机验证](../software/app/pc-telemetry/README.md#mcp-主机端通道)
 - **全志 DDR PHY ZQ 寄存器对照**。离线核对 R528、D1、V853 与 T113 Tina SPL 的 ZQ 写入，复核 D1 板级配置、Centauri Boot0 的 ZQ 参数和全志公开手册。已追出 H3 六个半字节到三个 ZQDR 的校准路径，并核对 T113-i 的 DX0/DX1 引脚和 240 Ω ZQ 参考。 [ZQ 查证](../software/os/vendor/tina/README.md#主控-zq-编码查证)
 - **SDC0、RGMII 与 DDR3 颗粒驱动配置**。SD 启动的 SPL、U-Boot 和 Linux 将 SDC0 设为 Level 3（典型 45 Ω），RGMII 的 PG 引脚设为 `drive-strength = <40>`。SD/FEL SPL 启用主控读端 ODT，三星 DDR3 用 `MR1=0x40` 选 40 Ω 输出和 120 Ω RTT_NOM。SD/FEL U-Boot 与三份板级 DTB 构建通过，核对了 SPL 指令和 DTB 属性。实板待复测。 [启动配置](../software/os/u-boot/README.md) · [板级设备树](linux-6.18.md#触摸光照sd-和-gpio)
 - **Windows 遥测缺值保留**。已知指标缺测时上报 `null`，副屏保留行并显示 `—`。Windows x64 构建、本机 BCLK 和 DRAM 有无读取组件的探测、HID 编码模拟及板端缺值恢复测试通过。实板 USB 待测。 [遥测协议](../software/app/pc-telemetry/README.md#usb-与-panel)
@@ -31,7 +32,7 @@
 
 ## TODO
 
-- **MCP 服务**。设计已定，待实现：标准 Streamable HTTP 入口 `/api/mcp/v1`，覆盖 NanoKVM-OS v4 的 12 个工具，新增遥测、截图裁剪与等待、开机守护、按设置键进 BIOS、分权限 key、操作日志、机箱提示与急停，以及主机端程序通道（剪贴板默认关）。OCR 这一版不做，之后在 T113 上实测 PP-OCR 再定版本和大小。现有代码只有 key 管理和两个 Bearer REST 接口。 [MCP 设计](superpowers/specs/2026-11-23-mcp-design.md)
+- **MCP 实板验证**。待可用板卡和授权硬件操作时，测绝对鼠标与采集画面的映射、BIOS 连按与启动时间线、实板 HID 吞吐、Windows 真实 LUN 2 弹出、GPIO 脉冲急停、WS2812 和实际触摸停止。物理功能键按键读取和阈值标定仍归入板级联调。 [验证范围](superpowers/specs/2026-11-23-mcp-design.md#13-验证)
 - **T113 DDR PHY 输出阻抗**。SD/FEL SPL 当前使用 DDR3 参考编码 `0x7b7bfb`。待同型号 PHY 字段表及输出阻抗表，或实板电气测量，确认各字节对应引脚及 48 Ω、40 Ω 或最强档后调整。 [ZQ 查证](../software/os/vendor/tina/README.md#主控-zq-编码查证)
 - **基础系统实板 bring-up**。按授权范围先核对供电和 UART0，再用 FEL 进 RAM 验证 DDR 训练、容量和 Linux 启动。随后验证 USB、网口、Debian SD High Speed 冷启动，以及实板断电后的文件系统。完成 3.3 V 读写测试后，再验证 UHS。 [首次上板](development.md#首次上板) · [写卡与启动](../software/os/debian/README.md)
 - **板端功能联调**。基础系统跑通后验证 LT8619C/CSI、VE 真实 JPEG 帧及 MJPEG 吞吐、USB 键鼠与存储、Windows 遥测、C906/HiFi4 RPMsg、按键（含把功能键接到 `function_key` 各动作，目前 kvmd 和副屏都未读取物理按键）、光照、温度和看门狗。确认实际面板与触摸型号后验证 DSI、供电、背光和触摸。 [板级适配清单](linux-6.18.md#结果)
