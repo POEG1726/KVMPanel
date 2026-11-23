@@ -35,7 +35,7 @@ export interface Session {
 
 export interface Hdmi { signal: boolean; width: number; height: number; fps: number }
 export interface Locks { num: boolean; caps: boolean; scroll: boolean }
-export interface Power { on: boolean; hdd: boolean }
+export interface Power { on: boolean }
 export interface MediaState { mounted: string | null; mode: 'cdrom' | 'disk' | null }
 export interface MediaMount { root: 'sd'; path: string; mode: 'cdrom' | 'disk'; readonly: boolean }
 export interface DownloadJob {
@@ -124,7 +124,7 @@ export function createState(opts: { now?: () => number; sleep?: (ms: number) => 
     config,
     hdmi: { signal: true, width: 1920, height: 1080, fps: 60 },
     locks: { num: false, caps: false, scroll: false },
-    power: { on: true, hdd: false },
+    power: { on: true },
     media: { mounted: null, mode: null },
     edid: { hex: edid1080p(), preset: '1080p' },
     wol: [],

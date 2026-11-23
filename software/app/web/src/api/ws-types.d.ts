@@ -81,7 +81,6 @@ export interface Status {
   };
   power: {
     on: boolean;
-    hdd: boolean;
   };
   locks: {
     num: boolean;

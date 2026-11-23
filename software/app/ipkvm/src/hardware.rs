@@ -92,7 +92,7 @@ impl Hardware for Sim {
         Ok(())
     }
     fn power(&self) -> io::Result<Value> {
-        Ok(json!({"on":*self.power.lock().unwrap(),"hdd":false}))
+        Ok(json!({"on":*self.power.lock().unwrap()}))
     }
     fn hdmi(&self) -> io::Result<Value> {
         Ok(json!({"signal":true,"width":1920,"height":1080,"fps":60}))

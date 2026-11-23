@@ -234,7 +234,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** PC power and HDD LED state read from the front-panel header (console permission) */
+        /** PC power LED state read from the front-panel header (console permission) */
         get: operations["getPower"];
         put?: never;
         post?: never;
@@ -1133,8 +1133,6 @@ export interface components {
         PowerState: {
             /** @description Power LED lit */
             on: boolean;
-            /** @description HDD LED lit */
-            hdd: boolean;
         };
         WolDevice: {
             name: string;

@@ -58,7 +58,7 @@ fn sample(app: App) -> Value {
         .console
         .power_cache
         .read(|| app.hw.power())
-        .unwrap_or_else(|_| json!({"on":false,"hdd":false}));
+        .unwrap_or_else(|_| json!({"on":false}));
     let locks = app
         .hw
         .locks()
@@ -122,7 +122,7 @@ mod tests {
     fn leds_read_once_until_invalidated() {
         let cache = PowerCache::default();
         assert_eq!(
-            cache.read(|| Ok(json!({"on":true,"hdd":false}))).unwrap()["on"],
+            cache.read(|| Ok(json!({"on":true}))).unwrap()["on"],
             true
         );
         assert_eq!(

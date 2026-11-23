@@ -2,6 +2,13 @@
 
 最近五项有实际进展的软件工作，最新一项在顶部。全项目状态见 [软件进度](docs/software-progress.md)。
 
+## 电脑电源灯状态
+
+核对日期 2026-11-23。
+
+- 板端只读 PE12。HTTP `/api/power` 和控制台 WebSocket 电源状态均只传 `on`，Mock、接口契约和网页已同步。 [板端接口](software/app/ipkvm/README.md#板端接口)
+- 已通过 `kvmd` 和 Mock 测试、网页构建及测试。接手在实板分别核对开机和关机时的 PE12 读数及网页状态。
+
 ## Debian 13 SD 镜像
 
 核对日期 2026-11-23。
@@ -28,14 +35,7 @@
 
 ## 副屏横装、离线状态页和屏幕方向
 
-核对日期 2026-11-22。
+核对日期 2026-11-23。
 
-- 横装、电脑离线状态页和共享方向配置已写入设计。正式副屏实现和契约更新待做。 [应用设计](docs/superpowers/specs/2026-11-20-kvmpanel-app-design.md)
-- 接手先补 `panel.orientation` 和离线状态所需数据的契约及 Mock 测试，再同步 `kvmd`、网页设置和副屏。副屏框架仍待对比选定。 [接口说明](software/app/api/README.md) · [Dashboard](software/app/dashboard/README.md)
-
-## KVM 网页合入主分支
-
-核对日期 2026-11-22。
-
-- 网页已合入 `main`，此前用 Mock 走查双语登录、控制台、设置和工作台，并用 `kvmd --sim` 验证静态路由和文件传输。 [联调记录](software/app/web/README.md#工作台与联调)
-- 后续从 `software/app/web/` 接手。契约有改动时，先重新生成 API 类型，再跑前端测试和打包验证。 [开发说明](software/app/web/README.md)
+- 横装、电脑离线状态页和共享方向配置已写入设计。离线状态 `board` 和 `pc_power_on` 已有契约与 Mock 测试。 [应用设计](docs/superpowers/specs/2026-11-20-kvmpanel-app-design.md) · [接口说明](software/app/api/README.md)
+- 接手补 `panel.orientation` 的契约，再同步 `kvmd`、网页设置和副屏。副屏框架待选，离线板端数据待实现。 [Dashboard](software/app/dashboard/README.md)

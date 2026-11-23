@@ -35,8 +35,7 @@ export function PowerMenu() {
   return (
     <div className={s.panel}>
       <div className={s.head}>
-        {t('power.title')} · <span className={power?.on ? s.on : undefined}>{power?.on ? t('power.on') : t('power.off')}</span> · {t('power.hdd')}{' '}
-        {power?.hdd ? t('power.lit') : t('power.dark')}
+        {t('power.title')} · <span className={power?.on ? s.on : undefined}>{power?.on ? t('power.on') : t('power.off')}</span>
       </div>
       <div className={s.grid2}>
         <Button onClick={() => setPending('power')}>{t('power.power')}</Button>

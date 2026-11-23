@@ -225,7 +225,7 @@ impl Hardware for Board {
         pulse.and(release).map(|_| ())
     }
     fn power(&self) -> io::Result<Value> {
-        Ok(json!({"on":indicator("POWER_LED")?,"hdd":indicator("HDD_LED")?}))
+        Ok(json!({"on":indicator("POWER_LED")?}))
     }
     fn lux(&self) -> io::Result<f64> {
         illuminance(&named(Path::new("/sys/bus/iio/devices"), "name", "bh1750")?)

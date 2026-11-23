@@ -9,7 +9,7 @@ describe('power', () => {
     const get = () => app.inject({ method: 'GET', url: '/api/power', headers: { cookie } });
     const first = await get();
     check('getPower', first);
-    expect(first.json()).toEqual({ on: true, hdd: false });
+    expect(first.json()).toEqual({ on: true });
 
     const press = (button: string, duration_ms: number) =>
       app.inject({ method: 'POST', url: '/api/power/press', headers: { cookie }, payload: { button, duration_ms } });

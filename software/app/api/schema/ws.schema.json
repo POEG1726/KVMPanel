@@ -94,8 +94,8 @@
           "properties": { "fps": { "type": "number", "minimum": 0 }, "kbps": { "type": "number", "minimum": 0 } }
         },
         "power": {
-          "type": "object", "required": ["on", "hdd"], "additionalProperties": false,
-          "properties": { "on": { "type": "boolean" }, "hdd": { "type": "boolean" } }
+          "type": "object", "required": ["on"], "additionalProperties": false,
+          "properties": { "on": { "type": "boolean" } }
         },
         "locks": {
           "type": "object", "required": ["num", "caps", "scroll"], "additionalProperties": false,

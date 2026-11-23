@@ -99,7 +99,7 @@ async fn power_and_wake_on_lan_contract() {
     let get_power = || s.call("GET", "/api/power", &c, None);
     assert_eq!(
         checked(get_power().await, "getPower", 200).await,
-        json!({"on":true,"hdd":false})
+        json!({"on":true})
     );
     for (button, ms, on) in [
         ("power", 300, false),

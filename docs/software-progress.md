@@ -4,6 +4,7 @@
 
 ## 已完成
 
+- **电脑电源灯状态**。板端 `kvmd` 只读 PE12，REST 和 WebSocket 电源状态只包含 `on`。Mock、类型和网页均已同步。通过 `kvmd` 和 Mock 测试、网页构建及测试，实板电源灯读数待测。 [主板控制接线](../software/app/ipkvm/README.md#板端接口)
 - **接口与 Mock**。OpenAPI、WebSocket、panel socket 和本机 Mock 已合入 `main`。Mock 源码和测试已涵盖关闭绝对鼠标时遥测占用独立 IN 端点的规则。 [接口与运行说明](../software/app/api/README.md)
 - **Linux 基础系统与板级驱动的离线验证**。Linux 6.18.64、板级 DTB、FEL 用 U-Boot 和 Buildroot initramfs 已有构建结果。已有 QEMU 用户态、USB gadget 及 LT8619C、CSIC、TD4322 模块装卸记录，以及 C906/HiFi4 回环固件构建和打包记录。 [构建说明](development.md) · [板级验证范围](linux-6.18.md)
 - **Debian 13 armhf SD 镜像**。已构建板用镜像并预装 Vim。QEMU 验证首次密码设置、数据分区、KVM 网页、USB gadget、网络设置及模拟 STC8 关机。已测启动和空闲峰值，并对照旧 Buildroot，实板负载待测。 [镜像说明](../software/os/debian/README.md) · [内存对照](../software/os/buildroot/README.md#qemu-内存占用)
@@ -14,6 +15,7 @@
 
 ## In Progress
 
+- **电脑端遥测采集计划**。正在核对截图中的传感器、Windows 网卡接口与现有副屏契约。
 - **板级适配**。2026-11-22 归档与软件已用于 microSD UHS、显示电源和采集适配。待新版网表核对 RTL8211F-CG 的无源晶体接法。待实板验证 PHY 起振和链路、SGM3851A 的 SWIRE 波形和三路输出、LT8619C 的 IRQ 清除及 HDMI 采集，以及 microSD 的电压和速率。 [板级适配](linux-6.18.md) · [网口时序](development.md#单独验证本板网口)
 - **STC8 电源管理集成**。固件 1.1 加入 STC 本机硬件看门狗，已通过 SDCC 构建、状态机测试及模拟 ISP 回归。引脚分配 CSV 已记录按键理论电压。实板待验证 ADC 判定窗口、UART 电平和收发、供电与复位波形、看门狗恢复，以及外部 UPDATE_HOLD 电路。 [STC8 说明与验证](../software/firmware/stc8/README.md)
 
@@ -21,6 +23,4 @@
 
 - **基础系统实板 bring-up**。按授权范围先核对供电和 UART0，再用 FEL 进 RAM 验证 DDR 训练、容量和 Linux 启动。随后验证 USB、网口、Debian SD High Speed 冷启动，以及实板断电后的文件系统。完成 3.3 V 读写测试后，再验证 UHS。 [首次上板](development.md#首次上板) · [写卡与启动](../software/os/debian/README.md)
 - **板端功能联调**。基础系统跑通后验证 LT8619C/CSI、MJPEG 吞吐、USB 键鼠与存储、Windows 遥测、C906/HiFi4 RPMsg、按键、光照、温度和看门狗。确认实际面板与触摸型号后验证 DSI、供电、背光和触摸。 [板级适配清单](linux-6.18.md#结果)
-- **主板状态读取**。新版硬件的 HDD 灯在 H1/H3 间直通，板端只有电源灯输入。应让 KVM 后端在缺少 HDD 灯 GPIO 时仍能返回电源灯状态。 [主板控制接线](../software/app/ipkvm/README.md#板端接口)
 - **副屏方向、离线状态页与正式实现**。先把共享 `panel.orientation` 和离线状态所需数据写进契约，再同步 Mock、`kvmd`、网页设置和副屏。对比三版原型后选定框架，补横屏、触摸坐标转换和 T113 实测。 [当前应用设计](superpowers/specs/2026-11-20-kvmpanel-app-design.md)
-- **电脑端遥测**。真实上位机与板端线格式待定。现有 Mock、`kvmd --sim` 和临时 HID 解码可用于前期联调。 [遥测入口](../software/app/ipkvm/README.md#副屏与遥测)
