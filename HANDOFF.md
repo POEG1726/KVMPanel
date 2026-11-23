@@ -2,6 +2,13 @@
 
 最近五项有实际进展的软件工作，最新一项在顶部。全项目状态见 [软件进度](docs/software-progress.md)。
 
+## Windows PC 遥测采集计划
+
+核对日期 2026-11-23。
+
+- 已核对截图与现有契约。清单纳入截图的非风扇传感器及每个 Windows 网络适配器。设备和指标动态发现，Panel 自行绑定显示内容。 [采集计划](docs/superpowers/specs/2026-11-23-pc-telemetry-design.md)
+- 接手先做只读探测，在截图机器和不同硬件主机核对来源覆盖，再实现设备清单、Mock 和正式 HID 批传。真实采集及 USB 吞吐待验证。 [现有接口](software/app/ipkvm/README.md#副屏与遥测)
+
 ## 电脑电源灯状态
 
 核对日期 2026-11-23。
@@ -32,10 +39,3 @@
 
 - 固件 1.1 已加入 STC 本机硬件看门狗，标称超时约 1.71 s。固件、T113 的 UART2 关机路径和 Buildroot 升级工具已提交到 `main`。已重跑 SDCC 构建、状态机测试和 ISP 模拟。 [STC8 离线验证](software/firmware/stc8/README.md#离线验证)
 - 接手从固件 README 的构建和测试入口开始。获准上板后，用 CSV 的理论值核对 ADC 计数范围，实测 UART 收发、供电和复位波形及看门狗恢复。在线升级待外部 UPDATE_HOLD 电路补齐并确认。 [STC8 固件](software/firmware/stc8/README.md) · [引脚分配 CSV](hardware/T113_signal_allocation.csv)
-
-## 副屏横装、离线状态页和屏幕方向
-
-核对日期 2026-11-23。
-
-- 横装、电脑离线状态页和共享方向配置已写入设计。离线状态 `board` 和 `pc_power_on` 已有契约与 Mock 测试。 [应用设计](docs/superpowers/specs/2026-11-20-kvmpanel-app-design.md) · [接口说明](software/app/api/README.md)
-- 接手补 `panel.orientation` 的契约，再同步 `kvmd`、网页设置和副屏。副屏框架待选，离线板端数据待实现。 [Dashboard](software/app/dashboard/README.md)
