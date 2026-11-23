@@ -2,19 +2,19 @@
 
 最近五项有实际进展的软件工作，最新一项在顶部。全项目状态见 [软件进度](docs/software-progress.md)。
 
+## Windows PC 遥测采集器
+
+核对日期 2026-11-23。
+
+- 原生 C/Win32 采集器带设置窗口和托盘。Windows x64 构建通过，本机验证 CPU、内存、磁盘、逐网卡和 GPU 基础指标。RTX 5090 管理员探测同时取得核心温度 29 °C、核心热点 31.1875 °C 和显存结温 40 °C。普通权限访问 PawnIO 被拒时仍可采集核心温度及显存结温。 [采集器与只读探测](software/app/pc-telemetry/README.md)
+- 新增 Ryzen CPU 时钟域、功耗限制、物理核心倍频、供电电压及电流，并读 DDR5 Hub 温度和 PMIC 告警。Windows 本机 9950X3D 与两条 DIMM 已验证。接手用 `--once` 核对其他主机，再测实板 USB。BCLK、DRAM 读写带宽、PMIC 实际电压与功率、Intel GPU 深度读取待实现。 [CPU 和 DIMM 采集](software/app/pc-telemetry/README.md#cpu-和-dimm-硬件读数)
+
 ## WS2812 板级驱动
 
 核对日期 2026-11-23。
 
 - 组合 DTB 启用 T113 硬件 LEDC，以 PG13 驱动四颗 WS2812B-2020-V6。完成 ARM zImage 构建、驱动链接及设备树绑定检查。输出在 WSL 的 `~/work/KVMPanel/build/linux-ws2812/`。 [WS2812 接线、时序与 sysfs](docs/linux-6.18.md#ws2812)
 - 实板可用后测 PG13 的位时序和复位低电平，逐颗核对 LED1、LED2、LED4、LED5 的三色及亮度。
-
-## Windows PC 遥测采集器
-
-核对日期 2026-11-23。
-
-- 原生 C/Win32 采集器带设置窗口和托盘。Windows x64 构建通过，本机验证 CPU、内存、磁盘、逐网卡和 GPU 基础指标。RTX 5090 管理员探测同时取得核心温度 29 °C、核心热点 31.1875 °C 和显存结温 40 °C。普通权限访问 PawnIO 被拒时仍可采集核心温度及显存结温。 [采集器与只读探测](software/app/pc-telemetry/README.md)
-- `kvmd` 已接收批量 HID 遥测、设备名和会话心跳，离线测试和 ARM 静态构建通过。接手用 `--once` 核对其他显卡，再测实板 USB 收发并接入正式 Dashboard 的字段选择。CPU 超频与供电读数、DRAM 带宽、DIMM 温度和 PMIC 仍需硬件采集实现。 [采集计划](docs/superpowers/specs/2026-11-23-pc-telemetry-design.md) · [板端协议](software/app/pc-telemetry/README.md#usb-与-panel)
 
 ## 副屏电脑离线页
 

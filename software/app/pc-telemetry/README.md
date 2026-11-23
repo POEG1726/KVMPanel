@@ -26,8 +26,15 @@ Get-Content .\build\pc-telemetry\probe.json -Raw | ConvertFrom-Json
 | NVIDIA 驱动 NVAPI / NVML | 每张卡的核心温度、显存结温、频率、占用、显存用量、整卡功耗与生效功耗限制，以驱动返回的字段为准 |
 | AMD 驱动 ADL | 每张 Radeon 的温度、核心热点、显存温度、时钟、占用、电压或板级功耗，以 ADL 实际支持的字段为准 |
 | 已安装的 PawnIO 与官方签名 NVIDIA 模块 | Blackwell 核心热点，要求有权限访问驱动 |
+| 已安装的 PawnIO 与官方签名 Ryzen 模块 | 已识别的 SMU 表提供 GHz 时钟域、核心温度、电压、功耗与限值。读取硬件 P-state 状态得到每个物理核心的倍频 |
+| 已安装的 PawnIO 与官方签名 SMBus 模块 | AMD PIIX4 / Intel I801 可访问的 SPD5118 温度和匹配 DDR5 PMIC 的实时过温、过压、欠压状态 |
 
-采集器直接调用 Windows 和显卡驱动的 DLL。HWiNFO、`nvidia-smi` 和其它监控进程不参与采样。CPU 供电读数与限值、BCLK/倍频、FCLK/UCLK、DRAM 带宽、DIMM 温度和 PMIC、Intel GPU 深度指标仍待实现。 [采集范围](../../../docs/superpowers/specs/2026-11-23-pc-telemetry-design.md)
+采集器直接调用 Windows 和厂商驱动的 DLL。硬件传感器没有可用读数时不会发占位值。BCLK、DRAM 读写带宽、DDR5 PMIC 实时电压和功率、Intel GPU 深度指标仍待实现。 [采集范围](../../../docs/superpowers/specs/2026-11-23-pc-telemetry-design.md)
+
+## CPU 和 DIMM 硬件读数
+
+- 将官方 `RyzenSMU.bin`、`AMDFamily17.bin` 和对应芯片组的 `SmbusPIIX4.bin` 或 `SmbusI801.bin` 放在 EXE 同目录。用有权访问 PawnIO 的用户运行。AM5 的 PM 表按处理器及固件表版本识别，当前支持 9950X3D、9800X3D，并为 5600X 提供部分全局指标。9950X3D 本机探测通过，另两种 Ryzen 及 Intel SMBus 路径需要对应机器复测。 [PawnIO 官方模块](https://github.com/namazso/PawnIO.Modules/releases/tag/0.2.12) · [Granite Ridge 与 Vermeer 表](https://github.com/Kyworn/gnr-smu/blob/master/gnr_smu/profiles.py) · [倍频与供电数据参考](https://github.com/irusanov/ZenStates-Core/tree/master/Hardware)
+- 9950X3D 实测 FCLK 2000 MHz、UCLK/MCLK 3000 MHz，读到 16 个物理核心的倍频、PPT 限值 200 W、TDC/EDC 限值 160/225 A，以及 VDD、SoC 和 Misc 电流。DDR5 Hub `0x51`、`0x53` 实测 40.75 °C、38.50 °C，两条 PMIC 的告警位均清零。DIMM 按 SMBus 地址标识。 [SPD5118 手册与实现](https://github.com/torvalds/linux/blob/v6.18/drivers/hwmon/spd5118.c) · [PMIC 状态寄存器](https://datasheet.lcsc.com/lcsc/2501201522_Richtek-Tech-RTQ5132GQWF-00W-220_C3249964.pdf)
 
 ## GPU 核心热点和显存结温
 

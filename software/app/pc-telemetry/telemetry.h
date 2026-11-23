@@ -28,13 +28,16 @@ typedef struct {
     unsigned junctions;
     unsigned hotspots;
     BOOL hotspot_access_denied;
+    BOOL ryzen_access_denied;
     Metric metrics[MAX_METRICS];
 } Sample;
 
 typedef struct Sources Sources;
 typedef struct Usb Usb;
 typedef struct Radeon Radeon;
-typedef struct Hotspot Hotspot;
+typedef struct Pawn Pawn;
+typedef struct Ryzen Ryzen;
+typedef struct Ddr5 Ddr5;
 
 /** Store a finite reading under a stable device and metric ID. */
 void metric_put(Sample *sample, const char *id, const char *label, double value);
@@ -52,10 +55,22 @@ Radeon *radeon_open(void);
 void radeon_sample(Radeon *radeon, Sample *sample, unsigned groups);
 void radeon_close(Radeon *radeon);
 
-/** Read Blackwell's hardware hotspot via an existing signed PawnIO executor. */
-Hotspot *hotspot_open(BOOL *access_denied);
-double hotspot_read(Hotspot *hotspot, unsigned bus, unsigned device, unsigned function);
-void hotspot_close(Hotspot *hotspot);
+/** Open an official signed PawnIO module from the collector directory. */
+Pawn *pawn_open(const wchar_t *name, BOOL *access_denied);
+BOOL pawn_read(Pawn *pawn, const char *operation, const ULONG64 *in, SIZE_T in_count,
+               ULONG64 *out, SIZE_T out_count);
+void pawn_close(Pawn *pawn);
+double hotspot_read(Pawn *pawn, unsigned bus, unsigned device, unsigned function);
+
+/** Read hardware telemetry from a recognized Ryzen PM table. */
+Ryzen *ryzen_open(BOOL *access_denied);
+void ryzen_sample(Ryzen *ryzen, Sample *sample, unsigned groups);
+void ryzen_close(Ryzen *ryzen);
+
+/** Read DDR5 SPD hub temperatures through a supported SMBus controller. */
+Ddr5 *ddr5_open(void);
+void ddr5_sample(Ddr5 *ddr5, Sample *sample);
+void ddr5_close(Ddr5 *ddr5);
 
 /** Discover and update the KVMPanel HID collection. */
 Usb *usb_open(void);

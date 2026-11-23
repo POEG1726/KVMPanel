@@ -261,7 +261,7 @@ fn instance_metric(id: &str, names: Option<&DeviceNames>) -> Option<Metric> {
         ("cpu", "bclk") => ("BCLK", "MHz", 120.),
         ("cpu", "ratio") => ("Core ratio", "×", 75.),
         ("cpu", "tctl") => ("CPU temperature", "°C", 110.),
-        ("cpu", "vrm_temp" | "ccd_temp") => (field, "°C", 115.),
+        ("cpu", "vrm_temp" | "ccd_temp" | "thermal_limit") => (field, "°C", 120.),
         ("gpu" | "disk", "temp") => ("Temperature", "°C", 110.),
         ("gpu", "hotspot") => ("Hot spot", "°C", 120.),
         ("gpu", "mem_junction") => ("Memory junction", "°C", 120.),
@@ -270,11 +270,12 @@ fn instance_metric(id: &str, names: Option<&DeviceNames>) -> Option<Metric> {
         ("cpu", "vid" | "vcore" | "soc_v" | "misc_v" | "mc_v")
         | ("gpu", "core_v" | "memory_v" | "pcie_v" | "aux_v")
         | ("dimm", "vdd" | "vddq" | "vpp") => (field, "V", 15.),
-        ("cpu", "core_a" | "soc_a" | "tdc" | "edc" | "tdc_limit" | "edc_limit")
+        ("cpu", "core_a" | "soc_a" | "misc_a" | "tdc" | "edc" | "tdc_limit" | "edc_limit")
         | ("gpu", "core_a") => (field, "A", 250.),
         ("cpu", "package_power" | "ppt" | "ppt_limit" | "pl1" | "pl2")
         | ("gpu" | "dimm", "power")
         | ("gpu", "power_limit" | "power_rated" | "power_max") => (field, "W", 700.),
+        ("cpu", "core_power") => ("Power", "W", 100.),
         ("cpu", "ppt_pct" | "ppt_fast_pct" | "tdc_pct" | "edc_pct" | "thermal_pct") => {
             (field, "%", 100.)
         }

@@ -91,9 +91,14 @@ struct Sources {
     Nvml nv;
     NvApi nvapi;
     Radeon *radeon;
-    Hotspot *hotspot;
+    Pawn *hotspot;
+    Ryzen *ryzen;
+    Ddr5 *ddr5;
     BOOL hotspot_attempted;
     BOOL hotspot_access_denied;
+    BOOL ryzen_attempted;
+    BOOL ryzen_access_denied;
+    BOOL ddr5_attempted;
     BOOL nv_attempted;
     PDH_HQUERY query;
     PDH_HCOUNTER cpu, cpu_clock, disk_read, disk_write;
@@ -267,7 +272,7 @@ static void nvapi_temp(Sources *sources, Sample *sample, unsigned groups,
             if (blackwell && same_bus == 1 && identities[found].domain == 0) {
                 if (!sources->hotspot_attempted) {
                     sources->hotspot_attempted = TRUE;
-                    sources->hotspot = hotspot_open(&sources->hotspot_access_denied);
+                    sources->hotspot = pawn_open(L"Nvidia.bin", &sources->hotspot_access_denied);
                 }
                 sample->hotspot_access_denied = sources->hotspot_access_denied;
                 value = hotspot_read(sources->hotspot, identities[found].bus,
@@ -537,6 +542,7 @@ void sources_sample(Sources *sources, Sample *sample, unsigned groups)
 {
     sample->count = sample->junctions = sample->hotspots = 0;
     sample->hotspot_access_denied = FALSE;
+    sample->ryzen_access_denied = FALSE;
     if ((groups ^ sources->last_groups) & (CPU | STORAGE))
         configure_pdh(sources, groups);
     if ((groups ^ sources->last_groups) & STORAGE)
@@ -548,6 +554,11 @@ void sources_sample(Sources *sources, Sample *sample, unsigned groups)
     sources->last_groups = groups;
     if (groups & MEMORY) {
         MEMORYSTATUSEX memory = {.dwLength = sizeof(memory)};
+        if (!sources->ddr5_attempted) {
+            sources->ddr5_attempted = TRUE;
+            sources->ddr5 = ddr5_open();
+        }
+        ddr5_sample(sources->ddr5, sample);
         if (GlobalMemoryStatusEx(&memory)) {
             metric_put(sample, "mem.used", "", (double)(memory.ullTotalPhys - memory.ullAvailPhys) / 1e9);
             metric_put(sample, "mem.total", "", (double)memory.ullTotalPhys / 1e9);
@@ -555,6 +566,14 @@ void sources_sample(Sources *sources, Sample *sample, unsigned groups)
     }
     if (groups & CPU)
         cpu_sample(sources, sample);
+    if (groups & (CPU | TUNING)) {
+        if (!sources->ryzen_attempted) {
+            sources->ryzen_attempted = TRUE;
+            sources->ryzen = ryzen_open(&sources->ryzen_access_denied);
+        }
+        sample->ryzen_access_denied = sources->ryzen_access_denied;
+        ryzen_sample(sources->ryzen, sample, groups);
+    }
     if (sources->query && PdhCollectQueryData(sources->query) == ERROR_SUCCESS) {
         PDH_FMT_COUNTERVALUE clock;
         if (sources->cpu_clock &&
@@ -590,7 +609,9 @@ void sources_close(Sources *sources)
         FreeLibrary(sources->nvapi.module);
     }
     radeon_close(sources->radeon);
-    hotspot_close(sources->hotspot);
+    pawn_close(sources->hotspot);
+    ryzen_close(sources->ryzen);
+    ddr5_close(sources->ddr5);
     free(sources->pdh_buffer);
     free(sources->net);
     free(sources);

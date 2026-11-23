@@ -365,8 +365,9 @@ static int probe(void)
     Sleep(500);
     sources_sample(sources, sample, options.groups);
     printf("{\"hotspot_devices\":%u,\"memory_junction_devices\":%u,"
-           "\"hotspot_access_denied\":%s,\"metrics\":[",
-           sample->hotspots, sample->junctions, sample->hotspot_access_denied ? "true" : "false");
+           "\"hotspot_access_denied\":%s,\"ryzen_access_denied\":%s,\"metrics\":[",
+           sample->hotspots, sample->junctions, sample->hotspot_access_denied ? "true" : "false",
+           sample->ryzen_access_denied ? "true" : "false");
     for (unsigned i = 0; i < sample->count; ++i) {
         Metric *metric = &sample->metrics[i];
         printf("%s{\"id\":", i ? "," : "");
