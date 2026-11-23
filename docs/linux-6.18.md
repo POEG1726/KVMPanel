@@ -144,6 +144,22 @@ Tina 的 PF 电压切换做在 pinctrl 里，MMC 驱动只切 pinctrl 状态：
 
 THS 位于 0x02009400，GIC SPI 58，校准读取 SID 偏移 0x14 的 8 字节。以 thermal_zone 暴露 SoC 温度，100 °C 临界阈值取自公开的 T113 DTS 提案。系统 WDT @0x020500a0 用于当前 ARMv7 FEL/U-Boot 组合；改用持有看门狗的固件时应保留 reserved。启动后检查校准、温度变化及 watchdog 身份；超时复位须单独安排实板验证。[THS 节点与校准来源](https://lists.openwall.net/linux-kernel/2026/01/13/2046)
 
+### WS2812
+
+PG13 的 Function 6 将 LEDC 输出到 LED1，后续依次为 LED2、LED4、LED5。组合 DTB 启用上游 `leds-sun50i-a100`，采用 D1/T113 的 GIC SPI 20 和 24 MHz DCXO。四颗 LED 由控制器 FIFO 一次装入，线上以 GRB、最高位优先发送。按驱动的整数换算及寄存器的 `N+1` 周期编码，0 位约为 333 ns 高及 958 ns 低，1 位约为 667 ns 高及 667 ns 低，帧后拉低约 315 µs。 [上游驱动](https://github.com/torvalds/linux/blob/v6.18/drivers/leds/leds-sun50i-a100.c) · [T113-S3 手册 §9.11.6](https://dl.linux-sunxi.org/T113-S3/T113-S3_User_manual_v1.1_20210830.pdf) · [WS2812B-2020-V6 手册](https://www.tme.com/Document/f57342b0dc3e7d573aa1f8b6b5942fcf/WS2812B-2020-V6_V1.2_EN.pdf)
+
+Linux 为每颗灯提供 `/sys/class/leds/rgb:indicator-{1,2,3,4}`。`multi_index` 为 `red green blue`，`multi_intensity` 写三个 0–255 的通道值，`brightness` 写整颗灯的亮度。下面以低亮度检查第一颗灯，随后关闭。
+
+```sh
+led=/sys/class/leds/rgb:indicator-1
+cat "$led/multi_index"
+echo '255 0 0' > "$led/multi_intensity"
+echo 16 > "$led/brightness"
+echo 0 > "$led/brightness"
+```
+
+ARM zImage 已构建并链接 LEDC 驱动，组合 DTB 通过 LEDC 绑定检查。实板待检查 PG13 的实际波形、四颗灯的顺序和三色输出。
+
 ## 参考
 
 - https://github.com/gregkh/linux/tree/v6.18.64

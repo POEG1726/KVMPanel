@@ -1,8 +1,62 @@
 // SPDX-License-Identifier: (GPL-2.0-only OR MIT)
+#include <dt-bindings/leds/common.h>
 #include <dt-bindings/reset/sun20i-d1-ccu.h>
 
 / {
 	soc {
+		led-controller@2008000 {
+			compatible = "allwinner,sun20i-d1-ledc", "allwinner,sun50i-a100-ledc";
+			reg = <0x2008000 0x400>;
+			interrupts = <GIC_SPI 20 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&ccu CLK_BUS_LEDC>, <&ccu CLK_LEDC>;
+			clock-names = "bus", "mod";
+			resets = <&ccu RST_BUS_LEDC>;
+			assigned-clocks = <&ccu CLK_LEDC>;
+			assigned-clock-parents = <&dcxo>;
+			assigned-clock-rates = <24000000>;
+			pinctrl-names = "default";
+			pinctrl-0 = <&ledc_pg13_pin>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			/* Four pixels fit in the FIFO. The timing registers encode cycles - 1. */
+			allwinner,pixel-format = "grb";
+			allwinner,t0h-ns = <300>;
+			allwinner,t0l-ns = <935>;
+			allwinner,t1h-ns = <620>;
+			allwinner,t1l-ns = <620>;
+			allwinner,treset-ns = <310000>;
+
+			/* Daisy chain order: LED1, LED2, LED4, LED5. */
+			multi-led@0 {
+				reg = <0>;
+				color = <LED_COLOR_ID_RGB>;
+				function = LED_FUNCTION_INDICATOR;
+				function-enumerator = <1>;
+			};
+
+			multi-led@1 {
+				reg = <1>;
+				color = <LED_COLOR_ID_RGB>;
+				function = LED_FUNCTION_INDICATOR;
+				function-enumerator = <2>;
+			};
+
+			multi-led@2 {
+				reg = <2>;
+				color = <LED_COLOR_ID_RGB>;
+				function = LED_FUNCTION_INDICATOR;
+				function-enumerator = <3>;
+			};
+
+			multi-led@3 {
+				reg = <3>;
+				color = <LED_COLOR_ID_RGB>;
+				function = LED_FUNCTION_INDICATOR;
+				function-enumerator = <4>;
+			};
+		};
+
 		ths: thermal-sensor@2009400 {
 			compatible = "allwinner,sun20i-d1-ths";
 			reg = <0x2009400 0x400>;
@@ -33,6 +87,10 @@
 	};
 };
 
+&dcxo {
+	clock-frequency = <24000000>;
+};
+
 &sid {
 	ths_calibration: thermal-sensor-calibration@14 {
 		reg = <0x14 0x8>;
@@ -42,6 +100,12 @@
 &pio {
 	/* F4 feeds the 1.8 V leg. The other leg uses SoC VCC-IO. */
 	vcc-pf-supply = <&reg_1v8>;
+
+	ledc_pg13_pin: ledc-pg13-pin {
+		pins = "PG13";
+		function = "ledc";
+		bias-disable;
+	};
 
 	reg_pf_io: pf-vqmmc {
 		regulator-name = "PF-SD-IO";

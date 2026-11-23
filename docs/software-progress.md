@@ -4,6 +4,7 @@
 
 ## 已完成
 
+- **WS2812 板级驱动**。组合 DTB 接入 PG13 的硬件 LEDC 和四颗独立 RGB 灯，按 WS2812B-2020-V6 手册设定 GRB 和发送时序。通过 ARM zImage 构建、驱动链接和 LEDC 绑定检查。实板波形及点灯待测。 [WS2812](linux-6.18.md#ws2812)
 - **Windows PC 遥测基础采集**。原生 C 设置窗口和托盘支持调整采样间隔及指标组。Windows x64 构建和本机只读探测通过，验证基础 CPU、内存、磁盘、逐网卡及 GPU 指标。RTX 5090 管理员探测实测核心热点 31.1875 °C、显存结温 40 °C。`kvmd` 批量 HID 遥测接收已通过离线测试和 ARM 静态构建。 [采集器与验证范围](../software/app/pc-telemetry/README.md)
 - **副屏电脑离线页（原型）**。panel socket 新增每秒一次的 `board` 消息和 `pc_power_on` 动作（电脑开着时拒绝），Mock 可从关机或等待上位机状态启动。Qt 6 和 LVGL 原型都实现了竖屏和横屏的离线页、开机按钮和息屏倒计时，曲线和内存温度行也按已定规则改过。已通过 Mock 测试和两版构建，并在 Mock 下截图核对关机、等待上位机、开机后切回主屏三种状态。实际点击和按键未在窗口里测过，`kvmd` 还不发 `board`。 [Dashboard](../software/app/dashboard/README.md) · [接口](../software/app/api/README.md)
 - **T113 硬件 MJPEG 接入**。组合 DTB 启用 VE 和 IOMMU，`kvmd` 使用 Cedrus JPEG 编码并提供软件回退。ARM 内核、DTB、静态应用已构建，VE 和 IOMMU 绑定通过检查。已打包 Debian 镜像并通过 QEMU 用户态冒烟。 [编码说明](linux-6.18.md#jpegmjpeg-编码)
