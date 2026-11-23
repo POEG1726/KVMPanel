@@ -8,8 +8,14 @@
 #include <intrin.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 enum { SMBIOS_PROVIDER = 0x52534d42, SMBIOS_DDR5 = 0x22, SPD_FIRST = 0x50, SPD_SLOTS = 8 };
+
+static const struct { unsigned channel; const char *id; double volts_per_lsb; } rails[] = {
+    {0, "swa_v", 0.015}, {2, "swb_v", 0.015}, {3, "swc_v", 0.015},
+    {5, "vin_v", 0.070}, {8, "ldo18_v", 0.015}, {9, "ldo10_v", 0.015},
+};
 
 struct Ddr5 {
     Pawn *bus;
@@ -18,6 +24,10 @@ struct Ddr5 {
     unsigned active;
     unsigned pmic_active;
     unsigned pmic_hot, pmic_ov, pmic_uv;
+    unsigned adc_unsupported;
+    unsigned rail_index;
+    uint8_t pmic_power[SPD_SLOTS];
+    uint8_t pmic_adc[SPD_SLOTS][_countof(rails)];
     BOOL scanned;
     ULONGLONG next_sample;
     double temperatures[SPD_SLOTS];
@@ -84,8 +94,45 @@ static BOOL read_register(Ddr5 *ddr5, unsigned addr, unsigned reg, BOOL word, UL
     return pawn_read(ddr5->bus, "ioctl_smbus_xfer", args, _countof(args), result, 1);
 }
 
+/** Select only the PMIC ADC's telemetry input. The original selection is restored below. */
+static BOOL set_adc_selector(Ddr5 *ddr5, unsigned address, ULONG64 command)
+{
+    const ULONG64 args[] = {address, 0, 0x30, 2, command};
+    return pawn_read(ddr5->bus, "ioctl_smbus_xfer", args, _countof(args), NULL, 0);
+}
+
+static void adc_sample(Ddr5 *ddr5, unsigned address, unsigned slot, unsigned index, ULONG64 old)
+{
+    const ULONG64 command = (old & 0x87) | ((ULONG64)rails[index].channel << 3);
+    uint8_t *reading = &ddr5->pmic_adc[slot][index];
+    *reading = 0;
+    if (ddr5->adc_unsupported & (1u << slot))
+        return;
+
+    BOOL selected = command == old;
+    if (!selected && set_adc_selector(ddr5, address, command)) {
+        /* JESD301-2 requires at least 9 ms for R31 after selecting an input. */
+        Sleep(10);
+        ULONG64 current;
+        selected = read_register(ddr5, address, 0x30, FALSE, &current) && current == command;
+    }
+    ULONG64 raw;
+    if (selected && read_register(ddr5, address, 0x31, FALSE, &raw) && raw < 255)
+        *reading = (uint8_t)raw;
+
+    if (command != old) {
+        ULONG64 restored;
+        if (!(set_adc_selector(ddr5, address, old) &&
+              read_register(ddr5, address, 0x30, FALSE, &restored) && restored == old)) {
+            set_adc_selector(ddr5, address, old);
+            ddr5->adc_unsupported |= 1u << slot;
+            memset(ddr5->pmic_adc[slot], 0, sizeof(ddr5->pmic_adc[slot]));
+        }
+    }
+}
+
 /** Read the matched DIMM's JEDEC PMIC real-time status registers. */
-static void pmic_status(Ddr5 *ddr5, unsigned slot)
+static void pmic_status(Ddr5 *ddr5, unsigned slot, BOOL probe)
 {
     const unsigned address = 0x48 + slot;
     const unsigned flag = 1u << slot;
@@ -104,17 +151,38 @@ static void pmic_status(Ddr5 *ddr5, unsigned slot)
         ddr5->pmic_ov |= flag;
     if (uv & 0x0f)
         ddr5->pmic_uv |= flag;
+
+    ULONG64 adc, measurement_mode, report_mode, raw;
+    if (!read_register(ddr5, address, 0x30, FALSE, &adc) || !(adc & 0x80)) {
+        memset(ddr5->pmic_adc[slot], 0, sizeof(ddr5->pmic_adc[slot]));
+        return;
+    }
+    if (read_register(ddr5, address, 0x1b, FALSE, &measurement_mode) && (measurement_mode & 0x40) &&
+        read_register(ddr5, address, 0x1a, FALSE, &report_mode) && (report_mode & 2) &&
+        read_register(ddr5, address, 0x0c, FALSE, &raw) && raw < 255)
+        ddr5->pmic_power[slot] = (uint8_t)raw;
+
+    /* Validate the ADC mux on PMIC vendor IDs verified with the JEDEC client register map. */
+    if (vendor == 0x850d || vendor == 0x8c8a) {
+        if (probe) {
+            for (unsigned i = 0; i < _countof(rails); ++i)
+                adc_sample(ddr5, address, slot, i, adc);
+        } else {
+            adc_sample(ddr5, address, slot, ddr5->rail_index, adc);
+        }
+    }
 }
 
 /** Read the SPD hub without selecting NVM pages or modifying settings. */
-static void refresh(Ddr5 *ddr5)
+static void refresh(Ddr5 *ddr5, BOOL probe)
 {
     const ULONGLONG now = GetTickCount64();
     if (now < ddr5->next_sample)
         return;
-    ddr5->next_sample = now + 4000;
+    ddr5->next_sample = now + 1000;
     ddr5->active = 0;
     ddr5->pmic_active = ddr5->pmic_hot = ddr5->pmic_ov = ddr5->pmic_uv = 0;
+    memset(ddr5->pmic_power, 0, sizeof(ddr5->pmic_power));
     const DWORD lock = WaitForSingleObject(ddr5->mutex, 30);
     if (lock != WAIT_OBJECT_0 && lock != WAIT_ABANDONED)
         return;
@@ -126,7 +194,7 @@ static void refresh(Ddr5 *ddr5)
             ddr5->hubs |= flag;
         if (!(ddr5->hubs & flag))
             continue;
-        pmic_status(ddr5, i);
+        pmic_status(ddr5, i, probe);
         if (!read_register(ddr5, addr, 5, FALSE, &raw) || !(raw & 2) ||
             !read_register(ddr5, addr, 0x1a, FALSE, &raw) || (raw & 1) ||
             !read_register(ddr5, addr, 0x31, TRUE, &raw))
@@ -140,15 +208,16 @@ static void refresh(Ddr5 *ddr5)
         }
     }
     ddr5->scanned = TRUE;
+    ddr5->rail_index = (ddr5->rail_index + 1) % _countof(rails);
     ReleaseMutex(ddr5->mutex);
 }
 
 /** Publish temperatures keyed by hub address, without guessing motherboard slot labels. */
-void ddr5_sample(Ddr5 *ddr5, Sample *sample)
+void ddr5_sample(Ddr5 *ddr5, Sample *sample, BOOL probe)
 {
     if (!ddr5)
         return;
-    refresh(ddr5);
+    refresh(ddr5, probe);
     for (unsigned i = 0; i < SPD_SLOTS; ++i) {
         const unsigned flag = 1u << i;
         if (ddr5->active & flag) {
@@ -163,6 +232,13 @@ void ddr5_sample(Ddr5 *ddr5, Sample *sample)
             device_metric(sample, "dimm", key, "pmic_hot", label, (ddr5->pmic_hot & flag) != 0);
             device_metric(sample, "dimm", key, "pmic_ov", label, (ddr5->pmic_ov & flag) != 0);
             device_metric(sample, "dimm", key, "pmic_uv", label, (ddr5->pmic_uv & flag) != 0);
+            if (ddr5->pmic_power[i])
+                device_metric(sample, "dimm", key, "power", label, ddr5->pmic_power[i] * 0.125);
+            for (unsigned rail = 0; rail < _countof(rails); ++rail) {
+                const double volts = ddr5->pmic_adc[i][rail] * rails[rail].volts_per_lsb;
+                if (volts > 0)
+                    device_metric(sample, "dimm", key, rails[rail].id, label, volts);
+            }
         }
     }
 }

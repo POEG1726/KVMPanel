@@ -269,7 +269,10 @@ fn instance_metric(id: &str, names: Option<&DeviceNames>) -> Option<Metric> {
         ("dimm", "spd_temp") => ("SPD temperature", "°C", 85.),
         ("cpu", "vid" | "vcore" | "soc_v" | "misc_v" | "mc_v")
         | ("gpu", "core_v" | "memory_v" | "pcie_v" | "aux_v")
-        | ("dimm", "vdd" | "vddq" | "vpp") => (field, "V", 15.),
+        | (
+            "dimm",
+            "vdd" | "vddq" | "vpp" | "swa_v" | "swb_v" | "swc_v" | "vin_v" | "ldo18_v" | "ldo10_v",
+        ) => (field, "V", 15.),
         ("cpu", "core_a" | "soc_a" | "misc_a" | "tdc" | "edc" | "tdc_limit" | "edc_limit")
         | ("gpu", "core_a") => (field, "A", 250.),
         ("cpu", "package_power" | "ppt" | "ppt_limit" | "pl1" | "pl2")

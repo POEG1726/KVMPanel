@@ -27,14 +27,15 @@ Get-Content .\build\pc-telemetry\probe.json -Raw | ConvertFrom-Json
 | AMD 驱动 ADL | 每张 Radeon 的温度、核心热点、显存温度、时钟、占用、电压或板级功耗，以 ADL 实际支持的字段为准 |
 | 已安装的 PawnIO 与官方签名 NVIDIA 模块 | Blackwell 核心热点，要求有权限访问驱动 |
 | 已安装的 PawnIO 与官方签名 Ryzen 模块 | 已识别的 SMU 表提供 GHz 时钟域、核心温度、电压、功耗与限值。读取硬件 P-state 状态得到每个物理核心的倍频 |
-| 已安装的 PawnIO 与官方签名 SMBus 模块 | AMD PIIX4 / Intel I801 可访问的 SPD5118 温度和匹配 DDR5 PMIC 的实时过温、过压、欠压状态 |
+| 已安装的 PawnIO 与官方签名 SMBus 模块 | AMD PIIX4 / Intel I801 可访问的 SPD5118 温度、匹配 DDR5 PMIC 的告警、总功率及六路电压 |
 
-采集器直接调用 Windows 和厂商驱动的 DLL。硬件传感器没有可用读数时不会发占位值。BCLK、DRAM 读写带宽、DDR5 PMIC 实时电压和功率、Intel GPU 深度指标仍待实现。 [采集范围](../../../docs/superpowers/specs/2026-11-23-pc-telemetry-design.md)
+采集器直接调用 Windows 和厂商驱动的 DLL。硬件传感器没有可用读数时不会发占位值。BCLK、DRAM 读写带宽和 Intel GPU 深度指标仍待实现。 [采集范围](../../../docs/superpowers/specs/2026-11-23-pc-telemetry-design.md)
 
 ## CPU 和 DIMM 硬件读数
 
 - 将官方 `RyzenSMU.bin`、`AMDFamily17.bin` 和对应芯片组的 `SmbusPIIX4.bin` 或 `SmbusI801.bin` 放在 EXE 同目录。用有权访问 PawnIO 的用户运行。AM5 的 PM 表按处理器及固件表版本识别，当前支持 9950X3D、9800X3D，并为 5600X 提供部分全局指标。9950X3D 本机探测通过，另两种 Ryzen 及 Intel SMBus 路径需要对应机器复测。 [PawnIO 官方模块](https://github.com/namazso/PawnIO.Modules/releases/tag/0.2.12) · [Granite Ridge 与 Vermeer 表](https://github.com/Kyworn/gnr-smu/blob/master/gnr_smu/profiles.py) · [倍频与供电数据参考](https://github.com/irusanov/ZenStates-Core/tree/master/Hardware)
 - 9950X3D 实测 FCLK 2000 MHz、UCLK/MCLK 3000 MHz，读到 16 个物理核心的倍频、PPT 限值 200 W、TDC/EDC 限值 160/225 A，以及 VDD、SoC 和 Misc 电流。DDR5 Hub `0x51`、`0x53` 实测 40.75 °C、38.50 °C，两条 PMIC 的告警位均清零。DIMM 按 SMBus 地址标识。 [SPD5118 手册与实现](https://github.com/torvalds/linux/blob/v6.18/drivers/hwmon/spd5118.c) · [PMIC 状态寄存器](https://datasheet.lcsc.com/lcsc/2501201522_Richtek-Tech-RTQ5132GQWF-00W-220_C3249964.pdf)
+- PMIC 已启用 ADC 时，按共享 SMBus 锁读取功率和对应采样通道。总功率只在 PMIC 处于总功率模式时报告。电压轮询暂时切换 ADC 通道，等待转换后恢复并核对原值。常驻采集每秒轮换一条电压通道，`--once` 一次读完六条。两条 DIMM 实测 VIN 5.04 V、SWC 1.80 V，并通过加锁的 ADC 原值恢复检查。电压通道只对已验证的 `0x850d`、`0x8c8a` 厂商标识启用。 [PMIC5100 寄存器表](https://studylib.net/doc/28499813/pmic5100-jesd301-2)
 
 ## GPU 核心热点和显存结温
 

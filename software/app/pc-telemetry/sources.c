@@ -558,7 +558,7 @@ void sources_sample(Sources *sources, Sample *sample, unsigned groups)
             sources->ddr5_attempted = TRUE;
             sources->ddr5 = ddr5_open();
         }
-        ddr5_sample(sources->ddr5, sample);
+        ddr5_sample(sources->ddr5, sample, (groups & PROBE_ALL_PMIC_RAILS) != 0);
         if (GlobalMemoryStatusEx(&memory)) {
             metric_put(sample, "mem.used", "", (double)(memory.ullTotalPhys - memory.ullAvailPhys) / 1e9);
             metric_put(sample, "mem.total", "", (double)memory.ullTotalPhys / 1e9);

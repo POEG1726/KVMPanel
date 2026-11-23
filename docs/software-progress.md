@@ -4,7 +4,7 @@
 
 ## 已完成
 
-- **Windows CPU 与 DIMM 硬件读数**。支持指定 Ryzen SMU 表的核心温度、时钟域、供电读数、功耗限值和物理核心倍频。DDR5 SPD5118 温度、对应 PMIC 告警位接入 AMD 和 Intel SMBus 路径。Windows x64 构建通过，9950X3D 和两条 DDR5 的读数已实测。 [采集器与支持范围](../software/app/pc-telemetry/README.md#cpu-和-dimm-硬件读数)
+- **Windows CPU 与 DIMM 硬件读数**。支持指定 Ryzen SMU 表的核心温度、时钟域、供电读数、功耗限值和物理核心倍频。DDR5 SPD5118 温度及支持的 PMIC 告警、功率和六路电压接入 SMBus。Windows x64 构建通过，9950X3D 与两条 DIMM 实测，并核对 PMIC ADC 恢复。 [采集器与支持范围](../software/app/pc-telemetry/README.md#cpu-和-dimm-硬件读数)
 - **WS2812 板级驱动**。组合 DTB 接入 PG13 的硬件 LEDC 和四颗独立 RGB 灯，按 WS2812B-2020-V6 手册设定 GRB 和发送时序。通过 ARM zImage 构建、驱动链接和 LEDC 绑定检查。实板波形及点灯待测。 [WS2812](linux-6.18.md#ws2812)
 - **Windows PC 遥测基础采集**。原生 C 设置窗口和托盘支持调整采样间隔及指标组。Windows x64 构建和本机只读探测通过，验证基础 CPU、内存、磁盘、逐网卡及 GPU 指标。RTX 5090 管理员探测实测核心热点 31.1875 °C、显存结温 40 °C。`kvmd` 批量 HID 遥测接收已通过离线测试和 ARM 静态构建。 [采集器与验证范围](../software/app/pc-telemetry/README.md)
 - **副屏电脑离线页（原型）**。panel socket 新增每秒一次的 `board` 消息和 `pc_power_on` 动作（电脑开着时拒绝），Mock 可从关机或等待上位机状态启动。Qt 6 和 LVGL 原型都实现了竖屏和横屏的离线页、开机按钮和息屏倒计时，曲线和内存温度行也按已定规则改过。已通过 Mock 测试和两版构建，并在 Mock 下截图核对关机、等待上位机、开机后切回主屏三种状态。实际点击和按键未在窗口里测过，`kvmd` 还不发 `board`。 [Dashboard](../software/app/dashboard/README.md) · [接口](../software/app/api/README.md)
@@ -20,7 +20,7 @@
 
 ## In Progress
 
-- **Windows PC 遥测补充与实测**。待补 BCLK、DRAM 读写带宽、DDR5 PMIC 实际电压和功率、Intel GPU 深度读数。待用其他 Ryzen 及 Intel 主机复测，并用实板验证 USB。 [采集计划](superpowers/specs/2026-11-23-pc-telemetry-design.md)
+- **Windows PC 遥测补充与实测**。待补 BCLK、DRAM 读写带宽和 Intel GPU 深度读数。当前主机没有提供 BCLK 和 UMC 读写带宽的已验证采集接口。待用其他 Ryzen 及 Intel 主机复测，并用实板验证 USB。 [采集计划](superpowers/specs/2026-11-23-pc-telemetry-design.md)
 - **板级适配**。2026-11-22 归档与软件已用于 microSD UHS、显示电源和采集适配。待新版网表核对 RTL8211F-CG 的无源晶体接法。待实板验证 PHY 起振和链路、SGM3851A 的 SWIRE 波形和三路输出、LT8619C 的 IRQ 清除及 HDMI 采集，以及 microSD 的电压和速率。 [板级适配](linux-6.18.md) · [网口时序](development.md#单独验证本板网口)
 - **STC8 电源管理集成**。固件 1.1 加入 STC 本机硬件看门狗，已通过 SDCC 构建、状态机测试及模拟 ISP 回归。引脚分配 CSV 已记录按键理论电压。实板待验证 ADC 判定窗口、UART 电平和收发、供电与复位波形、看门狗恢复，以及外部 UPDATE_HOLD 电路。 [STC8 说明与验证](../software/firmware/stc8/README.md)
 

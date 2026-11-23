@@ -13,6 +13,7 @@
 enum {
     CPU = 1, MEMORY = 2, GPU = 4, JUNCTION = 8, NETWORK = 16,
     STORAGE = 32, TUNING = 64, HOTSPOT = 128, ALL_GROUPS = 255,
+    PROBE_ALL_PMIC_RAILS = 256,
     MIN_INTERVAL = 250, MAX_INTERVAL = 60000, DEFAULT_INTERVAL = 1000,
     MAX_METRICS = 768, ID_SIZE = 48, LABEL_SIZE = 104,
 };
@@ -69,7 +70,7 @@ void ryzen_close(Ryzen *ryzen);
 
 /** Read DDR5 SPD hub temperatures through a supported SMBus controller. */
 Ddr5 *ddr5_open(void);
-void ddr5_sample(Ddr5 *ddr5, Sample *sample);
+void ddr5_sample(Ddr5 *ddr5, Sample *sample, BOOL probe);
 void ddr5_close(Ddr5 *ddr5);
 
 /** Discover and update the KVMPanel HID collection. */

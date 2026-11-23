@@ -361,9 +361,9 @@ static int probe(void)
         free(sample);
         return 1;
     }
-    sources_sample(sources, sample, options.groups);
+    sources_sample(sources, sample, options.groups | PROBE_ALL_PMIC_RAILS);
     Sleep(500);
-    sources_sample(sources, sample, options.groups);
+    sources_sample(sources, sample, options.groups | PROBE_ALL_PMIC_RAILS);
     printf("{\"hotspot_devices\":%u,\"memory_junction_devices\":%u,"
            "\"hotspot_access_denied\":%s,\"ryzen_access_denied\":%s,\"metrics\":[",
            sample->hotspots, sample->junctions, sample->hotspot_access_denied ? "true" : "false",

@@ -7,7 +7,7 @@
 核对日期 2026-11-23。
 
 - 原生 C/Win32 采集器带设置窗口和托盘。Windows x64 构建通过，本机验证 CPU、内存、磁盘、逐网卡和 GPU 基础指标。RTX 5090 管理员探测同时取得核心温度 29 °C、核心热点 31.1875 °C 和显存结温 40 °C。普通权限访问 PawnIO 被拒时仍可采集核心温度及显存结温。 [采集器与只读探测](software/app/pc-telemetry/README.md)
-- 新增 Ryzen CPU 时钟域、功耗限制、物理核心倍频、供电电压及电流，并读 DDR5 Hub 温度和 PMIC 告警。Windows 本机 9950X3D 与两条 DIMM 已验证。接手用 `--once` 核对其他主机，再测实板 USB。BCLK、DRAM 读写带宽、PMIC 实际电压与功率、Intel GPU 深度读取待实现。 [CPU 和 DIMM 采集](software/app/pc-telemetry/README.md#cpu-和-dimm-硬件读数)
+- 本机验证 Ryzen 时钟域、功耗限值、倍频、供电读数和两条 DDR5 的 SPD 温度、PMIC 告警、功率及六路电压，另已加锁核对 ADC 恢复。接手用 `--once` 核对其他主机，再测实板 USB。BCLK、DRAM 读写带宽及 Intel GPU 深度读取待实现。 [CPU 和 DIMM 采集](software/app/pc-telemetry/README.md#cpu-和-dimm-硬件读数)
 
 ## WS2812 板级驱动
 
