@@ -73,8 +73,14 @@ Radeon *radeon_open(void)
 static void discover(Radeon *radeon)
 {
     int count = 0;
-    if (radeon->count(radeon->context, &count) != 0 || count < 1 || count > 256)
+    if (radeon->count(radeon->context, &count) != 0 || count < 0 || count > 256)
         return;
+    if (!count) {
+        free(radeon->list);
+        radeon->list = NULL;
+        radeon->entries = 0;
+        return;
+    }
     Adapter *list = calloc((size_t)count, sizeof(*list));
     if (!list)
         return;
@@ -119,11 +125,12 @@ void radeon_sample(Radeon *radeon, Sample *sample, unsigned groups)
         }
         if (seen)
             continue;
+        const int pci[] = {0x1002, adapter->bus, adapter->device, adapter->function};
+        const uint64_t key = identity(pci, sizeof(pci));
+        metric_device_seen(sample, "gpu", key);
         PmLog log = {.size = sizeof(log)};
         if (radeon->query(radeon->context, adapter->index, &log) != 0)
             continue;
-        const int pci[] = {0x1002, adapter->bus, adapter->device, adapter->function};
-        const uint64_t key = identity(pci, sizeof(pci));
         wchar_t label[80] = L"AMD Radeon";
         MultiByteToWideChar(CP_ACP, 0, adapter->name, -1, label, _countof(label));
         for (unsigned n = 0; n < _countof(fields); ++n) {

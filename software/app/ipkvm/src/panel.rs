@@ -595,6 +595,32 @@ mod tests {
         }
     }
     #[test]
+    fn reported_null_keeps_panel_row_until_a_new_value_arrives() {
+        let packet = |payload: &[u8]| {
+            let mut report = [0; 64];
+            report[0] = 3;
+            report[1..1 + payload.len()].copy_from_slice(payload);
+            metrics::vendor_report(&report).unwrap()
+        };
+        let start = Instant::now();
+        let mut host = Host::default();
+        for second in 0..=12 {
+            let now = start + Duration::from_secs(second);
+            host.report(packet(b"!0000000000000001:1000"), now, 1000 * second);
+            let (payload, expected) = match second {
+                1 => (b"cpu.bclk=100".as_slice(), json!(100.0)),
+                12 => (b"cpu.bclk=101".as_slice(), json!(101.0)),
+                _ => (b"cpu.bclk=null".as_slice(), Value::Null),
+            };
+            host.report(packet(payload), now, 1000 * second);
+            let readings =
+                metrics::snapshot(0., &json!({}), Some(&host.snapshot_at(now).samples), None);
+            assert_eq!(readings.len(), 1);
+            assert_eq!(readings[0]["id"], "cpu.bclk");
+            assert_eq!(readings[0]["value"], expected);
+        }
+    }
+    #[test]
     fn repeated_new_slot_names_cannot_grow_the_inventory_indefinitely() {
         let mut host = Host::default();
         let now = Instant::now();

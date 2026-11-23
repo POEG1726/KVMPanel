@@ -6,6 +6,7 @@
 
 #include "telemetry.h"
 #include <hidsdi.h>
+#include <math.h>
 #include <setupapi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -145,7 +146,9 @@ BOOL usb_send(Usb *usb, const Sample *sample, BOOL send_labels, HANDLE interrupt
     for (unsigned i = 0; i < sample->count; ++i) {
         const Metric *metric = &sample->metrics[i];
         char line[REPORT_SIZE];
-        const int length = snprintf(line, sizeof(line), "%s=%.10g", metric->id, metric->value);
+        const int length = isfinite(metric->value)
+            ? snprintf(line, sizeof(line), "%s=%.10g", metric->id, metric->value)
+            : snprintf(line, sizeof(line), "%s=null", metric->id);
         if (length <= 0 || length >= REPORT_SIZE)
             continue;
         const size_t count = (size_t)length;

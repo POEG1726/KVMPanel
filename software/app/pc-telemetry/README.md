@@ -30,13 +30,13 @@ Get-Content .\build\pc-telemetry\probe.json -Raw | ConvertFrom-Json
 | 已运行的 InpOutx64 驱动与可选的 InpOutx64.dll | 支持的 Ryzen 桌面平台上，从 FCH 内部 PLL 读取 BCLK 设置 |
 | 已安装的 PawnIO 与官方签名 SMBus 模块 | AMD PIIX4 / Intel I801 可访问的 SPD5118 温度、匹配 DDR5 PMIC 的告警、总功率及六路电压 |
 
-采集器通过 Windows 和本机驱动获取读数。硬件传感器没有可用读数时不会发占位值。Intel GPU 深度指标仍待实现。 [采集范围](../../../docs/superpowers/specs/2026-11-23-pc-telemetry-design.md)
+采集器通过 Windows 和本机驱动获取读数。本轮读不到已识别或已上报的指标时，保留其 ID 并上报 `null`，副屏显示 `—`，恢复后自动更新。已确认移除的动态设备会从上报中退出。Intel GPU 深度指标仍待实现。 [采集范围](../../../docs/superpowers/specs/2026-11-23-pc-telemetry-design.md)
 
 ## CPU 和 DIMM 硬件读数
 
 - 将官方 `RyzenSMU.bin`、`AMDFamily17.bin` 和对应芯片组的 `SmbusPIIX4.bin` 或 `SmbusI801.bin` 放在 EXE 同目录。用有权访问 PawnIO 的用户运行。AM5 的 PM 表按处理器及固件表版本识别，当前支持 9950X3D、9800X3D，并为 5600X 提供部分全局指标。9950X3D 本机探测通过，另两种 Ryzen 及 Intel SMBus 路径需要对应机器复测。 [PawnIO 官方模块](https://github.com/namazso/PawnIO.Modules/releases/tag/0.2.12) · [Granite Ridge 与 Vermeer 表](https://github.com/Kyworn/gnr-smu/blob/master/gnr_smu/profiles.py) · [倍频与供电数据参考](https://github.com/irusanov/ZenStates-Core/tree/master/Hardware)
 - 9950X3D 实测 FCLK 2000 MHz、UCLK/MCLK 3000 MHz，读到 16 个物理核心的倍频、PPT 限值 200 W、TDC/EDC 限值 160/225 A，以及 VDD、SoC 和 Misc 电流。DDR5 Hub `0x51`、`0x53` 实测 40.75 °C、38.50 °C，两条 PMIC 的告警位均清零。DIMM 按 SMBus 地址标识。 [SPD5118 手册与实现](https://github.com/torvalds/linux/blob/v6.18/drivers/hwmon/spd5118.c) · [PMIC 状态寄存器](https://datasheet.lcsc.com/lcsc/2501201522_Richtek-Tech-RTQ5132GQWF-00W-220_C3249964.pdf)
-- **BCLK** 随超频指标上报。将 Highrez 发行的 `InpOutx64.dll` 放在 EXE 同目录。采集器先检查已有的 `inpoutx64` 设备能否打开，再调用 DLL 读取 FCH 寄存器。支持 Vermeer、Raphael、Granite Ridge 桌面平台的内部时钟模式。每五秒刷新 PLL 设置。外部时钟模式或驱动不可用时省略该字段。9950X3D 搭配 B850M AORUS ELITE WIFI6E ICE 实测 100 MHz，移除 DLL 后验证其余指标照常。其它主板与非默认频率待复测。 [寄存器解码参考](https://github.com/irusanov/ZenStates-Core/blob/869b7e82572337e5a673e92230edc92bddf0e44b/Hardware/Mmio.cs) · [Highrez DLL](https://www.highrez.co.uk/downloads/inpout32/)
+- **BCLK** 随超频指标上报。将 Highrez 发行的 `InpOutx64.dll` 放在 EXE 同目录。采集器先检查已有的 `inpoutx64` 设备能否打开，再调用 DLL 读取 FCH 寄存器。支持 Vermeer、Raphael、Granite Ridge 桌面平台的内部时钟模式。每五秒刷新 PLL 设置。已识别的平台处于外部时钟模式或驱动不可用时，BCLK 仍上报 `null`。9950X3D 搭配 B850M AORUS ELITE WIFI6E ICE 实测 100 MHz。其它主板与非默认频率待复测。 [寄存器解码参考](https://github.com/irusanov/ZenStates-Core/blob/869b7e82572337e5a673e92230edc92bddf0e44b/Hardware/Mmio.cs) · [Highrez DLL](https://www.highrez.co.uk/downloads/inpout32/)
 - **DRAM 带宽**归入内存采集组。固件在 SMU PM 表里提供两个平均流量值，采集器将 GB/s 转换为 B/s 上报。对本机 HWiNFO 8.54-6090 的程序副本作静态反汇编，确认 `0x620105`、`0x620205` 表的读写偏移为 `0x180`、`0x184`，`0x380905` 为 `0x110`、`0x114`。采集器用已有的签名 PawnIO 模块读取 PM 表。开源 `ryzen_smu` 也从早期 Zen 的 PM 表读取类似的 UMC 数据，表布局随固件版本变化。 [HWiNFO 版本历史](https://www.hwinfo.com/version-history/) · [ryzen_smu 监控实现](https://github.com/leogx9r/ryzen_smu/blob/master/userspace/monitor_cpu.c)
 - 9950X3D 本机验证了 `--once` 上报以及仅启用内存组的行为。约 480 MiB 的顺序读负载下，采集器读到约 64 GB/s，写入低于 1 GB/s。流式写负载下，采集器读到约 30 GB/s 写入，读取低于 1.1 GB/s。9800X3D 和 5600X 的表映射已静态核对，实机待测。
 - PMIC 已启用 ADC 时，按共享 SMBus 锁读取功率和对应采样通道。总功率只在 PMIC 处于总功率模式时报告。电压轮询暂时切换 ADC 通道，等待转换后恢复并核对原值。常驻采集每秒轮换一条电压通道，`--once` 一次读完六条。两条 DIMM 实测 VIN 5.04 V、SWC 1.80 V，并通过加锁的 ADC 原值恢复检查。电压通道只对已验证的 `0x850d`、`0x8c8a` 厂商标识启用。 [PMIC5100 寄存器表](https://studylib.net/doc/28499813/pmic5100-jesd301-2)
@@ -48,4 +48,4 @@ Get-Content .\build\pc-telemetry\probe.json -Raw | ConvertFrom-Json
 
 ## USB 与 Panel
 
-自动查找默认 VID/PID 的 KVMPanel 厂商 HID 集合，使用 64 字节 Output report 3。每个报告可包含多条 ASCII `指标ID=值`，以换行隔开。`!会话:采样毫秒` 心跳可在低采样频率下保持连接，`:设备ID=名称` 携带可读设备名。Windows 调整设置时开始新会话，板端清理上次的指标。需要本仓库新版 `kvmd` 才能接收批量和动态设备字段。物理 USB 的持续吞吐和热插拔尚待实板验证。 [板端接口](../ipkvm/README.md#副屏与遥测)
+自动查找默认 VID/PID 的 KVMPanel 厂商 HID 集合，使用 64 字节 Output report 3。每个报告可包含多条 ASCII `指标ID=值`，以换行隔开。缺值用 `指标ID=null`，`--once` 也使用 JSON `null`。`!会话:采样毫秒` 心跳可在低采样频率下保持连接，`:设备ID=名称` 携带可读设备名。Windows 调整设置时开始新会话，板端清理上次的指标。需要本仓库新版 `kvmd` 才能接收批量和动态设备字段。物理 USB 的持续吞吐和热插拔尚待实板验证。 [板端接口](../ipkvm/README.md#副屏与遥测)

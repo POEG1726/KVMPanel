@@ -4,8 +4,9 @@
 
 ## 已完成
 
+- **Windows 遥测缺值保留**。已知指标缺测时上报 `null`，副屏保留行并显示 `—`。Windows x64 构建、本机 BCLK 和 DRAM 有无读取组件的探测、HID 编码模拟及板端缺值恢复测试通过。实板 USB 待测。 [遥测协议](../software/app/pc-telemetry/README.md#usb-与-panel)
 - **Windows Ryzen DRAM 带宽**。通过已有 SMU 表独立采集实际读写流量，Panel 使用 B/s。Windows x64 构建、板端 Panel 测试及 9950X3D 顺序读写负载验证通过，实板 USB、9800X3D 和 5600X 待复测。 [带宽来源与验证](../software/app/pc-telemetry/README.md#cpu-和-dimm-硬件读数)
-- **Windows Ryzen BCLK**。从 FCH 内部 PLL 读取超频参考频率。Windows x64 构建及 9950X3D 实测通过，读到 100 MHz。缺少 DLL 时按预期省略该值。板端 Panel 测试通过，实板 USB、其它主板和非默认频率待测。 [BCLK 采集](../software/app/pc-telemetry/README.md#cpu-和-dimm-硬件读数)
+- **Windows Ryzen BCLK**。从 FCH 内部 PLL 读取超频参考频率。Windows x64 构建及 9950X3D 实测通过，读到 100 MHz。板端 Panel 测试通过，实板 USB、其它主板和非默认频率待测。 [BCLK 采集](../software/app/pc-telemetry/README.md#cpu-和-dimm-硬件读数)
 - **板端 Dashboard 与指标选择**。LVGL framebuffer 程序接入 `kvmd` 的 `board`、`telemetry` 和指标清单。主机离线时显示板子状态，支持 PE12 检查后的短按开机、四方向旋转、逐项显隐和息屏唤醒。通过 Rust、Mock、网页测试、ARM 静态构建和原生及 ARM/QEMU 无屏测试。Debian 镜像已加入 Dashboard 服务和 WS2812 内核。 [Dashboard](../software/app/dashboard/README.md) · [镜像](../software/os/debian/README.md)
 - **Windows CPU 与 DIMM 硬件读数**。支持指定 Ryzen SMU 表的核心温度、时钟域、供电读数、功耗限值和物理核心倍频。DDR5 SPD5118 温度及支持的 PMIC 告警、功率和六路电压接入 SMBus。Windows x64 构建通过，9950X3D 与两条 DIMM 实测，并核对 PMIC ADC 恢复。 [采集器与支持范围](../software/app/pc-telemetry/README.md#cpu-和-dimm-硬件读数)
 - **WS2812 板级驱动**。组合 DTB 接入 PG13 的硬件 LEDC 和四颗独立 RGB 灯，按 WS2812B-2020-V6 手册设定 GRB 和发送时序。通过 ARM zImage 构建、驱动链接和 LEDC 绑定检查。实板波形及点灯待测。 [WS2812](linux-6.18.md#ws2812)

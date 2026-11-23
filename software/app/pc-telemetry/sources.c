@@ -13,6 +13,7 @@
 #include <pdhmsg.h>
 #include <wlanapi.h>
 #include <winioctl.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -114,6 +115,7 @@ struct Sources {
     uint64_t idle, kernel, user;
     ULONGLONG next_bclk;
     double bclk_mhz;
+    BOOL has_bclk;
     unsigned last_groups;
 };
 
@@ -217,21 +219,26 @@ static double nvapi_celsius(int32_t raw)
 }
 
 /** Decode the VRAM channel by architecture. On Blackwell channel 1 is the core, not hotspot. */
-static void nvapi_temp(Sources *sources, Sample *sample, unsigned groups,
+static BOOL nvapi_temp(Sources *sources, Sample *sample, unsigned groups,
                        const GpuIdentity *identities, unsigned known)
 {
     NvApi *api = &sources->nvapi;
     NvDevice devices[MAX_GPU_DEVICES];
     unsigned count = 0;
-    if (!api->module || api->enumerate(devices, &count) != 0 || count > MAX_GPU_DEVICES)
-        return;
+    if (!api->module)
+        return TRUE;
+    if (api->enumerate(devices, &count) != 0 || count > MAX_GPU_DEVICES)
+        return FALSE;
+    BOOL complete = TRUE;
     for (unsigned i = 0; i < count; ++i) {
         char name[64] = "";
         wchar_t label[80] = L"NVIDIA GPU";
         unsigned pci[2];
         if (api->name(devices[i], name) != 0 ||
-            api->bus(devices[i], &pci[0]) != 0 || api->slot(devices[i], &pci[1]) != 0)
+            api->bus(devices[i], &pci[0]) != 0 || api->slot(devices[i], &pci[1]) != 0) {
+            complete = FALSE;
             continue;
+        }
         const BOOL blackwell = strstr(name, "GeForce RTX 50") || strstr(name, "Blackwell");
         unsigned memory_channel;
         if (blackwell)
@@ -255,14 +262,14 @@ static void nvapi_temp(Sources *sources, Sample *sample, unsigned groups,
         }
         if (same_bus == 1)
             key = identities[found].key;
+        metric_device_seen(sample, "gpu", key);
         MultiByteToWideChar(CP_UTF8, 0, name, -1, label, _countof(label));
-        if ((groups & JUNCTION) && thermal_ok) {
-            const double value = nvapi_celsius(block.temperature[memory_channel]);
-            if (value) {
-                device_metric(sample, "gpu", key, "mem_junction", label, value);
-                if (same_bus == 1 ? identities[found].index == 0 : i == 0)
-                    metric_put(sample, "gpu.mem_junction", "", value);
-            }
+        if (groups & JUNCTION) {
+            const double value = thermal_ok ? nvapi_celsius(block.temperature[memory_channel]) : 0;
+            const double junction = value > 0 ? value : NAN;
+            device_metric(sample, "gpu", key, "mem_junction", label, junction);
+            if (same_bus == 1 ? identities[found].index == 0 : i == 0)
+                metric_put(sample, "gpu.mem_junction", "", junction);
         }
         if ((groups & GPU) && thermal_ok && blackwell) {
             const double value = nvapi_celsius(block.temperature[1]);
@@ -282,10 +289,10 @@ static void nvapi_temp(Sources *sources, Sample *sample, unsigned groups,
             } else if (thermal_ok && !blackwell) {
                 value = nvapi_celsius(block.temperature[1]);
             }
-            if (value)
-                device_metric(sample, "gpu", key, "hotspot", label, value);
+            device_metric(sample, "gpu", key, "hotspot", label, value > 0 ? value : NAN);
         }
     }
+    return complete;
 }
 
 /** Decode NVML's tagged memory-temperature value. */
@@ -313,8 +320,11 @@ static void gpu_sample(Sources *sources, Sample *sample, unsigned groups)
         open_nvapi(&sources->nvapi);
         sources->radeon = radeon_open();
     }
-    if (nv->module && nv->count(&count) != 0)
+    BOOL complete = TRUE;
+    if (nv->module && nv->count(&count) != 0) {
         count = 0;
+        complete = FALSE;
+    }
     for (unsigned i = 0; i < count && i < MAX_GPU_DEVICES; ++i) {
         NvDevice device;
         char uuid[96] = "", name[128] = "";
@@ -322,11 +332,14 @@ static void gpu_sample(Sources *sources, Sample *sample, unsigned groups)
         unsigned value;
         NvUtilization load;
         NvMemory memory;
-        if (nv->handle(i, &device) != 0 || nv->uuid(device, uuid, sizeof(uuid)) != 0)
+        if (nv->handle(i, &device) != 0 || nv->uuid(device, uuid, sizeof(uuid)) != 0) {
+            complete = FALSE;
             continue;
+        }
         if (nv->name && nv->name(device, name, sizeof(name)) == 0)
             MultiByteToWideChar(CP_UTF8, 0, name, -1, label, _countof(label));
         const uint64_t key = identity(uuid, strlen(uuid));
+        metric_device_seen(sample, "gpu", key);
         NvPci pci;
         if (nv->pci && nv->pci(device, &pci) == 0) {
             unsigned function = 0;
@@ -375,7 +388,9 @@ static void gpu_sample(Sources *sources, Sample *sample, unsigned groups)
             }
         }
     }
-    nvapi_temp(sources, sample, groups, identities, known);
+    if (nvapi_temp(sources, sample, groups, identities, known) && complete &&
+        count <= MAX_GPU_DEVICES)
+        sample->device_scan |= GPU;
     radeon_sample(sources->radeon, sample, groups);
 }
 
@@ -420,6 +435,8 @@ static void pdh_sample(Sources *sources, Sample *sample, PDH_HCOUNTER counter,
     if (status != ERROR_SUCCESS)
         return;
     const BOOL disk_read = strcmp(kind, "disk") == 0 && strcmp(field, "read") == 0;
+    if (disk_read)
+        sample->device_scan |= STORAGE;
     const ULONGLONG now = GetTickCount64();
     const BOOL refresh_temperature = disk_read && now >= sources->next_disk_temperature;
     if (refresh_temperature) {
@@ -430,13 +447,15 @@ static void pdh_sample(Sources *sources, Sample *sample, PDH_HCOUNTER counter,
     for (DWORD i = 0; i < count; ++i) {
         const wchar_t *name = items[i].szName;
         const PDH_FMT_COUNTERVALUE *value = &items[i].FmtValue;
-        if (wcsstr(name, L"_Total") || (value->CStatus != PDH_CSTATUS_VALID_DATA &&
-                                      value->CStatus != PDH_CSTATUS_NEW_DATA))
+        if (wcsstr(name, L"_Total") || value->CStatus == PDH_CSTATUS_NO_INSTANCE)
             continue;
         const uint64_t id = identity(name, wcslen(name) * sizeof(*name));
-        device_metric(sample, kind, id, field, name, value->doubleValue);
+        const BOOL valid = value->CStatus == PDH_CSTATUS_VALID_DATA ||
+                           value->CStatus == PDH_CSTATUS_NEW_DATA;
+        device_metric(sample, kind, id, field, name, valid ? value->doubleValue : NAN);
         if (!disk_read)
             continue;
+        metric_device_seen(sample, kind, id);
         if (refresh_temperature && sources->disk_temperature_count < _countof(sources->disk_temperatures)) {
             short temperature;
             if (drive_temperature(name, &temperature)) {
@@ -459,18 +478,20 @@ static uint64_t filetime_value(FILETIME value)
 static void cpu_sample(Sources *sources, Sample *sample)
 {
     FILETIME idle, kernel, user;
+    double load = NAN;
     if (GetSystemTimes(&idle, &kernel, &user)) {
         const uint64_t i = filetime_value(idle), k = filetime_value(kernel), u = filetime_value(user);
         if (sources->kernel && k >= sources->kernel && u >= sources->user && i >= sources->idle) {
             const uint64_t total = (k - sources->kernel) + (u - sources->user);
             const uint64_t idle_ticks = i - sources->idle;
             if (total && idle_ticks <= total)
-                metric_put(sample, "cpu.load", "", 100.0 * (double)(total - idle_ticks) / (double)total);
+                load = 100.0 * (double)(total - idle_ticks) / (double)total;
         }
         sources->idle = i;
         sources->kernel = k;
         sources->user = u;
     }
+    metric_put(sample, "cpu.load", "", load);
 }
 
 /** Read all exposed interfaces and calculate rates with monotonic time and 64-bit counters. */
@@ -493,6 +514,7 @@ static void net_sample(Sources *sources, Sample *sample)
         if (row->Type == IF_TYPE_SOFTWARE_LOOPBACK)
             continue;
         const uint64_t key = identity(&row->InterfaceGuid, sizeof(row->InterfaceGuid));
+        metric_device_seen(sample, "net", key);
         const wchar_t *label = row->Alias[0] ? row->Alias : row->Description;
         const BOOL up = row->OperStatus == IfOperStatusUp;
         device_metric(sample, "net", key, "link", label, up ? 1.0 : 0.0);
@@ -533,16 +555,20 @@ static void net_sample(Sources *sources, Sample *sample)
     sources->net = next;
     sources->net_count = next_count;
     sources->net_ms = now;
+    sample->device_scan |= NETWORK;
 }
 
 Sources *sources_open(void)
 {
-    return calloc(1, sizeof(Sources));
+    Sources *sources = calloc(1, sizeof(*sources));
+    if (sources)
+        sources->has_bclk = bclk_supported();
+    return sources;
 }
 
 void sources_sample(Sources *sources, Sample *sample, unsigned groups)
 {
-    sample->count = sample->junctions = sample->hotspots = 0;
+    sample_begin(sample, (groups & ALL_GROUPS) != sources->last_groups);
     sample->hotspot_access_denied = FALSE;
     sample->ryzen_access_denied = FALSE;
     if ((groups ^ sources->last_groups) & (CPU | STORAGE))
@@ -555,7 +581,7 @@ void sources_sample(Sources *sources, Sample *sample, unsigned groups)
         sources->next_bclk = 0;
     if ((groups ^ sources->last_groups) & NETWORK)
         sources->net_count = 0;
-    sources->last_groups = groups;
+    sources->last_groups = groups & ALL_GROUPS;
     if (groups & MEMORY) {
         MEMORYSTATUSEX memory = {.dwLength = sizeof(memory)};
         if (!sources->ddr5_attempted) {
@@ -563,10 +589,10 @@ void sources_sample(Sources *sources, Sample *sample, unsigned groups)
             sources->ddr5 = ddr5_open();
         }
         ddr5_sample(sources->ddr5, sample, (groups & PROBE_ALL_PMIC_RAILS) != 0);
-        if (GlobalMemoryStatusEx(&memory)) {
-            metric_put(sample, "mem.used", "", (double)(memory.ullTotalPhys - memory.ullAvailPhys) / 1e9);
-            metric_put(sample, "mem.total", "", (double)memory.ullTotalPhys / 1e9);
-        }
+        const BOOL valid = GlobalMemoryStatusEx(&memory);
+        metric_put(sample, "mem.used", "", valid ?
+                   (double)(memory.ullTotalPhys - memory.ullAvailPhys) / 1e9 : NAN);
+        metric_put(sample, "mem.total", "", valid ? (double)memory.ullTotalPhys / 1e9 : NAN);
     }
     if (groups & CPU)
         cpu_sample(sources, sample);
@@ -578,30 +604,33 @@ void sources_sample(Sources *sources, Sample *sample, unsigned groups)
         sample->ryzen_access_denied = sources->ryzen_access_denied;
         ryzen_sample(sources->ryzen, sample, groups);
     }
-    if (groups & TUNING) {
+    if ((groups & TUNING) && sources->has_bclk) {
         const ULONGLONG now = GetTickCount64();
         if (now >= sources->next_bclk) {
             sources->bclk_mhz = bclk_read();
             sources->next_bclk = now + 5000;
         }
-        if (sources->bclk_mhz > 0)
-            metric_put(sample, "cpu.bclk", "", sources->bclk_mhz);
+        metric_put(sample, "cpu.bclk", "", sources->bclk_mhz > 0 ? sources->bclk_mhz : NAN);
     }
+    double cpu_clock = NAN;
     if (sources->query && PdhCollectQueryData(sources->query) == ERROR_SUCCESS) {
         PDH_FMT_COUNTERVALUE clock;
         if (sources->cpu_clock &&
             PdhGetFormattedCounterValue(sources->cpu_clock, PDH_FMT_DOUBLE, NULL, &clock) == ERROR_SUCCESS &&
             (clock.CStatus == PDH_CSTATUS_VALID_DATA || clock.CStatus == PDH_CSTATUS_NEW_DATA) &&
             clock.doubleValue > 0)
-            metric_put(sample, "cpu.clock", "", clock.doubleValue);
+            cpu_clock = clock.doubleValue;
         pdh_sample(sources, sample, sources->cpu, "cpu", "core_load");
         pdh_sample(sources, sample, sources->disk_read, "disk", "read");
         pdh_sample(sources, sample, sources->disk_write, "disk", "write");
     }
+    if (groups & CPU)
+        metric_put(sample, "cpu.clock", "", cpu_clock);
     if (groups & NETWORK)
         net_sample(sources, sample);
     if (groups & (GPU | JUNCTION | HOTSPOT | TUNING))
         gpu_sample(sources, sample, groups);
+    sample_end(sample);
 }
 
 void sources_close(Sources *sources)

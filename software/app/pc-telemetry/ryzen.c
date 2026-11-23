@@ -6,6 +6,7 @@
 
 #include "telemetry.h"
 #include <intrin.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -99,6 +100,7 @@ Ryzen *ryzen_open(BOOL *access_denied)
     if (!ryzen)
         return NULL;
     ryzen->profile = profile;
+    core_affinities(ryzen);
     ryzen->smu = pawn_open(L"RyzenSMU.bin", access_denied);
     if (ryzen->smu) {
         ryzen->pci_mutex = CreateMutexW(NULL, FALSE, L"Global\\Access_PCI");
@@ -113,8 +115,6 @@ Ryzen *ryzen_open(BOOL *access_denied)
                 if (known) {
                     BOOL denied;
                     ryzen->msr = pawn_open(L"AMDFamily17.bin", &denied);
-                    if (ryzen->msr)
-                        core_affinities(ryzen);
                     return ryzen;
                 }
             }
@@ -122,8 +122,13 @@ Ryzen *ryzen_open(BOOL *access_denied)
             *access_denied = TRUE;
         }
     }
-    ryzen_close(ryzen);
-    return NULL;
+    pawn_close(ryzen->smu);
+    ryzen->smu = NULL;
+    if (ryzen->pci_mutex) {
+        CloseHandle(ryzen->pci_mutex);
+        ryzen->pci_mutex = NULL;
+    }
+    return ryzen;
 }
 
 /** Read hardware P-state ratio without substituting nominal Windows frequency. */
@@ -131,9 +136,9 @@ static void core_ratios(Ryzen *ryzen)
 {
     const ULONG64 address = 0xc0010293;
     const BOOL granite = ryzen->profile->version != 0x380905;
+    memset(ryzen->ratios, 0, sizeof(ryzen->ratios));
     for (unsigned i = 0; i < ryzen->core_count; ++i) {
         GROUP_AFFINITY previous;
-        ryzen->ratios[i] = 0;
         if (!SetThreadGroupAffinity(GetCurrentThread(), &ryzen->affinity[i], &previous))
             continue;
         ULONG64 status;
@@ -155,6 +160,8 @@ static void refresh(Ryzen *ryzen, unsigned groups)
     if (now < ryzen->next_sample)
         return;
     ryzen->next_sample = now + 1000;
+    if ((groups & TUNING) && ryzen->msr)
+        core_ratios(ryzen);
     const DWORD lock = WaitForSingleObject(ryzen->pci_mutex, 30);
     if (lock != WAIT_OBJECT_0 && lock != WAIT_ABANDONED) {
         ryzen->valid = FALSE;
@@ -168,93 +175,91 @@ static void refresh(Ryzen *ryzen, unsigned groups)
     ReleaseMutex(ryzen->pci_mutex);
     if (ryzen->valid)
         memcpy(ryzen->values, packed, cells * sizeof(*packed));
-    if (groups & TUNING)
-        core_ratios(ryzen);
 }
 
-/** Publish only fields with a known identity and a credible sensor range. */
+/** Reject values outside the sensor's expected range. */
+static double positive_reading(double value, double limit)
+{
+    return value > 0 && value < limit ? value : NAN;
+}
+
+/** Publish the known fields with nulls for unavailable or invalid readings. */
 void ryzen_sample(Ryzen *ryzen, Sample *sample, unsigned groups)
 {
     if (!ryzen)
         return;
-    refresh(ryzen, groups);
-    if (!ryzen->valid)
-        return;
+    if (ryzen->smu)
+        refresh(ryzen, groups);
     const RyzenProfile *p = ryzen->profile;
-    const float *v = ryzen->values;
+    static const float unread[614] = {0};
+    const float *v = ryzen->valid ? ryzen->values : unread;
     const BOOL granite = p->version != 0x380905;
     const uint64_t key = identity(p->brand, strlen(p->brand));
     if (groups & MEMORY) {
         /* The SMU reports average DRAM traffic in GB/s. The panel protocol uses B/s. */
         const double read = v[p->dram_read], write = v[p->dram_write];
-        if (read >= 0 && read <= 200)
-            device_metric(sample, "mem", key, "dram_read", NULL, read * 1e9);
-        if (write >= 0 && write <= 200)
-            device_metric(sample, "mem", key, "dram_write", NULL, write * 1e9);
+        device_metric(sample, "mem", key, "dram_read", NULL,
+                      ryzen->valid && read >= 0 && read <= 200 ? read * 1e9 : NAN);
+        device_metric(sample, "mem", key, "dram_write", NULL,
+                      ryzen->valid && write >= 0 && write <= 200 ? write * 1e9 : NAN);
     }
-    if ((groups & CPU) && granite && v[11] > 0 && v[11] <= 115)
-        metric_put(sample, "cpu.tctl", "", v[11]);
+    if ((groups & CPU) && granite)
+        metric_put(sample, "cpu.tctl", "", v[11] > 0 && v[11] <= 115 ? v[11] : NAN);
     if (groups & TUNING) {
-        if (v[p->fclk] > 0 && v[p->fclk] < 6000)
-            metric_put(sample, "cpu.fclk", "", v[p->fclk]);
-        if (v[p->uclk] > 0 && v[p->uclk] < 6000)
-            metric_put(sample, "mem.uclk", "", v[p->uclk]);
-        if (v[p->mclk] > 0 && v[p->mclk] < 6000)
-            metric_put(sample, "mem.mclk", "", v[p->mclk]);
-        if (v[p->soc_v] > 0 && v[p->soc_v] < 2)
-            device_metric(sample, "cpu", key, "soc_v", L"CPU SoC", v[p->soc_v]);
+        metric_put(sample, "cpu.fclk", "", positive_reading(v[p->fclk], 6000));
+        metric_put(sample, "mem.uclk", "", positive_reading(v[p->uclk], 6000));
+        metric_put(sample, "mem.mclk", "", positive_reading(v[p->mclk], 6000));
+        device_metric(sample, "cpu", key, "soc_v", L"CPU SoC", positive_reading(v[p->soc_v], 2));
         for (unsigned i = 0; i < ryzen->core_count; ++i) {
-            const double ratio = ryzen->ratios[i];
-            if (ratio > 0 && ratio < 90) {
-                wchar_t label[32];
-                swprintf_s(label, _countof(label), L"Windows core %u", i);
-                device_metric(sample, "cpu", key ^ (UINT64_C(1) << 62) ^ i, "ratio", label, ratio);
-            }
+            wchar_t label[32];
+            swprintf_s(label, _countof(label), L"Windows core %u", i);
+            device_metric(sample, "cpu", key ^ (UINT64_C(1) << 62) ^ i, "ratio", label,
+                          positive_reading(ryzen->ratios[i], 90));
         }
     }
     if (!granite) {
-        if ((groups & CPU) && v[1] > 0 && v[1] < 350)
-            device_metric(sample, "cpu", key, "package_power", L"CPU", v[1]);
+        if (groups & CPU)
+            device_metric(sample, "cpu", key, "package_power", L"CPU", positive_reading(v[1], 350));
         return;
     }
-    if ((groups & CPU) && v[3] > 0 && v[3] < 500)
-        metric_put(sample, "cpu.ppt", "", v[3]);
+    if (groups & CPU)
+        metric_put(sample, "cpu.ppt", "", positive_reading(v[3], 500));
     if (groups & TUNING) {
         static const struct { unsigned index; const char *id; float max; } fields[] = {
             {2, "ppt_limit", 500}, {8, "tdc_limit", 500}, {9, "tdc", 500},
             {10, "thermal_limit", 120}, {63, "edc_limit", 500},
         };
         for (unsigned i = 0; i < _countof(fields); ++i) {
-            const float value = v[fields[i].index];
-            if (value > 0 && value < fields[i].max)
-                device_metric(sample, "cpu", key, fields[i].id, L"CPU", value);
+            device_metric(sample, "cpu", key, fields[i].id, L"CPU",
+                          positive_reading(v[fields[i].index], fields[i].max));
         }
-        if (v[2] > 0 && v[3] > 0 && v[3] < 500)
-            device_metric(sample, "cpu", key, "ppt_pct", L"CPU", 100.0 * v[3] / v[2]);
-        if (v[8] > 0 && v[9] > 0 && v[9] < 500)
-            device_metric(sample, "cpu", key, "tdc_pct", L"CPU", 100.0 * v[9] / v[8]);
-        if (p->cores == 16 && v[58] > 0 && v[58] < 2)
-            device_metric(sample, "cpu", key, "misc_v", L"CPU", v[58]);
+        device_metric(sample, "cpu", key, "ppt_pct", L"CPU",
+                      v[2] > 0 ? 100.0 * positive_reading(v[3], 500) / v[2] : NAN);
+        device_metric(sample, "cpu", key, "tdc_pct", L"CPU",
+                      v[8] > 0 ? 100.0 * positive_reading(v[9], 500) / v[8] : NAN);
+        if (p->cores == 16)
+            device_metric(sample, "cpu", key, "misc_v", L"CPU", positive_reading(v[58], 2));
         /* The Zen 5 SVI3 table reports VDD, SoC and Misc in five-float groups. */
         static const char *const currents[] = {"core_a", "soc_a", "misc_a"};
         for (unsigned i = 0; i < _countof(currents); ++i) {
-            const double current = v[50 + 5 * i];
-            if (current > 0 && current < 500)
-                device_metric(sample, "cpu", key, currents[i], L"CPU", current);
+            device_metric(sample, "cpu", key, currents[i], L"CPU",
+                          positive_reading(v[50 + 5 * i], 500));
         }
-        if (v[49] > 0 && v[49] < 2)
-            metric_put(sample, "cpu.vcore", "", v[49]);
+        metric_put(sample, "cpu.vcore", "", positive_reading(v[49], 2));
     }
     for (unsigned i = 0; i < p->cores; ++i) {
         wchar_t label[32];
         swprintf_s(label, _countof(label), L"CPU core %u", i);
         const uint64_t core = key ^ (UINT64_C(1) << 63) ^ i;
-        if ((groups & CPU) && v[p->core_temp + i] > 0 && v[p->core_temp + i] < 115)
-            device_metric(sample, "cpu", core, "tctl", label, v[p->core_temp + i]);
-        if ((groups & TUNING) && v[p->core_voltage + i] > 0 && v[p->core_voltage + i] < 2)
-            device_metric(sample, "cpu", core, "vcore", label, v[p->core_voltage + i]);
-        if ((groups & TUNING) && v[p->core_power + i] > 0 && v[p->core_power + i] < 100)
-            device_metric(sample, "cpu", core, "core_power", label, v[p->core_power + i]);
+        if (groups & CPU)
+            device_metric(sample, "cpu", core, "tctl", label,
+                          positive_reading(v[p->core_temp + i], 115));
+        if (groups & TUNING) {
+            device_metric(sample, "cpu", core, "vcore", label,
+                          positive_reading(v[p->core_voltage + i], 2));
+            device_metric(sample, "cpu", core, "core_power", label,
+                          positive_reading(v[p->core_power + i], 100));
+        }
     }
 }
 

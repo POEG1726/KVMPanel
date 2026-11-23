@@ -6,6 +6,7 @@
 
 #include "telemetry.h"
 #include <intrin.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,6 +22,7 @@ struct Ddr5 {
     Pawn *bus;
     HANDLE mutex;
     unsigned hubs;
+    unsigned temperature_sensors;
     unsigned active;
     unsigned pmic_active;
     unsigned pmic_hot, pmic_ov, pmic_uv;
@@ -195,8 +197,10 @@ static void refresh(Ddr5 *ddr5, BOOL probe)
         if (!(ddr5->hubs & flag))
             continue;
         pmic_status(ddr5, i, probe);
-        if (!read_register(ddr5, addr, 5, FALSE, &raw) || !(raw & 2) ||
-            !read_register(ddr5, addr, 0x1a, FALSE, &raw) || (raw & 1) ||
+        if (!read_register(ddr5, addr, 5, FALSE, &raw) || !(raw & 2))
+            continue;
+        ddr5->temperature_sensors |= flag;
+        if (!read_register(ddr5, addr, 0x1a, FALSE, &raw) || (raw & 1) ||
             !read_register(ddr5, addr, 0x31, TRUE, &raw))
             continue;
         int degrees = (int)((raw >> 2) & 0x7ff);
@@ -220,10 +224,10 @@ void ddr5_sample(Ddr5 *ddr5, Sample *sample, BOOL probe)
     refresh(ddr5, probe);
     for (unsigned i = 0; i < SPD_SLOTS; ++i) {
         const unsigned flag = 1u << i;
-        if (ddr5->active & flag) {
+        if (ddr5->temperature_sensors & flag) {
             char id[24];
             snprintf(id, sizeof(id), "mem.dimm.%02x", SPD_FIRST + i);
-            metric_put(sample, id, "", ddr5->temperatures[i]);
+            metric_put(sample, id, "", ddr5->active & flag ? ddr5->temperatures[i] : NAN);
         }
         if (ddr5->pmic_active & flag) {
             wchar_t label[32];

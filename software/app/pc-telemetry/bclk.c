@@ -9,7 +9,7 @@
 #include <wchar.h>
 
 /** Match the FCH clock layout on Vermeer, Raphael and Granite Ridge desktops. */
-static BOOL supported_cpu(void)
+BOOL bclk_supported(void)
 {
     int regs[4];
     __cpuid(regs, 0);
@@ -31,9 +31,6 @@ static BOOL supported_cpu(void)
 /** Read the programmed internal PLL reference through an already available InpOut device. */
 double bclk_read(void)
 {
-    if (!supported_cpu())
-        return 0;
-
     wchar_t path[MAX_PATH];
     const DWORD length = GetModuleFileNameW(NULL, path, _countof(path));
     if (!length || length >= _countof(path))

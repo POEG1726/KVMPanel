@@ -5,6 +5,7 @@
  */
 
 #include "telemetry.h"
+#include <math.h>
 #include <shellapi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -107,7 +108,7 @@ static DWORD WINAPI sample_worker(void *context)
         ++sample_number;
         ReleaseSRWLockExclusive(&sample_lock);
         SetEvent(usb_ready);
-        PostMessageW(window, WM_SAMPLE, sample->count,
+        PostMessageW(window, WM_SAMPLE, sample->available,
                      (InterlockedCompareExchange(&usb_connected, 0, 0) ? 1 : 0) |
                      (sample->hotspots ? 2 : 0) | (sample->junctions ? 4 : 0) |
                      (sample->hotspot_access_denied ? 16 : 0));
@@ -374,7 +375,10 @@ static int probe(void)
         print_json_string(metric->id);
         printf(",\"device\":");
         print_json_string(metric->label);
-        printf(",\"value\":%.10g}", metric->value);
+        if (isfinite(metric->value))
+            printf(",\"value\":%.10g}", metric->value);
+        else
+            printf(",\"value\":null}");
     }
     puts("]}");
     sources_close(sources);

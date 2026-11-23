@@ -140,7 +140,7 @@ $env:KVMPANEL_MOCK_PC = 'off'; npm start --prefix software/app/api/mock
 | `hello` | 连上时第一条，带 `version` |
 | `config` | 完整配置。连上时推一次，此后每次变更都推，不管改动来自网页还是副屏 |
 | `status` | 右上角状态栏用：`eth`、`pc`、`usb_a`、`kvm.sessions`，另有 `lux`。连上时推一次，变化时推，另外每 5 秒推一次 |
-| `telemetry` | 每秒一次：`ts` 加上 `metrics[]`，每项是 `{id,label,unit,value,min,max,warn?,group}`。**电脑上不存在的项（比如空的内存槽）不出现在 `metrics` 里**，副屏只显示收到的项；`value` 为 null 表示这一项存在、但这一秒没读到。`warn` 已经合并了 `config.panel.thresholds`。`hidden_metrics` 里的项不发 |
+| `telemetry` | 每秒一次，包含 `ts` 和 `metrics[]`。每项为 `{id,label,unit,value,min,max,warn?,group}`。仅报告已知、未隐藏的指标。`value: null` 表示采集器暂时无法提供读数，副屏保留该行并显示 `—`。`warn` 已合并 `config.panel.thresholds` |
 | `pc` | 上位机连接状态。连上 socket 时推一次，此后每次变化都推。断开期间不发 `telemetry`，副屏切到离线状态页 |
 | `board` | 每秒一次，不管电脑是否连着：电脑电源灯 `pc_power`（`on`/`off`/`unknown`）、主机名、版本、运行时间、板子 CPU、SoC 温度、内存和 SD 用量、`eth`（链路速率、双工、MAC、板子自己的收发 bit/s）、`access`（访问地址、Tailscale IP）、`kvm`（远程会话、HDMI 输入、视频流、虚拟介质、正在运行的 USB 功能）。离线状态页用它，字段见 `/Board` |
 | `kvm_restarting` | 网页端的 KVM 服务正在重启，副屏自身不受影响 |

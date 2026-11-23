@@ -22,10 +22,14 @@ typedef struct {
     char id[ID_SIZE];
     char label[LABEL_SIZE];
     double value;
+    unsigned last_seen;
 } Metric;
 
 typedef struct {
     unsigned count;
+    unsigned available;
+    unsigned sequence;
+    unsigned device_scan;
     unsigned junctions;
     unsigned hotspots;
     BOOL hotspot_access_denied;
@@ -40,10 +44,15 @@ typedef struct Pawn Pawn;
 typedef struct Ryzen Ryzen;
 typedef struct Ddr5 Ddr5;
 
-/** Store a finite reading under a stable device and metric ID. */
+/** Begin a reading cycle while preserving the known metric IDs. */
+void sample_begin(Sample *sample, BOOL reset);
+void sample_end(Sample *sample);
+
+/** Store a reading under a stable ID. A non-finite value means unavailable. */
 void metric_put(Sample *sample, const char *id, const char *label, double value);
 void device_metric(Sample *sample, const char *kind, uint64_t device,
                    const char *field, const wchar_t *label, double value);
+void metric_device_seen(Sample *sample, const char *kind, uint64_t device);
 uint64_t identity(const void *data, size_t size);
 
 /** Create and sample reusable Windows sensor providers. */
@@ -67,6 +76,7 @@ double hotspot_read(Pawn *pawn, unsigned bus, unsigned device, unsigned function
 Ryzen *ryzen_open(BOOL *access_denied);
 void ryzen_sample(Ryzen *ryzen, Sample *sample, unsigned groups);
 void ryzen_close(Ryzen *ryzen);
+BOOL bclk_supported(void);
 double bclk_read(void);
 
 /** Read DDR5 SPD hub temperatures through a supported SMBus controller. */
