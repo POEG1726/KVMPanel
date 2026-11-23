@@ -1,0 +1,71 @@
+Subject: [PATCH] sunxi: configure SDC0 drive level and SDRAM MR1
+
+Allow the board defconfig to select the SDC0 pad drive before pinctrl
+is available and the SDRAM MR1 value used during initialization.
+Preserve the original defaults for other boards.
+
+diff --git a/arch/arm/mach-sunxi/Kconfig b/arch/arm/mach-sunxi/Kconfig
+index b0c5d3cd..d5cb6644 100644
+--- a/arch/arm/mach-sunxi/Kconfig
++++ b/arch/arm/mach-sunxi/Kconfig
+@@ -924,6 +924,15 @@ config MMC1_PINS_PH
+ 	help
+ 	  Select this option for boards where mmc1 uses the Port H pinmux.
+ 
++config MMC_SUNXI_SDC0_DRIVE_LEVEL
++	int "SDC0 drive level before device tree setup"
++	depends on MMC
++	range 0 3
++	default 2
++	help
++	  Set the raw output drive level for SDC0 pins PF0 through PF5
++	  when board code sets up the bus before device tree pinctrl.
++
+ config MMC_SUNXI_SLOT_EXTRA
+ 	int "mmc extra slot number"
+ 	default -1
+diff --git a/board/sunxi/board.c b/board/sunxi/board.c
+index 3d1afec7..986657ed 100644
+--- a/board/sunxi/board.c
++++ b/board/sunxi/board.c
+@@ -344,7 +344,8 @@ static void mmc_pinmux_setup(int sdc)
+ 		for (pin = SUNXI_GPF(0); pin <= SUNXI_GPF(5); pin++) {
+ 			sunxi_gpio_set_cfgpin(pin, SUNXI_GPF_SDC0);
+ 			sunxi_gpio_set_pull(pin, SUNXI_GPIO_PULL_UP);
+-			sunxi_gpio_set_drv(pin, 2);
++			sunxi_gpio_set_drv(pin,
++					   CONFIG_MMC_SUNXI_SDC0_DRIVE_LEVEL);
+ 		}
+ 		break;
+ 
+diff --git a/drivers/ram/sunxi/Kconfig b/drivers/ram/sunxi/Kconfig
+index 1775cb0d..4c75ef34 100644
+--- a/drivers/ram/sunxi/Kconfig
++++ b/drivers/ram/sunxi/Kconfig
+@@ -12,6 +12,13 @@ config DRAM_SUNXI_ODT_EN
+ 	help
+ 	  ODT EN value from vendor DRAM settings.
+ 
++config DRAM_SUNXI_MR1
++	hex "DRAM MR1 parameter"
++	default 0x42
++	help
++	  Program the SDRAM mode register 1 during boot. For DDR3, this
++	  selects the SDRAM output drive impedance and nominal termination.
++
+ config DRAM_SUNXI_TPR0
+ 	hex "DRAM TPR0 parameter"
+ 	help
+diff --git a/drivers/ram/sunxi/dram_sun20i_d1.c b/drivers/ram/sunxi/dram_sun20i_d1.c
+index 79cf0a51..8185b8dd 100644
+--- a/drivers/ram/sunxi/dram_sun20i_d1.c
++++ b/drivers/ram/sunxi/dram_sun20i_d1.c
+@@ -1373,7 +1373,7 @@ static const dram_para_t para = {
+ 	.dram_zq	= CONFIG_DRAM_ZQ,
+ 	.dram_odt_en	= CONFIG_DRAM_SUNXI_ODT_EN,
+ 	.dram_mr0	= 0x1c70,
+-	.dram_mr1	= 0x42,
++	.dram_mr1	= CONFIG_DRAM_SUNXI_MR1,
+ 	.dram_mr2	= 0x18,
+ 	.dram_mr3	= 0,
+ 	.dram_tpr0	= 0x004a2195,

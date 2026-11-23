@@ -2,7 +2,7 @@
 
 SD 镜像使用带 SMHC0 节点的 DTB，构建和写卡见 [Debian SD 镜像](../debian/README.md)。
 
-`configs/kvmpanel_fel_defconfig` 用于 U-Boot 2026.10。它使用 R528 的 SPL DDR3 驱动、Tina T113-i 的 DDR3 参考参数、UART0 和 RAM 环境。目标是通过 FEL 启动，等待本板验证。DDR 参数来源和启动介质说明见 [T113-i 启动链](../vendor/tina/README.md)。
+`configs/kvmpanel_fel_defconfig` 用于 U-Boot 2026.10。SD 和 FEL 均使用这份配置，在 SPL 启用 T113 DDR PHY 读端 ODT，并用 `MR1=0x40` 设置 DDR3 颗粒的 40 Ω 输出和 120 Ω RTT_NOM。SD 启动的 SPL 和 U-Boot 控制 DT 都将 SDC0 的 PF0–PF5 设为 Level 3，典型 45 Ω。 [T113-i 启动链与 DDR 参数](../vendor/tina/README.md)
 
 ## 构建
 
@@ -15,7 +15,10 @@ ubsrc="$work/upstream/u-boot"
 ubout="$work/build/u-boot-kvmpanel-fel"
 dts="$project/software/os/linux/dts"
 staged_dts="$ubsrc/dts/upstream/src/arm/allwinner"
+patch="$project/software/os/u-boot/patches/0001-sunxi-configure-sdc0-drive-and-dram-mr1.patch"
 
+git -C "$ubsrc" apply --reverse --check "$patch" 2>/dev/null ||
+  git -C "$ubsrc" apply "$patch" || exit
 mkdir -p "$ubout"
 for file in sun8i-t113i-kvmpanel.dts kvmpanel-stc-power.dtsi; do
   test -e "$staged_dts/$file" || ln -s "$dts/$file" "$staged_dts/$file"

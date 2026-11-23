@@ -31,7 +31,10 @@ work="$HOME/work/KVMPanel"
 ubsrc="$work/upstream/u-boot"
 ubout="$work/build/u-boot-kvmpanel-sd"
 stage="$ubsrc/dts/upstream/src/arm/allwinner"
+patch="$project/software/os/u-boot/patches/0001-sunxi-configure-sdc0-drive-and-dram-mr1.patch"
 
+git -C "$ubsrc" apply --reverse --check "$patch" 2>/dev/null ||
+    git -C "$ubsrc" apply "$patch"
 for file in sun8i-t113i-kvmpanel.dts kvmpanel-stc-power.dtsi; do
     source="$project/software/os/linux/dts/$file"
     test -e "$stage/$file" || ln -s "$source" "$stage/$file"

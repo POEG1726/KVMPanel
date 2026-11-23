@@ -6,9 +6,11 @@
 
 Tina 参考配置是 `tina-t113i-overlay/device/config/chips/t113_i/configs/evb1_auto_nand/sys_config.fex` 的 `[dram_para]`。它使用 DDR3、792 MHz、`ZQ=0x7b7bfb`、`ODT=0x1`、`TPR11=0x00770000`、`TPR12=0x2`、`TPR13=0x34050100`。从百问网 T113i DevKit 默认固件提取的 `boot0_nand.fex`、`boot0_sdcard.fex` 和 `fes1.fex` 通过 eGON 校验和检查，且在偏移 `0x38` 内嵌与该配置一致的 24 个 DDR 参数字。参考件存放在 `sources/donors/tina-t113i-devkit-default/`。目前取得了参考固件的启动组件和配置。对应的 Tina5 基础包含 `brandy/brandy-2.0/spl-pub`，还未取得。 [板级 overlay](https://github.com/DongshanPI/T113i_DevKitF_Tina5SDK) · [参考固件](https://dshanpi.100ask.net/en/docs/T113i-Industrial/part1/03-1_FlashSystem/) · [Tina5 基础包说明](https://dshanpi.100ask.org/docs/T113i-Industrial/part3/DevelopmentEnvironmentSetup/)
 
+KVMPanel 的 SD 和 FEL SPL 将三星颗粒的 `MR1` 设为 `0x40`，其中 A5/A1 为 `00`（40 Ω 输出），A9/A6/A2 为 `010`（RTT_NOM 120 Ω）。2026-11-22 网表的 `DDR_ODT` 连通 T113 的 SODT0 与颗粒的 ODT。主控读端 ODT 已由 `CONFIG_DRAM_SUNXI_ODT_EN=0x1` 启用。T113 DDR PHY 使用参考 `ZQ=0x7b7bfb`，待取得该 PHY 的 ZQ 字段定义和阻抗表，再选择 48 Ω、40 Ω 或最强档。 [三星 DDR3 MR1 定义](https://download.semiconductor.samsung.com/resources/device-operation-timing-diagram/ddr3_device_operation_timing_diagram_rev14-2.pdf) · [板级参数](../../u-boot/configs/kvmpanel_fel_defconfig) · [2026-11-22 网表](../../../../hardware/exports/2026-11-22/Netlist_Schematic2_2026-11-22.enet)
+
 ## 先从 RAM 加载 Linux
 
-本项目用主线 U-Boot 的 R528 DDR3 实现承接同一组参考值，用 USB FEL 在 RAM 中运行 SPL 和 U-Boot，再传入 `zImage`、本板 DTB、Buildroot `rootfs.cpio.gz`。网表确认 USB1 直连 SoC USB0，USB2 经 CH343K 接 UART0 PB8/PB9。上板后检查 SPL 报告的内存容量和内核的 CPU 上线数。 [FEL 启动配置](../../u-boot/README.md)
+本项目使用主线 U-Boot 的 R528 DDR3 实现及上述板级值，用 USB FEL 在 RAM 中运行 SPL 和 U-Boot，再传入 `zImage`、本板 DTB、Buildroot `rootfs.cpio.gz`。网表确认 USB1 直连 SoC USB0，USB2 经 CH343K 接 UART0 PB8/PB9。上板后检查 SPL 训练、内存容量、内存读写和内核的 CPU 上线数。 [FEL 启动配置](../../u-boot/README.md)
 
 ## microSD 冷启动
 

@@ -116,12 +116,14 @@
 	sd_data_cmd_pins: sd-data-cmd-pins {
 		pins = "PF0", "PF1", "PF3", "PF4", "PF5";
 		function = "mmc0";
+		drive-strength = <40>;
 		bias-pull-up;
 	};
 
 	sd_clk_pin: sd-clk-pin {
 		pins = "PF2";
 		function = "mmc0";
+		drive-strength = <40>;
 		bias-disable;
 	};
 };

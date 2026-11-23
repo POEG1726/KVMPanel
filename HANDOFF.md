@@ -2,6 +2,14 @@
 
 最近五项有实际进展的软件工作，最新一项在顶部。全项目状态见 [软件进度](docs/software-progress.md)。
 
+## T113 接口驱动强度
+
+核对日期 2026-11-23。
+
+- SDC0 从 SD 启动的 SPL 起设 Level 3（典型 45 Ω），U-Boot 和 Linux 写入同一档。Linux 的 RGMII PG 引脚设 `drive-strength = <40>`。DDR3 颗粒用 `MR1=0x40` 配置 40 Ω 输出和 120 Ω RTT_NOM，T113 DDR PHY 读端 ODT 已开启。 [启动配置](software/os/u-boot/README.md) · [板级设备树](docs/linux-6.18.md#触摸光照sd-和-gpio)
+- SD/FEL U-Boot 和三份 Linux 板级 DTB 已构建，核对了 SPL 写入 SDC0 档位与 MR1 的指令及 DTB 属性。产物在 WSL 的 `~/work/KVMPanel/build/` 下，目录为 `u-boot-kvmpanel-drive-sd`、`u-boot-kvmpanel-drive-fel` 和 `linux-kvmpanel-drive`。旧镜像使用旧设置。有板后先用 FEL 复测 DDR 训练、容量和读写，再测 SD 冷启动、UHS 和 RGMII 千兆收发。 [首次上板](docs/development.md#首次上板)
+- T113 DDR PHY 继续用 `ZQ=0x7b7bfb`。取得同型号 PHY 的 ZQ 字段定义和阻抗表后，再选主控 48 Ω、40 Ω 或最强档。 [DDR 参数](software/os/vendor/tina/README.md#外置-ddr3)
+
 ## Windows PC 遥测采集器
 
 核对日期 2026-11-23。
@@ -31,10 +39,3 @@
 - 已移植 Cedrus JPEG 编码和 T113 IOMMU，`kvmd` 自动发现 `cedrus-enc`，缺失或编码失败时回退 libjpeg-turbo。已构建 ARM 内核、组合 DTB 和静态应用，核对 DT 绑定及 NV12 填充。 [编码说明](docs/linux-6.18.md#jpegmjpeg-编码)
 - 测试镜像为 `build/debian/kvmpanel-debian13-armhf-mjpeg.img.xz`。已检查分区和文件系统。QEMU 用 virt 内核验证了登录、KVM 健康接口、USB gadget 和模拟 STC 关机。
 - 接手上板先确认 JPEG 输出、颜色和 VE 完成中断，再测 LT8619C → CSI → KVM 网页的帧率和 CPU 实占。用 `KVMD_MJPEG_DEVICE=off` 对照软件编码。
-
-## 电脑电源灯状态
-
-核对日期 2026-11-23。
-
-- 板端只读 PE12。HTTP `/api/power` 和控制台 WebSocket 电源状态均只传 `on`，Mock、接口契约和网页已同步。 [板端接口](software/app/ipkvm/README.md#板端接口)
-- 已通过 `kvmd` 和 Mock 测试、网页构建及测试。接手在实板分别核对开机和关机时的 PE12 读数及网页状态。

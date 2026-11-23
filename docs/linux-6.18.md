@@ -105,6 +105,8 @@ I²C2 的 PD20/PD21 分别通过 U18.W18/V18 接 SCL/SDA。总线经 R19/R18 上
 
 CARD1 的数据、时钟和命令接 PF0–PF5，CD 接 PF6。组合 DTB 启用 `mmc0`，用轮询检测插拔，待确认 CD 极性后可改用 PF6。卡电源 `vmmc` 固定为 `3V3_MAIN`，U18.F4（VCC-PF）接 `1V8`。板级 pinctrl 的 `pf-vqmmc` 选择 PF 信号电压，由 MMC 栈在卡时钟停止后请求。
 
+SDC0 的 CLK 和 CMD/DAT 引脚从 SD 启动的 SPL 起统一为 Level 3，U-Boot 和 Linux 的设备树均写 `drive-strength = <40>`。RGMII 的 PG 引脚组也在板级设备树设为 `<40>`。全志 GPIO 模型下这两处都是典型 45 Ω。实板复测 SD High Speed 冷启动和 UHS，以及 RGMII 千兆链路和收发。 [全志用户手册图 9-69](https://whycan.com/files/202304/T113-I/T113-i_User_Manual_V1.5.pdf#page=1091) · [SD 节点](../software/os/linux/dts/kvmpanel-peripherals.dtsi) · [RGMII 节点](../software/os/linux/dts/sun8i-t113i-kvmpanel.dts)
+
 卡从 3.3 V 初始化。只有卡接受 1.8 V 协商且完成 CMD11 时才切低，并用 PIO 0x0348 校验 PF 电压状态。切换超时会尝试恢复旧档并返回失败。卡的 VDD 直连 3.3 V，切换中断后若卡需要完整掉电复位，需拔插卡。SDR104 尝试最高 150 MHz，扫描 64 个采样延迟档位并重验最长通过窗口的中点。调谐失败时以最高 100 MHz、50 MHz 继续试同一 UHS 模式。普通卡继续按其支持的默认速度或 High Speed 运行。
 
 下面保留实现前的 PF 电路查证。实板先读 `/sys/kernel/debug/mmc0/ios`，同时测 CMD/DAT 电平和 SD_CLK。FEL 和 initramfs 启动可用于独立验证 SD。
