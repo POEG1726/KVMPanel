@@ -4,6 +4,7 @@
 
 ## 已完成
 
+- **全志 DDR PHY ZQ 寄存器对照**。离线核对 V853 与 T113 Tina SPL 的 ZQ 字、位宽及写入地址，追出 H3 六个半字节到三个 ZQDR 的校准路径，并核对 T113-i 的 DX0/DX1 引脚和 240 Ω ZQ 参考。 [ZQ 查证](../software/os/vendor/tina/README.md#主控-zq-编码查证)
 - **SDC0、RGMII 与 DDR3 颗粒驱动配置**。SD 启动的 SPL、U-Boot 和 Linux 将 SDC0 设为 Level 3（典型 45 Ω），RGMII 的 PG 引脚设为 `drive-strength = <40>`。SD/FEL SPL 启用主控读端 ODT，三星 DDR3 用 `MR1=0x40` 选 40 Ω 输出和 120 Ω RTT_NOM。SD/FEL U-Boot 与三份板级 DTB 构建通过，核对了 SPL 指令和 DTB 属性。实板待复测。 [启动配置](../software/os/u-boot/README.md) · [板级设备树](linux-6.18.md#触摸光照sd-和-gpio)
 - **Windows 遥测缺值保留**。已知指标缺测时上报 `null`，副屏保留行并显示 `—`。Windows x64 构建、本机 BCLK 和 DRAM 有无读取组件的探测、HID 编码模拟及板端缺值恢复测试通过。实板 USB 待测。 [遥测协议](../software/app/pc-telemetry/README.md#usb-与-panel)
 - **Windows Ryzen DRAM 带宽**。通过已有 SMU 表独立采集实际读写流量，Panel 使用 B/s。Windows x64 构建、板端 Panel 测试及 9950X3D 顺序读写负载验证通过，实板 USB、9800X3D 和 5600X 待复测。 [带宽来源与验证](../software/app/pc-telemetry/README.md#cpu-和-dimm-硬件读数)
@@ -30,7 +31,7 @@
 
 ## TODO
 
-- **T113 DDR PHY 输出阻抗**。已复核 Tina SPL 库和三份 DevKit 启动组件的寄存器写法。已查 T113 DDR3 配置均用 `0x7b7bfb`，另一编码 `0x7b7bf9` 出现在 F133 DDR2。需取得 T113 PHY 位域与 Ω 表或实板确认，再按 48 Ω、40 Ω、最强档顺序配置。 [ZQ 查证](../software/os/vendor/tina/README.md#主控-zq-编码查证)
+- **T113 DDR PHY 输出阻抗**。SD/FEL SPL 当前使用 DDR3 参考编码 `0x7b7bfb`。待同型号 PHY 字段表及输出阻抗表，或实板电气测量，确认各字节对应引脚及 48 Ω、40 Ω 或最强档后调整。 [ZQ 查证](../software/os/vendor/tina/README.md#主控-zq-编码查证)
 - **基础系统实板 bring-up**。按授权范围先核对供电和 UART0，再用 FEL 进 RAM 验证 DDR 训练、容量和 Linux 启动。随后验证 USB、网口、Debian SD High Speed 冷启动，以及实板断电后的文件系统。完成 3.3 V 读写测试后，再验证 UHS。 [首次上板](development.md#首次上板) · [写卡与启动](../software/os/debian/README.md)
 - **板端功能联调**。基础系统跑通后验证 LT8619C/CSI、VE 真实 JPEG 帧及 MJPEG 吞吐、USB 键鼠与存储、Windows 遥测、C906/HiFi4 RPMsg、按键、光照、温度和看门狗。确认实际面板与触摸型号后验证 DSI、供电、背光和触摸。 [板级适配清单](linux-6.18.md#结果)
 - **副屏实板验证与排版**。确认面板、触摸设备和实际分辨率后，测四个方向的触摸坐标、内存峰值、息屏恢复、帧率和 CPU 占用。横屏方案 B 与原型曲线排版仍待移植。 [当前应用设计](superpowers/specs/2026-11-20-kvmpanel-app-design.md) · [Dashboard](../software/app/dashboard/README.md)

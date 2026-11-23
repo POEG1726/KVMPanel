@@ -18,9 +18,21 @@ KVMPanel 的 SD 和 FEL SPL 将三星颗粒的 `MR1` 设为 `0x40`，其中 A5/A
 | `0x7b7bf9` | F133 EVB/MQ-R 的 DDR2，XFEL 的 D1 和 F133 `mctl_hal.S` 逐字节相同，DDR 参数块分别传入 `0x7b7bfb` 和 `0x7b7bf9`。 [F133/MQ-R](https://github.com/paulwratt/mangopi-sbc-Tina-Linux/blob/352fc38e6dfbb6f5d7b7be06201c54b7469885e9/device/config/chips/f133/configs/mq_r/sys_config.fex#L152) · [XFEL 参数](https://github.com/xboot/xfel/blob/445e8aefe6914c85817cc9bd1d201629364b0ec6/chips/d1_f133.c#L2938) |
 | `0x3b3bf9` / `0x3b3bfb` | XFEL 的 A40i/R40 参数，分别用于该芯片的 DDR3 和 LPDDR3。 [XFEL A40i/R40 参数](https://github.com/xboot/xfel/blob/445e8aefe6914c85817cc9bd1d201629364b0ec6/chips/a40i_r40.c#L1442) |
 
-STM32MP1 的 ZPROG 低半字节 `0x9` 对应 48 Ω，`0xb` 对应 40 Ω。RK3188 的 ZPROG 也将驱动与 ODT 分配到低、高半字节。这给出了一个待验证的解释。若 T113 的三个字节采用相同的分配和换算，`0x7b7bfb` 的三个驱动子字段是 `b/b/b`，把它们都换成 `9` 得到 `0x7979f9`。T113 的位域、各字节对应的 I/O 和 Ω 换算尚无同型号证据，因此这个推算未用于 SPL。接手需要 `0x03103140[23:0]` 的字段表及 240 Ω 校准参考下的输出阻抗表，或在实板上独立确认阻抗。 [ST AN5168 表 9](https://www.st.com/resource/en/application_note/an5168-ddr-configuration-on-stm32mp1-series-mpus-stmicroelectronics.pdf#page=17) · [RK3188 TRM 的 DDR_PHYCTL_ZQ0CR1](https://rockchip.fr/Rockchip%20RK3188%20TRM%20V1.3.pdf)
+V853 Tina SPL 的 `board/v853/libsun8iw21p1_sdcard.a` 也使用 `0x7b7bfb` 作为 792 MHz DDR3 默认值。`mctl_channel_init` 的 `0x15e–0x17a` 与 T113 使用相同的地址 `0x03103140`、24 位掩码和 bit 25。V853 数据手册 §2.3.7 表 2-9 列出接收端 ODT 的开路、120 Ω 和 60 Ω，未列输出驱动档位或 ZQCR 编码。 [V853 Tina SPL 库](https://gitee.com/xiaobocwb/tina-spl-pub/tree/f436101c3dad52769e8e338bc207941a0e0df3b0/board/v853) · [V853 数据手册 V1.2 表 2-9](https://bbs.aw-ol.com/assets/uploads/files/1661647385303-fd703522-58f1-435d-986f-c35f2843a2c5-v853-amp-v853s_datasheet_v1.2.pdf#page=30)
 
-调研源码在 WSL 的 `~/work/KVMPanel/upstream/` 下，目录为 `tina-spl-pub-mirror`、`tina-mangopi-mirror` 和 `xfel`。反汇编中间文件在 `~/work/KVMPanel/build/t113-zq-research/`。
+H3、A64、H5、R40、V3s 的共享 U-Boot 驱动与 T113 的 `ZQCR`、`ZQSR` 和三份 `ZQDR` 偏移一致。H3 的逐字段校准路径把每个半字节复制到六个位置后单独校准，再按以下顺序写回校准结果。A64、H5 和 R40 的路径一次写入低 24 位，由 PHY 完成校准。 [共享寄存器表](https://github.com/u-boot/u-boot/blob/v2026.10/arch/arm/include/asm/arch-sunxi/dram_sunxi_dw.h#L119-L121) · [H3 校准](https://github.com/u-boot/u-boot/blob/v2026.10/arch/arm/mach-sunxi/dram_sunxi_dw.c#L329-L359) · [A64/H5/R40 校准](https://github.com/u-boot/u-boot/blob/v2026.10/arch/arm/mach-sunxi/dram_sunxi_dw.c#L575-L590) · [T113 寄存器表](https://github.com/OpenCentauri/oc-boot/blob/fca7c0a5b5b3fd4f2d619a1e24dfccd1af5dd8da/reg-dram.h#L76-L80)
+
+| ZQCR 位 | `0x7b7bfb` 的值 | H3 对应的校准结果寄存器 |
+|---|---|---|
+| `[7:4] / [3:0]` | `f / b` | `ZQDR0`，偏移 `0x148` |
+| `[15:12] / [11:8]` | `7 / b` | `ZQDR1`，偏移 `0x14c` |
+| `[23:20] / [19:16]` | `7 / b` | `ZQDR2`，偏移 `0x150` |
+
+T113-i 硬件设计指南 §1.5.2 定义了实际引脚组。DX0 为 DQ0–7、DQM0、DQS0P/N，DX1 为 DQ8–15、DQM1、DQS1P/N。指南另列 Command & Address，规定主控和颗粒各自使用 240 Ω ±1% 的 ZQ 参考电阻。当前网表符合该阻值。指南与 SDK 都未给出 `ZQDR0/1/2` 到 DX0、DX1、命令地址或时钟引脚的对应关系。T113-i 用户手册 V2.2 §7.1 给出 DRAMC 的位宽、片选及支持的 DDR 类型。 [T113 硬件设计指南 V1.0](https://whycan.com/files/202304/T113-I/T113_%E7%A1%AC%E4%BB%B6%E8%AE%BE%E8%AE%A1%E6%8C%87%E5%8D%97V1_0.pdf#page=18) · [T113-i 用户手册 V2.2](https://www.scribd.com/document/995591368/T113-i-Series-User-Manual-V2-2)
+
+STM32MP1 表 9 给出低半字节 `0x9` = 48 Ω、`0xb` = 40 Ω、`0xf` = 30 Ω。TI Keystone II 的低半字节也以 `0xb` 选 40 Ω，其支持表未列 `0x9`。两家高半字节 `0x2` 的 ODT 分别为 96 Ω 和 120 Ω。H6 的 `ZQCR` 则在 PHY 偏移 `0x680`，U-Boot 将同名 `CONFIG_DRAM_ZQ` 参数拆写到 `ZQ0PR0`、`ZQ0OR0` 和 `ZQ1PR0`。这些差异限制了跨芯片套用编码。若 T113 的每个字节都沿用 ST 的低半字节定义及换算，则 `0x7b7bfb` 的三个 `b` 表示 40 Ω，同时改成 `9` 得到候选 `0x7979f9`。SD/FEL SPL 仍使用 `0x7b7bfb`，等待同型号 PHY 位域与 Ω 表，或实板分别确认引脚映射和阻抗。 [ST AN5168 表 8–9](https://www.st.com/resource/en/application_note/an5168-ddr-configuration-on-stm32mp1-series-mpus-stmicroelectronics.pdf#page=16) · [TI SPRUHN7C 表 4-61](https://www.ti.com/lit/ug/spruhn7c/spruhn7c.pdf#page=117) · [H6 ZQ 设置](https://github.com/u-boot/u-boot/blob/v2026.10/arch/arm/mach-sunxi/dram_sun50i_h6.c#L487-L498)
+
+调研源码在 WSL 的 `~/work/KVMPanel/upstream/` 下，目录为 `tina-spl-pub-mirror`、`tina-mangopi-mirror` 和 `xfel`。全志硬件资料在 `allwinner-ddr-reference`。反汇编中间文件在 `~/work/KVMPanel/build/t113-zq-research/`，V853 对应 `v853-sdcard.lib.txt`。
 
 ## 先从 RAM 加载 Linux
 
