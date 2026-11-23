@@ -87,6 +87,7 @@ static void draw_cb(lv_event_t * e)
         lv_draw_image(layer, &id, &a);
     }
 
+    return; /* grid removed from the design */
     lv_draw_rect_dsc_t rd;
     lv_draw_rect_dsc_init(&rd);
     rd.bg_color = lv_color_hex(0x5ec4ff);
