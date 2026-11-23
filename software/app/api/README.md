@@ -167,3 +167,13 @@ $env:KVMPANEL_MOCK_PC = 'off'; npm start --prefix software/app/api/mock
 | GPU | `gpu.clock`、`gpu.temp`、`gpu.mem_junction`、`gpu.load`、`gpu.vram_used`、`gpu.power` |
 | 内存 | `mem.used`、`mem.dimm.<槽位>`（只发有内存的槽位，比如 `a2`、`b2`）、`mem.mclk`、`mem.uclk` |
 | 整机 | `sys.power`、`ssd.0.temp`、`ssd.1.temp`、`net.rx`、`net.tx` |
+
+## MCP
+
+MCP 客户端向 `/api/mcp/v1` 发 Streamable HTTP JSON-RPC POST，带 `Authorization: Bearer <key>`。支持版本 `2025-06-18` 和 `2025-11-25`。服务无状态，请求最多 1 MiB，不提供 SSE。 GET 返回 405。有自签证书时，先让客户端信任本机证书。需给客户端配置最多 120 秒的工具等待时间，例如 Claude Code 的 `MCP_TOOL_TIMEOUT`。
+
+工具列表、输入输出结构和标注见 [MCP Schema](schema/mcp.schema.json)。工具结果的 `structuredContent` 是对象，图像置于 `content`。业务失败用 `isError:true` 和 `structuredContent.error`，无效参数用 JSON-RPC `-32602`。请求危险操作先拿绑定同一 key 和同组参数的单次令牌，30 秒有效。
+
+网页通过 `GET/PUT /api/mcp` 管理总开关，通过 `/api/mcp/keys` 新建 key，使用 `/api/mcp/keys/{id}` 修改和删除。创建返回 `{key,entry}`，之后从列表只能读到末四位。查询操作日志用 `GET /api/mcp/audit`。网页登录账号有可写控制台权限即可 `POST /api/mcp/stop`，重新开启要有 MCP 管理权限。原有 Bearer 截图和 HID 接口保留，分别检查 `observe` 和 `input`。
+
+网页状态中的 `status.mcp` 含 `{active,key_name,tool}`。panel socket 发送同一结构并加 `t:mcp`，副屏发 `{t:mcp_stop,id?}` 可急停。主机启动按键用 `config.host` 保存，由 `device` 权限修改。Windows 主机程序使用 [主机端 HID 通道](host-agent.md)。

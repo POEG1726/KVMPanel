@@ -15,7 +15,8 @@
 #include <unistd.h>
 
 enum { SHELL = 0x101722, SURFACE = 0x182331, TEXT = 0xf0f6fc, MUTED = 0x92a7ba,
-       ACCENT = 0x77ddc2, ALERT = 0xffad76, MAX_METRICS = 768, CHANGE_ID = 2 };
+       ACCENT = 0x77ddc2, ALERT = 0xffad76, MAX_METRICS = 768, CHANGE_ID = 2,
+       MCP_STOP_ID = 5 };
 
 typedef struct {
     char id[48];
@@ -25,6 +26,9 @@ typedef struct {
 
 static lv_display_t *display;
 static lv_obj_t *tabs, *groups[4], *note, *power, *offline, *settings_list, *rotation, *sleep_mask;
+static lv_obj_t *mcp_banner, *mcp_label, *mcp_button;
+LV_FONT_DECLARE(mcp_font)
+static lv_font_t mcp_display_font;
 static MetricRow rows[MAX_METRICS];
 static const char *const keys[] = {"cpu", "gpu", "mem", "sys"};
 static const char *const directions[] = {"normal", "right", "inverted", "left"};
@@ -35,6 +39,7 @@ static cJSON *hidden;
 static unsigned row_count;
 static bool requested_change;
 static bool powering_on;
+static bool mcp_active, display_asleep;
 static uint32_t power_request_time;
 static uint32_t last_telemetry;
 static volatile sig_atomic_t stop;
@@ -94,6 +99,32 @@ static bool send(const char *type, unsigned id, const char *key, cJSON *data)
     bool sent = panel_sock_send(request);
     cJSON_Delete(request);
     return sent;
+}
+
+/** Stop the current MCP operation via the trusted local panel socket. */
+static void stop_mcp(lv_event_t *event)
+{
+    (void)event;
+    if (send("mcp_stop", MCP_STOP_ID, NULL, NULL))
+        lv_obj_add_state(mcp_button, LV_STATE_DISABLED);
+    else
+        lv_label_set_text(mcp_label, "无法发送停止请求");
+}
+
+/** Display the latest MCP activity and keep its stop control accessible while active. */
+static void mcp_state(const cJSON *message)
+{
+    const bool active = cJSON_IsTrue(field(message, "active"));
+    if (active && !mcp_active)
+        lv_obj_remove_state(mcp_button, LV_STATE_DISABLED);
+    mcp_active = active;
+    lv_obj_set_hidden(mcp_banner, !active);
+    lv_obj_set_hidden(sleep_mask, !display_asleep || active);
+    if (active && !lv_obj_has_state(mcp_button, LV_STATE_DISABLED)) {
+        const char *name = str(message, "key_name");
+        lv_label_set_text_fmt(mcp_label, "%s%s%s", "AI 正在操作",
+                              *name ? " · " : "", name);
+    }
 }
 
 /** Create a patch for the shared panel settings, including all hidden IDs. */
@@ -316,7 +347,8 @@ static void board_state(const cJSON *message)
 {
     char text[192];
     const char *pc = str(message, "pc_power");
-    lv_obj_set_hidden(sleep_mask, !cJSON_IsTrue(field(message, "display_asleep")));
+    display_asleep = cJSON_IsTrue(field(message, "display_asleep"));
+    lv_obj_set_hidden(sleep_mask, !display_asleep || mcp_active);
     const bool pc_off = strcmp(pc, "off") == 0;
     const bool online = last_telemetry && lv_tick_elaps(last_telemetry) < 3000;
     const char *state = online ? "PC connected" : pc_off ? "PC is off" :
@@ -365,6 +397,8 @@ static void on_message(const cJSON *message)
         requested_change = false;
         powering_on = false;
         last_telemetry = 0;
+        display_asleep = false;
+        mcp_state(NULL);
         clear_metrics();
         lv_label_set_text(note, "Connecting to KVMPanel…");
         lv_obj_set_hidden(power, true);
@@ -378,6 +412,8 @@ static void on_message(const cJSON *message)
         board_state(message);
     else if (strcmp(type, "telemetry") == 0)
         telemetry(field(message, "metrics"));
+    else if (strcmp(type, "mcp") == 0)
+        mcp_state(message);
     else if (strcmp(type, "result") == 0) {
         const double id = number(message, "id");
         const bool ok = cJSON_IsTrue(field(message, "ok"));
@@ -393,6 +429,14 @@ static void on_message(const cJSON *message)
             lv_label_set_text(note, "Power-on request refused");
             lv_obj_remove_state(power, LV_STATE_DISABLED);
         }
+        if (id == MCP_STOP_ID) {
+            if (ok) {
+                mcp_state(NULL);
+            } else {
+                lv_obj_remove_state(mcp_button, LV_STATE_DISABLED);
+                lv_label_set_text(mcp_label, "停止失败");
+            }
+        }
     }
 }
 
@@ -403,6 +447,23 @@ static void create_screen(void)
     lv_obj_set_style_text_font(screen, &lv_font_montserrat_20, 0);
     lv_obj_t *title = label(screen, "KVMPanel", ACCENT);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_28, 0);
+    mcp_display_font = lv_font_montserrat_20;
+    mcp_display_font.fallback = &mcp_font;
+    mcp_banner = lv_obj_create(screen);
+    vertical(mcp_banner, SURFACE);
+    lv_obj_set_size(mcp_banner, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_scrollable(mcp_banner, false);
+    lv_obj_set_flex_flow(mcp_banner, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(mcp_banner, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(mcp_banner, 12, 0);
+    mcp_label = label(mcp_banner, "", ALERT);
+    lv_obj_set_style_text_font(mcp_label, &mcp_display_font, 0);
+    lv_obj_set_flex_grow(mcp_label, 1);
+    lv_label_set_long_mode(mcp_label, LV_LABEL_LONG_DOT);
+    mcp_button = lv_button_create(mcp_banner);
+    lv_obj_set_style_text_font(label(mcp_button, "停止", TEXT), &mcp_display_font, 0);
+    lv_obj_add_event_cb(mcp_button, stop_mcp, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_hidden(mcp_banner, true);
     note = label(screen, "Connecting to KVMPanel…", MUTED);
     lv_obj_set_width(note, lv_pct(100));
     power = lv_button_create(screen);

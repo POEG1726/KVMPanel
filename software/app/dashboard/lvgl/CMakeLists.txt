@@ -12,6 +12,6 @@ set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "" FORCE)
 set(LV_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory("${LVGL_DIR}" lvgl)
 
-add_executable(kvmpanel-dashboard main.c panel_sock.c third_party/cjson/cJSON.c)
+add_executable(kvmpanel-dashboard main.c mcp_font.c panel_sock.c third_party/cjson/cJSON.c)
 target_include_directories(kvmpanel-dashboard PRIVATE third_party/cjson)
 target_link_libraries(kvmpanel-dashboard PRIVATE lvgl m)

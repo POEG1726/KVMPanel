@@ -69,6 +69,11 @@ export interface Ping {
  */
 export interface Status {
   t: "status";
+  mcp: {
+    active: boolean;
+    key_name: string | null;
+    tool: string | null;
+  };
   hdmi: {
     signal: boolean;
     width: number;

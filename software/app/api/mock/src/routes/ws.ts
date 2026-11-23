@@ -18,6 +18,7 @@ export function statusMessage(state: State, live: Set<Conn>) {
     locks: { ...state.locks },
     sessions: [...live].map((c) => ({ user: c.account.name, ip: c.ip, since: c.since, view_only: c.account.view_only })),
     media: { ...state.media },
+    mcp: { ...state.mcpActivity },
   };
 }
 

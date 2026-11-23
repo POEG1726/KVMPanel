@@ -22,7 +22,10 @@
   "console": {
     "viewOnlyHint": "当前会话为只读观看，无法向远程电脑发送键盘和鼠标输入。",
     "title": "控制台",
-    "screen": "远程画面"
+    "screen": "远程画面",
+    "mcpActive": "AI 正在操作",
+    "mcpStop": "收回 AI 控制",
+    "mcpStopped": "已停止 MCP 控制。"
   },
   "float": {
     "move": "使用方向键移动窗口",
@@ -71,7 +74,7 @@
     "endpoints_full": "USB 端点已满：IN 还差 {{in_missing}} 个，OUT 还差 {{out_missing}} 个，先关掉其他功能。",
     "device_unavailable": "设备硬件暂时不可用。",
     "cannot_delete_self": "不能删除自己的账号。",
-    "no_key": "请先生成密钥。",
+    "no_key": "请先新建密钥，再启用 MCP。",
     "busy": "另一个安装正在进行。",
     "too_large": "文件太大。",
     "checksum_mismatch": "校验值和文件不一致。",
@@ -85,7 +88,9 @@
     "user_exists": "已存在同名账号。",
     "device_exists": "已存在使用此 MAC 地址的设备。",
     "internal": "设备发生内部错误。",
-    "invalid_json": "请求中的 JSON 格式无效。"
+    "invalid_json": "请求中的 JSON 格式无效。",
+    "mcp_disabled": "MCP 已关闭。",
+    "key_limit": "板子已有八把 MCP 密钥。"
   },
   "common": {
     "cancel": "取消",
@@ -300,7 +305,12 @@
       "display": "显示",
       "autoBrightness": "自动亮度",
       "orientation": "屏幕旋转",
-      "rotation": { "normal": "默认方向", "right": "向右 90°", "inverted": "180°", "left": "向左 90°" },
+      "rotation": {
+        "normal": "默认方向",
+        "right": "向右 90°",
+        "inverted": "180°",
+        "left": "向左 90°"
+      },
       "brightness": "亮度",
       "offlineSleep": "电脑离线后息屏",
       "offlineSleepHint": "收不到电脑数据超过这个时间后息屏",
@@ -359,7 +369,8 @@
         "toggle_settings": "进入 / 退出设置",
         "toggle_screen": "开关屏幕",
         "cycle_brightness": "切换亮度档位",
-        "pause_kvm": "暂停 KVM 远程"
+        "pause_kvm": "暂停 KVM 远程",
+        "stop_mcp": "停止 MCP 控制"
       }
     },
     "storage": {
@@ -447,8 +458,8 @@
     },
     "mcp": {
       "enabled": "启用 MCP",
-      "enabledHint": "MCP 客户端可以凭密钥截图和发送键鼠输入",
-      "key": "API 密钥",
+      "enabledHint": "允许客户端通过已分配权限的密钥访问。",
+      "keys": "密钥",
       "keyHint": "末四位 {{hint}}",
       "noKey": "还没有密钥",
       "showOnce": "请现在复制这个密钥，它只显示这一次。",
@@ -456,12 +467,28 @@
       "copied": "密钥已复制。",
       "copyFailed": "请用浏览器的复制功能复制已选中的密钥。",
       "hide": "隐藏",
-      "regenerate": "生成新密钥",
-      "regenerateTitle": "生成新密钥？",
-      "regenerateMessage": "旧密钥会立刻失效。",
-      "revoke": "吊销密钥",
-      "revokeTitle": "吊销密钥？",
-      "revokeMessage": "MCP 会被关闭，直到生成新的密钥。"
+      "create": "新建密钥",
+      "name": "密钥名称",
+      "scopes": "权限范围",
+      "scope": {
+        "observe": "观察",
+        "input": "键盘和鼠标",
+        "power": "电源和启动",
+        "media": "介质和共享",
+        "host_private": "主机剪贴板"
+      },
+      "edit": "编辑",
+      "save": "保存密钥",
+      "revoke": "删除密钥",
+      "revokeTitle": "删除此密钥？",
+      "revokeMessage": "{{name}} 会立即失去访问权限。",
+      "clients": "客户端配置",
+      "certificate": "使用自签名 HTTPS 证书时，请先在客户端导入并信任板子的证书。",
+      "audit": "最近操作",
+      "emptyAudit": "还没有操作记录。",
+      "time": "时间",
+      "operation": "操作",
+      "outcome": "结果"
     },
     "update": {
       "current": "当前版本",
@@ -554,6 +581,14 @@
       "version": "版本",
       "licenses": "许可证",
       "open": "打开"
+    },
+    "host": {
+      "title": "主机启动按键",
+      "setup": "BIOS 设置键",
+      "bootMenu": "启动菜单键",
+      "code": "填入 KeyboardEvent.code，例如 Delete 或 F12。留空即禁用。",
+      "interval": "连按间隔（毫秒）",
+      "duration": "最长连按时间（秒）"
     }
   },
   "connection": {

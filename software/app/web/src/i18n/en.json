@@ -25,7 +25,10 @@
   "console": {
     "viewOnlyHint": "This session is view only. Remote keyboard and mouse input is disabled.",
     "title": "Console",
-    "screen": "Remote screen"
+    "screen": "Remote screen",
+    "mcpActive": "AI is controlling the PC",
+    "mcpStop": "Take back control",
+    "mcpStopped": "MCP control stopped."
   },
   "float": {
     "move": "Move with the arrow keys",
@@ -74,7 +77,9 @@
     "endpoints_full": "USB endpoints are full: IN short by {{in_missing}}, OUT short by {{out_missing}}. Turn something else off first.",
     "device_unavailable": "The device hardware is not available right now.",
     "cannot_delete_self": "You cannot delete your own account.",
-    "no_key": "Generate a key first.",
+    "no_key": "Create a key before enabling MCP.",
+    "mcp_disabled": "MCP is disabled.",
+    "key_limit": "The board already has eight MCP keys.",
     "busy": "Another installation is running.",
     "too_large": "That file is too large.",
     "checksum_mismatch": "The checksum does not match the file.",
@@ -362,7 +367,8 @@
         "toggle_settings": "Open / close settings",
         "toggle_screen": "Screen on / off",
         "cycle_brightness": "Cycle brightness",
-        "pause_kvm": "Pause remote KVM"
+        "pause_kvm": "Pause remote KVM",
+        "stop_mcp": "Stop MCP control"
       }
     },
     "storage": {
@@ -450,21 +456,45 @@
     },
     "mcp": {
       "enabled": "Enable MCP",
-      "enabledHint": "Lets MCP clients take screenshots and send input with the key",
-      "key": "API key",
+      "enabledHint": "Allow access using keys with assigned permissions.",
+      "keys": "Keys",
       "keyHint": "Ends with {{hint}}",
-      "noKey": "No key yet",
+      "noKey": "No keys yet",
       "showOnce": "Copy this key now. It is shown only once.",
       "copy": "Copy",
       "copied": "Key copied.",
       "copyFailed": "Use your browser’s Copy command on the selected key.",
       "hide": "Hide",
-      "regenerate": "Generate new key",
-      "regenerateTitle": "Generate a new key?",
-      "regenerateMessage": "The old key stops working at once.",
-      "revoke": "Revoke key",
-      "revokeTitle": "Revoke the key?",
-      "revokeMessage": "MCP is switched off until a new key is generated."
+      "create": "New key",
+      "name": "Key name",
+      "scopes": "Permissions",
+      "scope": {
+        "observe": "Observe",
+        "input": "Keyboard and mouse",
+        "power": "Power and boot",
+        "media": "Media and sharing",
+        "host_private": "Host clipboard"
+      },
+      "edit": "Edit",
+      "save": "Save key",
+      "revoke": "Delete key",
+      "revokeTitle": "Delete this key?",
+      "revokeMessage": "{{name}} will immediately lose access.",
+      "clients": "Client setup",
+      "certificate": "For a self-signed HTTPS certificate, import and trust the board certificate on the client.",
+      "audit": "Recent operations",
+      "emptyAudit": "No operations recorded.",
+      "time": "Time",
+      "operation": "Operation",
+      "outcome": "Result"
+    },
+    "host": {
+      "title": "Host boot keys",
+      "setup": "Firmware setup key",
+      "bootMenu": "Boot menu key",
+      "code": "KeyboardEvent.code, such as Delete or F12. Leave empty to disable.",
+      "interval": "Tap interval (ms)",
+      "duration": "Maximum tapping time (s)"
     },
     "update": {
       "current": "Current version",

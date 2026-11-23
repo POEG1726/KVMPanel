@@ -131,7 +131,9 @@ abs_xy='05 01 09 30 09 31 15 00 26 ff 7f 75 10 95 02 81 02'
 # Wheel is the fourth relative byte, after the boot mouse's three-byte prefix.
 wheel='05 01 09 38 15 81 25 7f 75 08 95 01 81 06'
 vendor_header='06 00 ff 09 01 a1 01'
-vendor_output='09 02 15 00 26 ff 00 75 08 95 3f 91 02 c0'
+# Output 3 is telemetry and replies via SET_REPORT. Input 4 uses the same HID IN endpoint.
+vendor_reports='85 03 09 02 15 00 26 ff 00 75 08 95 3f 91 02
+	85 04 09 03 15 00 26 ff 00 75 08 95 3f 81 02 c0'
 
 hid() {
 	name=hid.$1
@@ -150,7 +152,7 @@ if [ "$merged" = 1 ]; then
 		$mouse_header 85 02 $buttons $abs_xy $wheel c0 c0"
 	length=7
 	if [ "$telemetry" = 1 ]; then
-		desc="$desc $vendor_header 85 03 $vendor_output"
+		desc="$desc $vendor_header $vendor_reports"
 		length=64
 	fi
 	hid merged 0 0 "$length" "$desc"
@@ -164,13 +166,13 @@ else
 		desc="$mouse_header 85 02 $buttons $abs_xy $wheel c0 c0"
 		length=7
 		if [ "$telemetry" = 1 ]; then
-			desc="$desc $vendor_header 85 03 $vendor_output"
+			desc="$desc $vendor_header $vendor_reports"
 			length=64
 		fi
 		hid absolute 0 0 "$length" "$desc"
 	fi
 fi
-if [ "$standalone" = 1 ]; then hid telemetry 0 0 64 "$vendor_header 85 03 $vendor_output"; fi
+if [ "$standalone" = 1 ]; then hid telemetry 0 0 64 "$vendor_header $vendor_reports"; fi
 
 if [ "$storage" = 1 ]; then
 	media=$f/mass_storage.media

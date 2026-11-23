@@ -76,10 +76,18 @@
     "Status": {
       "description": "Sent on connect, on every change and at least once per second",
       "type": "object",
-      "required": ["t", "hdmi", "stream", "power", "locks", "sessions", "media"],
+      "required": ["t", "hdmi", "stream", "power", "locks", "sessions", "media", "mcp"],
       "additionalProperties": false,
       "properties": {
         "t": { "const": "status" },
+        "mcp": {
+          "type": "object", "required": ["active", "key_name", "tool"], "additionalProperties": false,
+          "properties": {
+            "active": { "type": "boolean" },
+            "key_name": { "type": ["string", "null"] },
+            "tool": { "type": ["string", "null"] }
+          }
+        },
         "hdmi": {
           "type": "object", "required": ["signal", "width", "height", "fps"], "additionalProperties": false,
           "properties": {

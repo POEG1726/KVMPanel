@@ -80,7 +80,9 @@ export interface State {
     https: { enabled: boolean; port: number; cert_path?: string; key_path?: string };
     http_port: number; bind: string;
   };
-  mcpKey: string | null;
+  mcpKeys: Map<string, { hash: string; id: string; name: string; scopes: string[]; created: number; last_used: number | null; hint: string }>;
+  mcpAudit: { ts: number; key_name: string | null; tool: string; args: object; result: string; elapsed_ms: number; count: number }[];
+  mcpActivity: { active: boolean; key_name: string | null; tool: string | null };
   logo: { type: string; data: Buffer } | null;
   startedAt: number;
   /** PC host program link (drives panel telemetry). */
@@ -134,7 +136,9 @@ export function createState(opts: { now?: () => number; sleep?: (ms: number) => 
     share: { exported_to_host: false },
     scripts: new Map(),
     network: { mode: 'dhcp', dns: { mode: 'dhcp', servers: [] }, https: { enabled: false, port: 443 }, http_port: 80, bind: '0.0.0.0' },
-    mcpKey: null,
+    mcpKeys: new Map(),
+    mcpAudit: [],
+    mcpActivity: { active: false, key_name: null, tool: null },
     logo: null,
     startedAt: (opts.now ?? Date.now)(),
     pc: { connected: true, last_seen_ts: null },

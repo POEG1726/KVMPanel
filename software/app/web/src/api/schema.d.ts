@@ -138,7 +138,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Partial update. Objects merge recursively; null sets a nullable field to null — except inside panel.thresholds, where null deletes the key. Each top-level section needs its permission (panel/function_key→panel, usb→usb, video/hid→console, serial→terminal, web/device/kvm→device). */
+        /** Partial update. Objects merge recursively; null sets a nullable field to null — except inside panel.thresholds, where null deletes the key. Each top-level section needs its permission (panel/function_key→panel, usb→usb, video/hid→console, serial→terminal, web/device/kvm/host→device). */
         patch: operations["patchConfig"];
         trace?: never;
     };
@@ -775,7 +775,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/mcp/regenerate": {
+    "/api/mcp/keys": {
         parameters: {
             query?: never;
             header?: never;
@@ -784,8 +784,76 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create a new key (the old one stops working) and enable MCP. This is the only response that contains the full key. */
-        post: operations["regenerateMcpKey"];
+        /** Create an MCP key and return the secret once */
+        post: operations["createMcpKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/keys/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["deleteMcpKey"];
+        options?: never;
+        head?: never;
+        patch: operations["editMcpKey"];
+        trace?: never;
+    };
+    "/api/mcp/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop MCP through a writable console session */
+        post: operations["stopMcp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getMcpAudit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/v1": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["mcpNoSse"];
+        put?: never;
+        /** Stateless Streamable HTTP JSON-RPC; see schema/mcp.schema.json */
+        post: operations["mcpRpc"];
         delete?: never;
         options?: never;
         head?: never;
@@ -837,23 +905,6 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/mcp/key": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Revoke the MCP key; MCP stays disabled until a new key is generated (mcp permission) */
-        delete: operations["revokeMcpKey"];
         options?: never;
         head?: never;
         patch?: never;
@@ -961,7 +1012,7 @@ export interface components {
             user: components["schemas"]["User"];
         };
         /** @enum {string} */
-        FunctionKeyAction: "none" | "toggle_settings" | "toggle_screen" | "cycle_brightness" | "pause_kvm";
+        FunctionKeyAction: "none" | "toggle_settings" | "toggle_screen" | "cycle_brightness" | "pause_kvm" | "stop_mcp";
         UsbBudget: {
             /** @description IN endpoints used (hardware has 5) */
             in: number;
@@ -972,6 +1023,16 @@ export interface components {
             out_missing: number;
         };
         Config: {
+            host: {
+                /** @default Delete */
+                setup_key: string | null;
+                /** @default null */
+                boot_menu_key: string | null;
+                /** @default 200 */
+                tap_interval_ms: number;
+                /** @default 15 */
+                tap_duration_s: number;
+            };
             panel: {
                 /**
                  * @default en
@@ -1256,10 +1317,37 @@ export interface components {
             /** Format: uri */
             server: string;
         };
+        /** @enum {string} */
+        McpScope: "observe" | "input" | "power" | "media" | "host_private";
+        McpKeyEdit: {
+            name: string;
+            scopes: components["schemas"]["McpScope"][];
+        };
+        McpKey: {
+            id: string;
+            name: string;
+            scopes: components["schemas"]["McpScope"][];
+            /** @description Unix milliseconds */
+            created: number;
+            /** @description Unix milliseconds */
+            last_used: number | null;
+            /** @description Last 4 characters of the key */
+            hint: string;
+        };
         McpState: {
             enabled: boolean;
-            /** @description Last 4 characters of the key */
-            key_hint: string | null;
+            keys: components["schemas"]["McpKey"][];
+        };
+        McpAuditEntry: {
+            ts: number;
+            key_name: string | null;
+            tool: string;
+            args: {
+                [key: string]: unknown;
+            };
+            result: string;
+            elapsed_ms: number;
+            count: number;
         };
     };
     responses: never;
@@ -3978,7 +4066,173 @@ export interface operations {
             };
         };
     };
-    regenerateMcpKey: {
+    createMcpKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpKeyEdit"];
+            };
+        };
+        responses: {
+            /** @description New MCP key */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        key: string;
+                        entry: components["schemas"]["McpKey"];
+                    };
+                };
+            };
+            /** @description Invalid request body or parameters */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not logged in or session expired (error=unauthenticated) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Missing permission or role (error=forbidden) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Eight keys already exist */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deleteMcpKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Done, no body */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not logged in or session expired (error=unauthenticated) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Missing permission or role (error=forbidden) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Unknown key */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    editMcpKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpKeyEdit"];
+            };
+        };
+        responses: {
+            /** @description Updated key metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpKey"];
+                };
+            };
+            /** @description Invalid request body or parameters */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not logged in or session expired (error=unauthenticated) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Missing permission or role (error=forbidden) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Unknown key */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    stopMcp: {
         parameters: {
             query?: never;
             header?: never;
@@ -3987,14 +4241,52 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description New key */
+            /** @description Done, no body */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not logged in or session expired (error=unauthenticated) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Missing permission or role (error=forbidden) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getMcpAudit: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Newest records first */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": {
-                        key: string;
+                        entries: components["schemas"]["McpAuditEntry"][];
                     };
                 };
             };
@@ -4015,6 +4307,89 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Error"];
                 };
+            };
+        };
+    };
+    mcpNoSse: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Server does not provide SSE */
+            405: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    mcpRpc: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description JSON-RPC response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Notification accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid request body or parameters */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not logged in or session expired (error=unauthenticated) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Missing permission or role (error=forbidden) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Request exceeds 1 MiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -4155,42 +4530,6 @@ export interface operations {
             };
             /** @description Not logged in or session expired (error=unauthenticated) */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    revokeMcpKey: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Done, no body */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Not logged in or session expired (error=unauthenticated) */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Missing permission or role (error=forbidden) */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };

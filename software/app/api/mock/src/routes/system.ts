@@ -27,6 +27,17 @@ export function deviceInfo(state: State) {
   };
 }
 
+const digest = (key: string) => createHash('sha256').update(key).digest('hex');
+function mcpLog(state: State, tool: string, key_name: string | null = null) {
+  state.mcpAudit.unshift({ ts: state.now(), key_name, tool, args: {}, result: 'ok', elapsed_ms: 0, count: 1 });
+}
+export function stopMcp(state: State) {
+  state.mcpEnabled = false;
+  state.mcpActivity = { active: false, key_name: null, tool: null };
+  mcpLog(state, 'stop');
+  state.events.emit('status_changed');
+}
+
 export function registerSystem(app: FastifyInstance, state: State) {
   app.addContentTypeParser(['image/png', 'image/svg+xml'], { parseAs: 'buffer', bodyLimit: 4 * LOGO_MAX }, (_req, body, done) => done(null, body));
 
@@ -83,33 +94,67 @@ export function registerSystem(app: FastifyInstance, state: State) {
   });
 
   const mcp = requirePerm(state, 'mcp');
-  const mcpState = () => ({ enabled: state.mcpEnabled, key_hint: state.mcpKey ? state.mcpKey.slice(-4) : null });
+  const publicKey = ({ hash: _hash, ...key }: State['mcpKeys'] extends Map<string, infer Entry> ? Entry : never) => key;
+  const mcpState = () => ({ enabled: state.mcpEnabled, keys: [...state.mcpKeys.values()].map(publicKey) });
   app.get('/api/mcp', { preHandler: mcp }, async () => mcpState());
   app.put('/api/mcp', { preHandler: [mcp, bodyGuard('putMcp')] }, async (req, reply) => {
     const { enabled } = req.body as { enabled: boolean };
-    if (enabled && !state.mcpKey) return sendError(reply, 409, 'no_key');
+    if (enabled && !state.mcpKeys.size) return sendError(reply, 409, 'no_key');
+    if (!enabled) {
+      state.mcpActivity = { active: false, key_name: null, tool: null };
+      state.events.emit('status_changed');
+    }
     state.mcpEnabled = enabled;
     return mcpState();
   });
-  app.post('/api/mcp/regenerate', { preHandler: mcp }, async () => {
-    state.mcpKey = randomBytes(24).toString('base64url');
-    state.mcpEnabled = true;
-    return { key: state.mcpKey };
+  app.post('/api/mcp/keys', { preHandler: [mcp, bodyGuard('createMcpKey')] }, async (req, reply) => {
+    if (state.mcpKeys.size >= 8) return sendError(reply, 409, 'key_limit');
+    const { name, scopes } = req.body as { name: string; scopes: string[] };
+    const key = 'kvp_' + randomBytes(32).toString('base64url');
+    const entry = { id: randomUUID(), name, scopes, created: state.now(), last_used: null, hint: key.slice(-4), hash: digest(key) };
+    state.mcpKeys.set(entry.id, entry);
+    mcpLog(state, 'key_create', name);
+    return reply.code(201).send({ key, entry: publicKey(entry) });
   });
-  app.delete('/api/mcp/key', { preHandler: mcp }, async (_req, reply) => {
-    state.mcpKey = null;
-    state.mcpEnabled = false;
+  app.patch('/api/mcp/keys/:id', { preHandler: [mcp, bodyGuard('editMcpKey')] }, async (req, reply) => {
+    const item = state.mcpKeys.get((req.params as { id: string }).id);
+    if (!item) return sendError(reply, 404, 'not_found');
+    const { name, scopes } = req.body as { name: string; scopes: string[] };
+    Object.assign(item, { name, scopes });
+    mcpLog(state, 'key_edit', name);
+    return publicKey(item);
+  });
+  app.delete('/api/mcp/keys/:id', { preHandler: mcp }, async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const key = state.mcpKeys.get(id);
+    if (!key) return sendError(reply, 404, 'not_found');
+    state.mcpKeys.delete(id);
+    if (!state.mcpKeys.size) state.mcpEnabled = false;
+    mcpLog(state, 'key_delete', key.name);
     return reply.code(204).send();
   });
-  const bearer = async (req: FastifyRequest, reply: FastifyReply) => {
+  app.post('/api/mcp/stop', { preHandler: requirePerm(state, 'console') }, async (req, reply) => {
+    if (req.account?.view_only) return sendError(reply, 403, 'forbidden');
+    stopMcp(state);
+    return reply.code(204).send();
+  });
+  app.get('/api/mcp/audit', { preHandler: mcp }, async (req) => {
+    const limit = Number((req.query as { limit?: string }).limit ?? 100);
+    return { entries: state.mcpAudit.slice(0, Math.max(1, Math.min(1000, limit || 100))) };
+  });
+  const bearer = (scope: string) => async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!state.mcpEnabled || !state.config.kvm.enabled) return sendError(reply, 403, 'mcp_disabled');
     const auth = req.headers.authorization ?? '';
-    if (!state.mcpEnabled || !state.mcpKey || auth !== `Bearer ${state.mcpKey}`) return sendError(reply, 401, 'unauthenticated');
+    const key = auth.startsWith('Bearer ') && [...state.mcpKeys.values()].find((key) => key.hash === digest(auth.slice(7)));
+    if (!key) return sendError(reply, 401, 'unauthenticated');
+    if (!key.scopes.includes(scope)) return sendError(reply, 403, 'forbidden_scope');
+    key.last_used = state.now();
   };
-  app.get('/api/mcp/v1/screenshot', { preHandler: bearer }, async (_req, reply) => {
+  app.get('/api/mcp/v1/screenshot', { preHandler: bearer('observe') }, async (_req, reply) => {
     if (!state.hdmi.signal) return sendError(reply, 503, 'no_signal');
     return reply.type('image/jpeg').send(mockFrame(0));
   });
-  app.post('/api/mcp/v1/hid', { preHandler: bearer }, async (req, reply) => {
+  app.post('/api/mcp/v1/hid', { preHandler: bearer('input') }, async (req, reply) => {
     const m = req.body as { t?: string };
     if (!validInput(m) || m.t === 'ping') return sendError(reply, 400, 'bad_message');
     return reply.code(204).send();

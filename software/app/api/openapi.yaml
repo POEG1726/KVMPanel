@@ -235,7 +235,7 @@ paths:
         '401': *unauthenticated
     patch:
       operationId: patchConfig
-      summary: Partial update. Objects merge recursively; null sets a nullable field to null — except inside panel.thresholds, where null deletes the key. Each top-level section needs its permission (panel/function_key→panel, usb→usb, video/hid→console, serial→terminal, web/device/kvm→device).
+      summary: Partial update. Objects merge recursively; null sets a nullable field to null — except inside panel.thresholds, where null deletes the key. Each top-level section needs its permission (panel/function_key→panel, usb→usb, video/hid→console, serial→terminal, web/device/kvm/host→device).
       requestBody:
         required: true
         content:
@@ -1084,23 +1084,121 @@ paths:
               schema: { $ref: '#/components/schemas/McpState' }
         '401': *unauthenticated
         '403': *forbidden
-  /api/mcp/regenerate:
+  /api/mcp/keys:
     post:
-      operationId: regenerateMcpKey
-      summary: Create a new key (the old one stops working) and enable MCP. This is the only response that contains the full key.
+      operationId: createMcpKey
+      summary: Create an MCP key and return the secret once
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/McpKeyEdit' }
       responses:
-        '200':
-          description: New key
+        '201':
+          description: New MCP key
           content:
             application/json:
               schema:
                 type: object
-                required: [key]
-                additionalProperties: false
+                required: [key, entry]
                 properties:
-                  key: { type: string, minLength: 32 }
+                  key: { type: string, pattern: '^kvp_[A-Za-z0-9_-]{43}$' }
+                  entry: { $ref: '#/components/schemas/McpKey' }
+        '400': *badRequest
         '401': *unauthenticated
         '403': *forbidden
+        '409':
+          description: Eight keys already exist
+  /api/mcp/keys/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    patch:
+      operationId: editMcpKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: [{ $ref: '#/components/schemas/McpKeyEdit' }]
+      responses:
+        '200':
+          description: Updated key metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/McpKey' }
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+        '404':
+          description: Unknown key
+    delete:
+      operationId: deleteMcpKey
+      responses:
+        '204': *noContent
+        '401': *unauthenticated
+        '403': *forbidden
+        '404':
+          description: Unknown key
+  /api/mcp/stop:
+    post:
+      operationId: stopMcp
+      summary: Stop MCP through a writable console session
+      responses:
+        '204': *noContent
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/mcp/audit:
+    get:
+      operationId: getMcpAudit
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+      responses:
+        '200':
+          description: Newest records first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries]
+                properties:
+                  entries:
+                    type: array
+                    items: { $ref: '#/components/schemas/McpAuditEntry' }
+        '401': *unauthenticated
+        '403': *forbidden
+  /api/mcp/v1:
+    post:
+      operationId: mcpRpc
+      summary: Stateless Streamable HTTP JSON-RPC; see schema/mcp.schema.json
+      security: [{ mcpKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: JSON-RPC response
+          content:
+            application/json:
+              schema: { type: object }
+        '202':
+          description: Notification accepted
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
+        '413':
+          description: Request exceeds 1 MiB
+    get:
+      operationId: mcpNoSse
+      responses:
+        '405':
+          description: Server does not provide SSE
   /api/about:
     get:
       operationId: getAbout
@@ -1172,14 +1270,6 @@ paths:
                   usb: { $ref: '#/components/schemas/Config/properties/usb' }
                   pending: { type: boolean }
         '401': *unauthenticated
-  /api/mcp/key:
-    delete:
-      operationId: revokeMcpKey
-      summary: Revoke the MCP key; MCP stays disabled until a new key is generated (mcp permission)
-      responses:
-        '204': *noContent
-        '401': *unauthenticated
-        '403': *forbidden
   /api/mcp/v1/screenshot:
     get:
       operationId: mcpScreenshot
@@ -1320,7 +1410,7 @@ components:
         user: { $ref: '#/components/schemas/User' }
     FunctionKeyAction:
       type: string
-      enum: [none, toggle_settings, toggle_screen, cycle_brightness, pause_kvm]
+      enum: [none, toggle_settings, toggle_screen, cycle_brightness, pause_kvm, stop_mcp]
     UsbBudget:
       type: object
       required: [in, out, fits, in_missing, out_missing]
@@ -1333,9 +1423,18 @@ components:
         out_missing: { type: integer, minimum: 0 }
     Config:
       type: object
-      required: [panel, function_key, usb, web, video, hid, serial, device, kvm]
+      required: [panel, function_key, usb, web, video, hid, serial, device, kvm, host]
       additionalProperties: false
       properties:
+        host:
+          type: object
+          required: [setup_key, boot_menu_key, tap_interval_ms, tap_duration_s]
+          additionalProperties: false
+          properties:
+            setup_key: { type: [string, 'null'], minLength: 1, maxLength: 64, default: Delete }
+            boot_menu_key: { type: [string, 'null'], minLength: 1, maxLength: 64, default: null }
+            tap_interval_ms: { type: integer, minimum: 50, maximum: 1000, default: 200 }
+            tap_duration_s: { type: integer, minimum: 3, maximum: 60, default: 15 }
         panel:
           type: object
           required: [language, orientation, auto_brightness, brightness, offline_sleep_min, thresholds, hidden_metrics]
@@ -1596,10 +1695,51 @@ components:
       properties:
         channel: { type: string, enum: [stable, preview] }
         server: { type: string, format: uri, pattern: "^https?://" }
+    McpScope:
+      type: string
+      enum: [observe, input, power, media, host_private]
+    McpKeyEdit:
+      type: object
+      additionalProperties: false
+      required: [name, scopes]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 64 }
+        scopes:
+          type: array
+          uniqueItems: true
+          maxItems: 5
+          items: { $ref: '#/components/schemas/McpScope' }
+    McpKey:
+      type: object
+      additionalProperties: false
+      required: [id, name, scopes, created, last_used, hint]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        scopes:
+          type: array
+          items: { $ref: '#/components/schemas/McpScope' }
+        created: { type: integer, description: Unix milliseconds }
+        last_used: { type: [integer, 'null'], description: Unix milliseconds }
+        hint: { type: string, description: Last 4 characters of the key }
     McpState:
       type: object
-      required: [enabled, key_hint]
+      required: [enabled, keys]
       additionalProperties: false
       properties:
         enabled: { type: boolean }
-        key_hint: { type: [string, 'null'], description: Last 4 characters of the key }
+        keys:
+          type: array
+          maxItems: 8
+          items: { $ref: '#/components/schemas/McpKey' }
+    McpAuditEntry:
+      type: object
+      required: [ts, key_name, tool, args, result, elapsed_ms, count]
+      properties:
+        ts: { type: integer }
+        key_name: { type: [string, 'null'] }
+        tool: { type: string }
+        args: { type: object, additionalProperties: true }
+        result: { type: string }
+        elapsed_ms: { type: integer }
+        count: { type: integer }

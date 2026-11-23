@@ -1,0 +1,2019 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KVMPanel MCP tool schemas",
+  "tools": {
+    "screenshot": {
+      "description": "Capture a JPEG of the current HDMI screen.",
+      "scope": "observe",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "y": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "w": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 1
+              },
+              "h": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 1
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "w",
+              "h"
+            ],
+            "additionalProperties": false
+          },
+          "max_width": {
+            "type": "integer",
+            "minimum": 320,
+            "maximum": 65535,
+            "default": 1280
+          },
+          "quality": {
+            "type": "integer",
+            "minimum": 40,
+            "maximum": 90,
+            "default": 70
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "width": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "height": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "source_width": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "source_height": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "region": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "y": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "w": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1
+                  },
+                  "h": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "w",
+                  "h"
+                ],
+                "additionalProperties": false
+              },
+              "size": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "width",
+              "height",
+              "source_width",
+              "source_height",
+              "region",
+              "size"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      }
+    },
+    "screen_wait": {
+      "description": "Wait for a screen change or for the screen to stabilize.",
+      "scope": "observe",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "until": {
+            "type": "string",
+            "enum": [
+              "changed",
+              "stable"
+            ]
+          },
+          "region": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "y": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "w": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 1
+              },
+              "h": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 1
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "w",
+              "h"
+            ],
+            "additionalProperties": false
+          },
+          "stable_ms": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120000,
+            "default": 1500
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120000,
+            "default": 30000
+          },
+          "threshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.005
+          }
+        },
+        "required": [
+          "until"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "met": {
+                "type": "boolean"
+              },
+              "waited_ms": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "met",
+              "waited_ms"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      }
+    },
+    "screen_history": {
+      "description": "Read recent HDMI frames and their timestamps.",
+      "scope": "observe",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30,
+            "default": 30
+          },
+          "max_frames": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "default": 8
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "frames": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "ts": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "ts"
+                  ],
+                  "additionalProperties": true
+                },
+                "maxItems": 8
+              }
+            },
+            "required": [
+              "frames"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      }
+    },
+    "host_status": {
+      "description": "Inspect power, screen, USB, telemetry and remote-control status.",
+      "scope": "observe",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "power": {
+                "type": "object"
+              },
+              "video": {
+                "type": "object"
+              },
+              "keyboard": {
+                "type": "object"
+              },
+              "usb": {
+                "type": "object"
+              },
+              "telemetry": {
+                "type": "object"
+              },
+              "host_agent": {
+                "type": "object"
+              },
+              "media": {
+                "type": "object"
+              },
+              "control": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "power",
+              "video",
+              "keyboard",
+              "usb",
+              "telemetry",
+              "host_agent",
+              "media",
+              "control"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      }
+    },
+    "telemetry_read": {
+      "description": "Read current PC metrics.",
+      "scope": "observe",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "maxItems": 768
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "maxItems": 16
+          }
+        },
+        "required": [],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "not": {
+              "required": [
+                "ids",
+                "groups"
+              ]
+            }
+          }
+        ]
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "metrics": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "group": {
+                      "type": "string"
+                    },
+                    "warn": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label",
+                    "unit",
+                    "value",
+                    "group",
+                    "warn"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "metrics"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      }
+    },
+    "telemetry_watch": {
+      "description": "Summarize metrics received during a timed interval.",
+      "scope": "observe",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "maxItems": 768
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "maxItems": 16
+          }
+        },
+        "required": [
+          "seconds"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "not": {
+              "required": [
+                "ids",
+                "groups"
+              ]
+            }
+          }
+        ]
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "metrics": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "min": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "max": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "avg": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "last": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "samples": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "nulls": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "over_warn": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "min",
+                    "max",
+                    "avg",
+                    "last",
+                    "samples",
+                    "nulls",
+                    "over_warn"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "metrics"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      }
+    },
+    "telemetry_catalogue": {
+      "description": "List known metrics and their units and ranges.",
+      "scope": "observe",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "metrics": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "unit": {
+                      "type": "string"
+                    },
+                    "group": {
+                      "type": "string"
+                    },
+                    "min": {
+                      "type": "number"
+                    },
+                    "max": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label",
+                    "unit",
+                    "group",
+                    "min",
+                    "max"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "metrics"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      }
+    },
+    "host_info": {
+      "description": "Inspect the Windows foreground window, displays, cursor and local session.",
+      "scope": "observe",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "foreground": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "cursor": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "displays": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "session": {
+                "type": "string",
+                "enum": [
+                  "unlocked",
+                  "locked",
+                  "secure_desktop",
+                  "screensaver"
+                ]
+              },
+              "truncated": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "foreground",
+              "cursor",
+              "displays",
+              "session"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      }
+    },
+    "type_text": {
+      "description": "Type text using the configured keyboard layout.",
+      "scope": "input",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 16384
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            },
+            "required": [
+              "ok"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    "press_keys": {
+      "description": "Press one to eight KeyboardEvent.code keys with at most six non-modifiers.",
+      "scope": "input",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "maxItems": 8,
+            "uniqueItems": true
+          },
+          "hold_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2000,
+            "default": 50
+          }
+        },
+        "required": [
+          "keys"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            },
+            "required": [
+              "ok"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    "move_mouse": {
+      "description": "Move to absolute coordinates or by relative pixels.",
+      "scope": "input",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "absolute",
+              "relative"
+            ],
+            "default": "absolute"
+          },
+          "x": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "y": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "dx": {
+            "type": "integer",
+            "minimum": -65535,
+            "maximum": 65535
+          },
+          "dy": {
+            "type": "integer",
+            "minimum": -65535,
+            "maximum": 65535
+          }
+        },
+        "required": [],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "mode"
+              ],
+              "properties": {
+                "mode": {
+                  "const": "relative"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "dx",
+                "dy"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "x"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "y"
+                    ]
+                  }
+                ]
+              }
+            },
+            "else": {
+              "required": [
+                "x",
+                "y"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "dx"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "dy"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            },
+            "required": [
+              "ok"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    "click_mouse": {
+      "description": "Click the selected mouse button, optionally after moving.",
+      "scope": "input",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "button": {
+            "type": "string",
+            "enum": [
+              "left",
+              "right",
+              "middle"
+            ]
+          },
+          "clicks": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "default": 1
+          },
+          "x": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "y": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "required": [
+          "button"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "x"
+              ]
+            },
+            "then": {
+              "required": [
+                "y"
+              ]
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "y"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            },
+            "required": [
+              "ok"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    "drag_mouse": {
+      "description": "Drag a button between two absolute points.",
+      "scope": "input",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "y": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            },
+            "required": [
+              "x",
+              "y"
+            ],
+            "additionalProperties": false
+          },
+          "button": {
+            "type": "string",
+            "enum": [
+              "left",
+              "right",
+              "middle"
+            ]
+          },
+          "steps": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 20
+          },
+          "duration_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5000,
+            "default": 300
+          },
+          "from": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "y": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            },
+            "required": [
+              "x",
+              "y"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "button"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            },
+            "required": [
+              "ok"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    "scroll_mouse": {
+      "description": "Scroll a signed number of notches; positive scrolls down.",
+      "scope": "input",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dy": {
+            "type": "integer",
+            "minimum": -65535,
+            "maximum": 65535
+          },
+          "x": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "y": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "required": [
+          "dy"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "x"
+              ]
+            },
+            "then": {
+              "required": [
+                "y"
+              ]
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "y"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            },
+            "required": [
+              "ok"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    "power": {
+      "description": "Operate the physical power or reset button.",
+      "scope": "power",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "on",
+              "shutdown",
+              "force_off",
+              "reset",
+              "cycle",
+              "press"
+            ]
+          },
+          "confirm_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "power": {
+                "type": "string",
+                "enum": [
+                  "on",
+                  "off",
+                  "unknown"
+                ]
+              }
+            },
+            "required": [
+              "power"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "needs_confirm": {
+                "const": true
+              },
+              "confirm_token": {
+                "type": "string"
+              },
+              "expires_in": {
+                "const": 30
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "needs_confirm",
+              "confirm_token",
+              "expires_in",
+              "summary"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    "boot_watch": {
+      "description": "Observe boot milestones, optionally starting or retrying the PC.",
+      "scope": "power",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "start": {
+            "type": "string",
+            "enum": [
+              "none",
+              "on",
+              "reset",
+              "cycle"
+            ],
+            "default": "none"
+          },
+          "timeout_s": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120,
+            "default": 120
+          },
+          "until": {
+            "type": "string",
+            "enum": [
+              "signal",
+              "stable",
+              "os"
+            ],
+            "default": "os"
+          },
+          "retries": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3,
+            "default": 0
+          },
+          "confirm_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "start"
+              ],
+              "properties": {
+                "start": {
+                  "enum": [
+                    "on",
+                    "reset",
+                    "cycle"
+                  ]
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "retries": {
+                  "const": 0
+                }
+              }
+            }
+          }
+        ]
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "string",
+                "enum": [
+                  "ok",
+                  "no_power",
+                  "no_signal",
+                  "stuck",
+                  "os_timeout"
+                ]
+              },
+              "rounds": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "screenshot": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "result",
+              "rounds",
+              "screenshot"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "needs_confirm": {
+                "const": true
+              },
+              "confirm_token": {
+                "type": "string"
+              },
+              "expires_in": {
+                "const": 30
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "needs_confirm",
+              "confirm_token",
+              "expires_in",
+              "summary"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    "enter_firmware": {
+      "description": "Start the PC and repeatedly tap the configured firmware key.",
+      "scope": "power",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "enum": [
+              "setup",
+              "boot_menu"
+            ]
+          },
+          "start": {
+            "type": "string",
+            "enum": [
+              "on",
+              "reset",
+              "cycle"
+            ]
+          },
+          "confirm_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "target",
+          "start"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "screenshot": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "screenshot"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "needs_confirm": {
+                "const": true
+              },
+              "confirm_token": {
+                "type": "string"
+              },
+              "expires_in": {
+                "const": 30
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "needs_confirm",
+              "confirm_token",
+              "expires_in",
+              "summary"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    "wake_on_lan": {
+      "description": "Send a Wake-on-LAN packet to a MAC or a saved device.",
+      "scope": "power",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "mac": {
+            "type": "string",
+            "pattern": "^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "oneOf": [
+              {
+                "required": [
+                  "mac"
+                ]
+              },
+              {
+                "required": [
+                  "name"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            },
+            "required": [
+              "ok"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    "virtual_media": {
+      "description": "List, inspect, attach, or remove SD-based virtual media.",
+      "scope": "media",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "list",
+              "status",
+              "mount",
+              "eject"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "cdrom",
+              "disk"
+            ]
+          },
+          "readonly": {
+            "type": "boolean"
+          },
+          "confirm_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "mount"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "path",
+                "mode"
+              ]
+            },
+            "else": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "path"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "mode"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "readonly"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "needs_confirm": {
+                "const": true
+              },
+              "confirm_token": {
+                "type": "string"
+              },
+              "expires_in": {
+                "const": 30
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "needs_confirm",
+              "confirm_token",
+              "expires_in",
+              "summary"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    "host_drop_file": {
+      "description": "Write a small file into the shared disk.",
+      "scope": "media",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 511,
+            "pattern": "^[^/\\\\]+(?:/[^/\\\\]+)?$"
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 699052
+          },
+          "encoding": {
+            "type": "string",
+            "enum": [
+              "utf8",
+              "base64"
+            ],
+            "default": "utf8"
+          },
+          "export": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "required": [
+          "name",
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "exported_to_host": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "path",
+              "exported_to_host"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    "share": {
+      "description": "Inspect, export, or reclaim the shared disk.",
+      "scope": "media",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "status",
+              "export",
+              "reclaim"
+            ]
+          },
+          "confirm_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "exported_to_host": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "exported_to_host"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "needs_confirm": {
+                "const": true
+              },
+              "confirm_token": {
+                "type": "string"
+              },
+              "expires_in": {
+                "const": 30
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "needs_confirm",
+              "confirm_token",
+              "expires_in",
+              "summary"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      }
+    },
+    "host_clipboard": {
+      "description": "Read text from the permitted, unlocked local Windows session.",
+      "scope": "host_private",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "truncated": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "text",
+              "truncated"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false
+      }
+    }
+  }
+}

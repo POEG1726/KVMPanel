@@ -25,6 +25,7 @@ export function DevicePage() {
   const info = useQuery({ queryKey: ['device'], queryFn: () => unwrap(api.GET('/api/device')) });
   const { value: device, patch } = useConfigSection('device');
   const { value: kvm, patch: patchKvm } = useConfigSection('kvm');
+  const { value: host, patch: patchHost } = useConfigSection('host');
   const { error, run } = useRun();
   const [pending, setPending] = useState<Action | 'kvm_off' | null>(null);
 
@@ -72,6 +73,26 @@ export function DevicePage() {
           </Row>
           <Row label={t('settings.device.watchdog')}>
             <Switch label={t('settings.device.watchdog')} checked={device.watchdog} onChange={(watchdog) => void patch({ watchdog })} />
+          </Row>
+        </Group>
+      )}
+      {host && (
+        <Group title={t('settings.host.title')}>
+          <Row label={t('settings.host.setup')} hint={t('settings.host.code')}>
+            <TextField label={t('settings.host.setup')} value={host.setup_key ?? ''} onCommit={(key) =>
+              void run(() => patchHost({ setup_key: key.trim() || null }))} />
+          </Row>
+          <Row label={t('settings.host.bootMenu')} hint={t('settings.host.code')}>
+            <TextField label={t('settings.host.bootMenu')} value={host.boot_menu_key ?? ''} onCommit={(key) =>
+              void run(() => patchHost({ boot_menu_key: key.trim() || null }))} />
+          </Row>
+          <Row label={t('settings.host.interval')}>
+            <TextField type="number" min={50} max={1000} label={t('settings.host.interval')} value={String(host.tap_interval_ms)}
+              onCommit={(value) => void run(() => patchHost({ tap_interval_ms: Number(value) }))} />
+          </Row>
+          <Row label={t('settings.host.duration')}>
+            <TextField type="number" min={3} max={60} label={t('settings.host.duration')} value={String(host.tap_duration_s)}
+              onCommit={(value) => void run(() => patchHost({ tap_duration_s: Number(value) }))} />
           </Row>
         </Group>
       )}

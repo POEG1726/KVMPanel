@@ -18,6 +18,8 @@ cmake --build "$work/build/dashboard-board"
 
 板端默认打开 `/dev/fb0` 与 `/run/kvmd/panel.sock`。`KVMPANEL_FRAMEBUFFER` 和 `KVMPANEL_PANEL_SOCKET` 可覆盖路径，`KVMPANEL_TOUCH` 指向实际触摸输入设备。LVGL 使用单个 24 扫描行绘制缓冲，帧缓冲由内核提供。可用 `KVMPANEL_HEADLESS=1` 在无需 framebuffer 的环境运行模拟。 [LVGL 源码](https://github.com/lvgl/lvgl)
 
+MCP 正在执行输入、电源或介质操作时，顶部横幅显示密钥名称和停止按钮。按钮经本地 panel socket 发送 `mcp_stop`，收到成功回复后隐藏横幅，失败时可重试。原生和 ARM 静态构建通过，无屏模拟检查了横幅、息屏遮罩、停止消息和失败后的重试。常用中文由 LVGL 自带的思源黑体提供，横幅专用字形来自 Noto Sans SC 2.004 子集。 [字形源码](https://github.com/notofonts/noto-cjk/tree/main/Sans/SubsetOTF/SC) · [字体许可证](lvgl/NotoSans-LICENSE)
+
 Debian 镜像可带上 Dashboard 服务，详情见 [镜像构建](../../os/debian/README.md)。原生及 ARM/QEMU 已验证 Unix socket 接收、动态指标、离线状态和四个屏幕方向。实板触摸、色彩、渲染速率及内存峰值待测。
 
 原型在 `feat/panel-proto`、`feat/panel-slint` 和 `feat/panel-qt`。板端采用按组分页的指标列表。原型动画、曲线排版和横屏方案 B 留在对应分支。 [软件进度](../../../docs/software-progress.md)

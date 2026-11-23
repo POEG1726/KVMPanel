@@ -2,7 +2,7 @@ import { createServer, type Server, type Socket } from 'node:net';
 import { messageValidator } from '../contract.js';
 import { applyConfigPatch } from '../routes/config.js';
 import { setPcPower } from '../routes/power.js';
-import { deviceInfo } from '../routes/system.js';
+import { deviceInfo, stopMcp } from '../routes/system.js';
 import type { State } from '../state.js';
 import { snapshot } from './metrics.js';
 
@@ -92,7 +92,7 @@ export function startPanelServer(state: State, listen: Listen): Promise<Server> 
     broadcast({ t: 'kvm_restarting' });
     setImmediate(() => clients.forEach((s) => s.end()));
   };
-  const onStatus = () => broadcast(statusMessage(state));
+  const onStatus = () => { broadcast(statusMessage(state)); broadcast({ t: 'mcp', ...state.mcpActivity }); };
   state.events.on('config_changed', onConfig);
   state.events.on('kvm_restarting', onRestart);
   state.events.on('console_sessions', onStatus);
@@ -103,6 +103,7 @@ export function startPanelServer(state: State, listen: Listen): Promise<Server> 
     send(sock, { t: 'hello', version: state.version });
     send(sock, { t: 'config', config: state.config });
     send(sock, statusMessage(state));
+    send(sock, { t: 'mcp', ...state.mcpActivity });
     send(sock, { t: 'pc', connected: state.pc.connected, last_seen_ts: state.pc.last_seen_ts });
     send(sock, boardMessage(state, tick));
     let buf = '';
@@ -130,6 +131,9 @@ export function startPanelServer(state: State, listen: Listen): Promise<Server> 
     }
     const reply = (extra: Record<string, unknown>) => send(sock, { t: 'result', id: m.id, ...extra });
     switch (m.t) {
+      case 'mcp_stop':
+        stopMcp(state);
+        return reply({ ok: true });
       case 'get_config':
         return reply({ ok: true, data: state.config });
       case 'metric_catalogue':

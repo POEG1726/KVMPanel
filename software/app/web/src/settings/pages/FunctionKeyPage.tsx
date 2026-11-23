@@ -5,7 +5,7 @@ import { Group, Row } from '../fields';
 import { useConfigSection } from '../useConfigSection';
 
 type Action = components['schemas']['FunctionKeyAction'];
-const ACTIONS: readonly Action[] = ['none', 'toggle_settings', 'toggle_screen', 'cycle_brightness', 'pause_kvm'];
+const ACTIONS: readonly Action[] = ['none', 'toggle_settings', 'toggle_screen', 'cycle_brightness', 'pause_kvm', 'stop_mcp'];
 
 /** `config.function_key`: what a short and a long press of the panel's key do. */
 export function FunctionKeyPage() {

@@ -115,3 +115,7 @@
 .progress { width: 220px; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
 .progress i { display: block; height: 100%; background: var(--ac); }
 .secret { padding: 8px; border: 1px solid var(--warn); border-radius: 6px; margin: 8px 0; }
+.mcpForm { padding: 12px; border: 1px solid var(--ln); border-radius: 6px; }
+.mcpForm > label { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.mcpForm fieldset { border: 1px solid var(--ln); }
+.snippet { padding: 8px; border: 1px solid var(--ln); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }

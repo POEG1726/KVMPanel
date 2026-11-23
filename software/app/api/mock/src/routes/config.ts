@@ -8,7 +8,7 @@ import { hasPerm, requirePerm, sendError } from './auth.js';
 /** Permission each top-level config section needs to be changed. */
 export const SECTION_PERM: Record<string, Permission> = {
   panel: 'panel', function_key: 'panel', usb: 'usb', video: 'console', hid: 'console',
-  serial: 'terminal', web: 'device', device: 'device', kvm: 'device',
+  serial: 'terminal', web: 'device', device: 'device', kvm: 'device', host: 'device',
 };
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);

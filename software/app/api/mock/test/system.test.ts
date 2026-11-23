@@ -96,15 +96,15 @@ describe('updates, MCP and branding', () => {
     check('applyUpdate', apply);
   });
 
-  it('shows only the last 4 characters of the MCP key after regenerating', async () => {
+  it('shows only the last 4 characters of the MCP key after creating', async () => {
     app = await buildServer();
     const cookie = await login(app);
-    const regen = await app.inject({ method: 'POST', url: '/api/mcp/regenerate', headers: { cookie } });
-    check('regenerateMcpKey', regen);
+    const regen = await app.inject({ method: 'POST', url: '/api/mcp/keys', headers: { cookie }, payload: { name: 'Studio', scopes: ['observe'] } });
+    check('createMcpKey', regen);
     const key: string = regen.json().key;
     expect(key.length).toBeGreaterThanOrEqual(32);
     const mcp = await app.inject({ method: 'GET', url: '/api/mcp', headers: { cookie } });
-    expect(mcp.json().key_hint).toBe(key.slice(-4));
+    expect(mcp.json().keys[0].hint).toBe(key.slice(-4));
     expect(JSON.stringify(mcp.json())).not.toContain(key);
   });
 

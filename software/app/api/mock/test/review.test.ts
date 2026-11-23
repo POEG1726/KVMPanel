@@ -168,7 +168,8 @@ describe('I8 contract coverage', () => {
   it('serves MCP clients with a bearer key and lets admins disable MCP', async () => {
     app = await buildServer();
     const cookie = await login(app);
-    const key = (await app.inject({ method: 'POST', url: '/api/mcp/regenerate', headers: { cookie } })).json().key;
+    const key = (await app.inject({ method: 'POST', url: '/api/mcp/keys', headers: { cookie }, payload: { name: 'Review', scopes: ['observe', 'input'] } })).json().key;
+    await app.inject({ method: 'PUT', url: '/api/mcp', headers: { cookie }, payload: { enabled: true } });
     const shot = await app.inject({ method: 'GET', url: '/api/mcp/v1/screenshot', headers: { authorization: `Bearer ${key}` } });
     expect(shot.statusCode).toBe(200);
     expect(shot.headers['content-type']).toBe('image/jpeg');
@@ -179,7 +180,7 @@ describe('I8 contract coverage', () => {
     const off = await app.inject({ method: 'PUT', url: '/api/mcp', headers: { cookie }, payload: { enabled: false } });
     expect(off.statusCode).toBe(200);
     check('putMcp', off);
-    expect((await app.inject({ method: 'GET', url: '/api/mcp/v1/screenshot', headers: { authorization: `Bearer ${key}` } })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/api/mcp/v1/screenshot', headers: { authorization: `Bearer ${key}` } })).statusCode).toBe(403);
   });
 
   it('sets the update channel/server and polls an update job', async () => {

@@ -447,42 +447,39 @@ describe('Update job progress', () => {
 });
 
 describe('MCP page', () => {
-  it('waits for the current key state and allows a single confirmed rotation at a time', async () => {
-    const old = await (await jar.fetch(new Request(mock.url + '/api/mcp/regenerate', { method: 'POST' }))).json();
-    let read!: () => void;
-    let rotate!: () => void;
-    const readGate = new Promise<void>((resolve) => { read = resolve; });
-    const rotateGate = new Promise<void>((resolve) => { rotate = resolve; });
-    let posts = 0;
-    configureApi({ fetch: async (input, init) => {
-      const req = new Request(input, init);
-      const path = new URL(req.url).pathname;
-      if (path === '/api/mcp') await readGate;
-      if (path === '/api/mcp/regenerate') { posts++; await rotateGate; }
-      return jar.fetch(req);
-    } });
-    const qc = client();
-    mount('mcp', qc);
-    const button = await screen.findByRole('button', { name: t('settings.mcp.regenerate') });
-    expect(button).toBeDisabled();
-    fireEvent.click(button);
-    expect(posts).toBe(0);
-    read();
-    await screen.findByText(t('settings.mcp.keyHint', { hint: old.key.slice(-4) }));
-    fireEvent.click(button);
-    const dlg = await screen.findByRole('dialog', { name: t('settings.mcp.regenerateTitle') });
-    expect(posts).toBe(0);
-    fireEvent.click(within(dlg).getByRole('button', { name: t('settings.mcp.regenerate') }));
-    await waitFor(() => expect(posts).toBe(1));
-    expect(button).toBeDisabled();
-    cleanup();
-    mount('mcp', qc);
-    expect(await screen.findByRole('button', { name: t('settings.mcp.regenerate') })).toBeDisabled();
-    rotate();
-    await waitFor(() => expect(screen.getByRole('button', { name: t('settings.mcp.regenerate') })).toBeEnabled());
+  function createDraft(name: string) {
+    fireEvent.click(screen.getByRole('button', { name: t('settings.mcp.create') }));
+    fireEvent.change(screen.getByRole('textbox', { name: t('settings.mcp.name') }), { target: { value: name } });
+  }
+
+  it('creates a scoped key, edits it, and confirms deletion', async () => {
+    mount('mcp');
+    const button = await screen.findByRole('button', { name: t('settings.mcp.create') });
+    await waitFor(() => expect(button).toBeEnabled());
+    createDraft('observer');
+    fireEvent.click(screen.getByRole('checkbox', { name: t('settings.mcp.scope.input') }));
+    fireEvent.click(screen.getByRole('button', { name: t('settings.mcp.save') }));
+    await screen.findByTestId('mcp-key');
+    expect(requests.find((r) => r.key === 'POST /api/mcp/keys')?.body).toEqual({ name: 'observer', scopes: ['observe', 'input'] });
+    const edit = await screen.findByRole('button', { name: t('settings.mcp.edit') });
+    await waitFor(() => expect(edit).toBeEnabled());
+    fireEvent.click(edit);
+    fireEvent.change(screen.getByRole('textbox', { name: t('settings.mcp.name') }), { target: { value: 'renamed' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: t('settings.mcp.scope.input') }));
+    fireEvent.click(screen.getByRole('button', { name: t('settings.mcp.save') }));
+    const keys = screen.getByRole('heading', { name: t('settings.mcp.keys') }).closest('section')!;
+    await within(keys).findByText('renamed');
+    expect(requests.find((r) => r.key.startsWith('PATCH /api/mcp/keys/'))?.body).toEqual({ name: 'renamed', scopes: ['observe'] });
+    const remove = screen.getByRole('button', { name: t('settings.mcp.revoke') });
+    await waitFor(() => expect(remove).toBeEnabled());
+    fireEvent.click(remove);
+    const dialog = screen.getByRole('dialog', { name: t('settings.mcp.revokeTitle') });
+    fireEvent.click(within(dialog).getByRole('button', { name: t('settings.mcp.revoke') }));
+    await screen.findByText(t('settings.mcp.noKey'));
+    expect(screen.queryByTestId('mcp-key')).not.toBeInTheDocument();
   });
 
-  it('disables key rotation and displays the server error when the key state could not be read', async () => {
+  it('disables key creation and shows the server error when the key state could not be read', async () => {
     configureApi({ fetch: async (input, init) => {
       const req = new Request(input, init);
       return new URL(req.url).pathname === '/api/mcp'
@@ -490,39 +487,30 @@ describe('MCP page', () => {
     } });
     mount('mcp');
     expect(await screen.findByRole('alert')).toHaveTextContent(t('error.forbidden'));
-    expect(screen.getByRole('button', { name: t('settings.mcp.regenerate') })).toBeDisabled();
+    expect(screen.getByRole('button', { name: t('settings.mcp.create') })).toBeDisabled();
   });
 
-  it('selects and copies the revealed key on HTTP without the Clipboard API', async () => {
+  it('copies the one-time key on HTTP, then only shows its hint on a fresh mount', async () => {
     mount('mcp');
-    const button = await screen.findByRole('button', { name: t('settings.mcp.regenerate') });
+    const button = await screen.findByRole('button', { name: t('settings.mcp.create') });
     await waitFor(() => expect(button).toBeEnabled());
-    fireEvent.click(button);
-    const key = await screen.findByTestId('mcp-key');
+    createDraft('observer');
+    fireEvent.click(screen.getByRole('button', { name: t('settings.mcp.save') }));
+    const key = (await screen.findByTestId('mcp-key')).textContent!;
+    expect(key).toMatch(/^kvp_/);
     let copied = '';
     const copy = vi.fn(() => { copied = window.getSelection()?.toString() ?? ''; return true; });
     Object.defineProperty(document, 'execCommand', { configurable: true, value: copy });
     try {
       fireEvent.click(screen.getByRole('button', { name: t('settings.mcp.copy') }));
       await waitFor(() => expect(copy).toHaveBeenCalledWith('copy'));
-      expect(copied).toBe(key.textContent);
+      expect(copied).toBe(key);
     } finally {
       Reflect.deleteProperty(document, 'execCommand');
     }
-  });
-
-  it('shows the full key once after regenerating; a fresh mount only has the hint', async () => {
-    mount('mcp');
-    const button = await screen.findByRole('button', { name: t('settings.mcp.regenerate') });
-    await waitFor(() => expect(button).toBeEnabled());
-    fireEvent.click(button);
-    const key = (await screen.findByTestId('mcp-key')).textContent!;
-    expect(key.length).toBeGreaterThanOrEqual(32);
-    expect(screen.getByRole('button', { name: t('settings.mcp.copy') })).toBeInTheDocument();
-
     cleanup();
     mount('mcp');
-    await screen.findByText(t('settings.mcp.keyHint', { hint: key.slice(-4) }));
+    await screen.findByText((text) => text.startsWith(t('settings.mcp.keyHint', { hint: key.slice(-4) })));
     expect(screen.queryByTestId('mcp-key')).not.toBeInTheDocument();
     expect(document.body.textContent).not.toContain(key);
   });

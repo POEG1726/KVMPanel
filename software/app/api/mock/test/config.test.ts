@@ -19,6 +19,7 @@ const DEFAULTS = {
   serial: { device: null, baud: 115200 },
   device: { hostname: 'kvmpanel', ssh: true, mdns: true, watchdog: false },
   kvm: { enabled: true },
+  host: { setup_key: 'Delete', boot_menu_key: null, tap_interval_ms: 200, tap_duration_s: 15 },
 };
 
 describe('config', () => {

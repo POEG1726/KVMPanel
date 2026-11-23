@@ -9,6 +9,7 @@
         { "$ref": "#/$defs/Telemetry" },
         { "$ref": "#/$defs/Pc" },
         { "$ref": "#/$defs/Status" },
+        { "$ref": "#/$defs/Mcp" },
         { "$ref": "#/$defs/Board" },
         { "$ref": "#/$defs/Config" },
         { "$ref": "#/$defs/KvmRestarting" },
@@ -21,8 +22,22 @@
         { "$ref": "#/$defs/MetricCatalogue" },
         { "$ref": "#/$defs/PatchConfig" },
         { "$ref": "#/$defs/Action" },
+        { "$ref": "#/$defs/McpStop" },
         { "$ref": "#/$defs/DeviceInfoRequest" }
       ]
+    },
+    "Mcp": {
+      "type": "object", "required": ["t", "active", "key_name", "tool"], "additionalProperties": false,
+      "properties": {
+        "t": { "const": "mcp" },
+        "active": { "type": "boolean" },
+        "key_name": { "type": ["string", "null"] },
+        "tool": { "type": ["string", "null"] }
+      }
+    },
+    "McpStop": {
+      "type": "object", "required": ["t"], "additionalProperties": false,
+      "properties": { "t": { "const": "mcp_stop" }, "id": { "$ref": "#/$defs/Id" } }
     },
     "Id": { "type": "integer", "minimum": 0 },
     "Metric": {

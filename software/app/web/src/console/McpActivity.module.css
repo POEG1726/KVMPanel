@@ -1,0 +1,21 @@
+.banner {
+  position: fixed;
+  top: 60px;
+  right: 12px;
+  z-index: 45;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  max-width: calc(100vw - 24px);
+  box-sizing: border-box;
+  padding: 7px 9px 7px 12px;
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  background: var(--pn);
+  color: var(--warn);
+  font-size: .85rem;
+}
+.banner button { white-space: nowrap; }
+.key { margin-inline-start: 8px; color: var(--tx); overflow-wrap: anywhere; }

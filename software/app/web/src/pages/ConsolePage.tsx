@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, unwrap } from '../api/client';
 import { VideoCanvas } from '../console/VideoCanvas';
 import { MenuBar } from '../console/MenuBar';
+import { McpActivity } from '../console/McpActivity';
 import { CONFIG_KEY } from '../session/useSession';
 import { CURSOR_CSS, useUi } from '../state/ui';
 import { SettingsWindow } from '../settings/SettingsWindow';
@@ -21,6 +22,7 @@ export function ConsolePage() {
       <h1 style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>{t('console.title')}</h1>
       <VideoCanvas scale={config.data?.video.scale ?? 'fit'} cursor={CURSOR_CSS[cursor]} />
       <MenuBar />
+      <McpActivity />
       {workspaceOpen && <Suspense fallback={null}><Workspace mode="float" /></Suspense>}
       {settingsOpen && <SettingsWindow page={settingsPage} onClose={closeSettings} />}
       <ToastHost />
