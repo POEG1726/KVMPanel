@@ -31,7 +31,8 @@
 
 ## TODO
 
+- **MCP 服务**。设计已定，待实现：标准 Streamable HTTP 入口 `/api/mcp/v1`，覆盖 NanoKVM-OS v4 的 12 个工具，新增遥测、截图裁剪与等待、开机守护、按设置键进 BIOS、分权限 key、操作日志、机箱提示与急停，以及主机端程序通道（OCR 和剪贴板默认关）。现有代码只有 key 管理和两个 Bearer REST 接口。 [MCP 设计](superpowers/specs/2026-11-23-mcp-design.md)
 - **T113 DDR PHY 输出阻抗**。SD/FEL SPL 当前使用 DDR3 参考编码 `0x7b7bfb`。待同型号 PHY 字段表及输出阻抗表，或实板电气测量，确认各字节对应引脚及 48 Ω、40 Ω 或最强档后调整。 [ZQ 查证](../software/os/vendor/tina/README.md#主控-zq-编码查证)
 - **基础系统实板 bring-up**。按授权范围先核对供电和 UART0，再用 FEL 进 RAM 验证 DDR 训练、容量和 Linux 启动。随后验证 USB、网口、Debian SD High Speed 冷启动，以及实板断电后的文件系统。完成 3.3 V 读写测试后，再验证 UHS。 [首次上板](development.md#首次上板) · [写卡与启动](../software/os/debian/README.md)
-- **板端功能联调**。基础系统跑通后验证 LT8619C/CSI、VE 真实 JPEG 帧及 MJPEG 吞吐、USB 键鼠与存储、Windows 遥测、C906/HiFi4 RPMsg、按键、光照、温度和看门狗。确认实际面板与触摸型号后验证 DSI、供电、背光和触摸。 [板级适配清单](linux-6.18.md#结果)
+- **板端功能联调**。基础系统跑通后验证 LT8619C/CSI、VE 真实 JPEG 帧及 MJPEG 吞吐、USB 键鼠与存储、Windows 遥测、C906/HiFi4 RPMsg、按键（含把功能键接到 `function_key` 各动作，目前 kvmd 和副屏都未读取物理按键）、光照、温度和看门狗。确认实际面板与触摸型号后验证 DSI、供电、背光和触摸。 [板级适配清单](linux-6.18.md#结果)
 - **副屏实板验证与排版**。确认面板、触摸设备和实际分辨率后，测四个方向的触摸坐标、内存峰值、息屏恢复、帧率和 CPU 占用。横屏方案 B 与原型曲线排版仍待移植。 [当前应用设计](superpowers/specs/2026-11-20-kvmpanel-app-design.md) · [Dashboard](../software/app/dashboard/README.md)

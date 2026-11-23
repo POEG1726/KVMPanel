@@ -2,6 +2,14 @@
 
 最近五项有实际进展的软件工作，最新一项在顶部。全项目状态见 [软件进度](docs/software-progress.md)。
 
+## MCP 服务
+
+核对日期 2026-11-23。
+
+- 现状：`kvmd` 只有 MCP 开关、单把 key 管理，以及 `/api/mcp/v1/screenshot`、`/api/mcp/v1/hid` 两个 Bearer REST 接口，还没有 MCP 协议服务。 [system.rs](software/app/ipkvm/src/system.rs)
+- 设计已定稿，实现交给 Codex。范围：标准 Streamable HTTP 入口 `/api/mcp/v1`，多把分权限 key，观察、输入、电源、介质和主机隐私五类工具，开机守护，按 `config.host` 设置的键进 BIOS，副屏和 WS2812 提示，功能键急停，操作日志，以及经厂商 HID Input report 4 的主机端程序通道。OCR 和剪贴板默认关。 [MCP 设计](docs/superpowers/specs/2026-11-23-mcp-design.md)
+- 尚无代码、构建或模拟结果。接手按设计第 3 节的契约顺序开工，验证按第 13 节分别记录。
+
 ## T113 接口驱动强度
 
 核对日期 2026-11-23。
@@ -32,11 +40,3 @@
 
 - 组合 DTB 启用 T113 硬件 LEDC，以 PG13 驱动四颗 WS2812B-2020-V6。完成 ARM zImage 构建、驱动链接及设备树绑定检查。输出在 WSL 的 `~/work/KVMPanel/build/linux-ws2812/`。 [WS2812 接线、时序与 sysfs](docs/linux-6.18.md#ws2812)
 - 实板可用后测 PG13 的位时序和复位低电平，逐颗核对 LED1、LED2、LED4、LED5 的三色及亮度。
-
-## T113 硬件 MJPEG
-
-核对日期 2026-11-23。
-
-- 已移植 Cedrus JPEG 编码和 T113 IOMMU，`kvmd` 自动发现 `cedrus-enc`，缺失或编码失败时回退 libjpeg-turbo。已构建 ARM 内核、组合 DTB 和静态应用，核对 DT 绑定及 NV12 填充。 [编码说明](docs/linux-6.18.md#jpegmjpeg-编码)
-- 测试镜像为 `build/debian/kvmpanel-debian13-armhf-mjpeg.img.xz`。已检查分区和文件系统。QEMU 用 virt 内核验证了登录、KVM 健康接口、USB gadget 和模拟 STC 关机。
-- 接手上板先确认 JPEG 输出、颜色和 VE 完成中断，再测 LT8619C → CSI → KVM 网页的帧率和 CPU 实占。用 `KVMD_MJPEG_DEVICE=off` 对照软件编码。
