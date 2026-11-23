@@ -7,7 +7,7 @@
 核对日期 2026-11-23。
 
 - 现状：`kvmd` 只有 MCP 开关、单把 key 管理，以及 `/api/mcp/v1/screenshot`、`/api/mcp/v1/hid` 两个 Bearer REST 接口，还没有 MCP 协议服务。 [system.rs](software/app/ipkvm/src/system.rs)
-- 设计已定稿，实现交给 Codex。范围：标准 Streamable HTTP 入口 `/api/mcp/v1`，多把分权限 key，观察、输入、电源、介质和主机隐私五类工具，开机守护，按 `config.host` 设置的键进 BIOS，副屏和 WS2812 提示，功能键急停，操作日志，以及经厂商 HID Input report 4 的主机端程序通道。OCR 和剪贴板默认关。 [MCP 设计](docs/superpowers/specs/2026-11-23-mcp-design.md)
+- 设计已定稿，实现交给 Codex。范围：标准 Streamable HTTP 入口 `/api/mcp/v1`，多把分权限 key，观察、输入、电源、介质和主机隐私五类工具，开机守护，按 `config.host` 设置的键进 BIOS，副屏和 WS2812 提示，功能键急停，操作日志，以及经厂商 HID Input report 4 的主机端程序通道。剪贴板默认关；OCR 这一版不做，之后在 T113 上试 PP-OCR。 [MCP 设计](docs/superpowers/specs/2026-11-23-mcp-design.md)
 - 尚无代码、构建或模拟结果。接手按设计第 3 节的契约顺序开工，验证按第 13 节分别记录。
 
 ## T113 接口驱动强度
