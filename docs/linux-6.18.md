@@ -16,7 +16,7 @@
 | USB0 gadget | 默认 3 HID、3 LUN、EP0 遥测通过 QEMU，默认 4 IN / 1 OUT | MUSB、FIFO 分配、BIOS 键鼠与 Windows 兼容性 |
 | microSD | CARD1 接 SMHC0，卡电源固定 3.3 V，PF 信号由 MMC 栈协商切换。已启用 UHS-I，SDR104 卡时钟上限 150 MHz | 测 PF 电压与时钟，核对 CD 极性，确认只读识别、稳定性和 SD 冷启动 |
 | LT8619C / CSI | PC3 复位、I²C 配置、PE17 全局中断和 GPIO13 的 HDMI 5 V 读取已编译。保留标准 V4L2 子设备和独立 CSIC 驱动 | 复位和中断波形、5 V 检测、HPD/EDID、DMA、持续采集与换模式 |
-| JPEG / MJPEG | 软件 NEON 编解码通过；硬件 ABI 已调查 | 硬件编码节点、真实吞吐、CPU 占用和采集并发 |
+| JPEG / MJPEG | 已移植 Cedrus JPEG 编码并接入 `kvmd`，ARM 内核、DTB 和应用已构建 | 实板节点、真实吞吐、CPU 占用和采集并发 |
 | TD4322 / DSI / 背光 | 参考初始化、TE 和 DCS 亮度已编译，面板节点禁用。SGM3851A 默认开启三路输出，SWIRE 电压接口已实现并通过编码测试 | 测三路输出和 CTRL 波形，确认面板型号、电平、极性与时序 |
 | S3508 / BH1750 | I²C2 节点与内核驱动就绪；新版触摸 IRQ 接 PD14，S3508 节点禁用 | 确认触摸型号与 IRQ 极性，验证 F12 坐标和光照读数 |
 | 主板控制 / 实体键 | 已核对光继电器 GPIO 和 H7 的 KEY_ADC 线路，板级 DT 已启用 GPADC0 | 核对 GPIO 电平、ADC 电压、按键映射与 STC 交接 |
@@ -91,11 +91,13 @@ GPIO15 复用成低有效全局中断，接到 T113 的 PE17。线程通过 I²C
 
 ## JPEG/MJPEG 编码
 
-T113-i 数据手册 §2 的 VE 规格列出 JPEG/MJPEG 编码最高 1080p60；该指标描述编码器能力。本板 HDMI 输入另受上述 8 位总线限制。6.18.64 的 Cedrus 匹配 sun20i-d1-video-engine，cedrus_video.c 的输出队列接收压缩切片、采集队列给出原始图像。本板没有可直接使用的主线 V4L2 JPEG 编码节点。[Cedrus 队列实现](https://github.com/gregkh/linux/blob/v6.18.64/drivers/staging/media/sunxi/cedrus/cedrus_video.c)
+T113-i VE 的 JPEG/MJPEG 编码规格为最高 1080p60。本板 HDMI 输入受 LT8619C 至 CSI 的 8 位总线限制，默认 EDID 首选 1080p30。上游 Linux 6.18.64 的 Cedrus 提供解码路径。[Cedrus 队列实现](https://github.com/gregkh/linux/blob/v6.18.64/drivers/staging/media/sunxi/cedrus/cedrus_video.c)
 
-社区作者在 Linux 6.12.28 的 stateful V4L2 M2M 补丁上报告了 T113 JPEG 成功。6.18.64 仍需移植该补丁、核对 VE 的时钟/复位/电源域与 DMA 地址，并用实际原始帧验证 JPEG 输出。附件请求返回 HTTP 403，本次没有取得可验证应用的补丁正文。厂商 Cedar ABI 则要配套 /dev/cedar_dev、内核 ioctl、可供 VE 使用的 DMA 内存与匹配的 libvencoder/JPEG 库；Tina DTS 使用 sunxi-cedar-ve，与主线 Cedrus 的 V4L2 ABI 不同。目前没有在本项目的 ARMhf 静态 musl 系统验证配套库和设备驱动。两条硬件路径均留待实板。[补丁作者的测试说明](https://forum.armbian.com/topic/26551-video-encoder-using-mainline-kernel/) · [Cedar 设备 ABI 实现](https://github.com/uboborov/sunxi-cedar-mainline) · [Allwinner 编码示例](https://github.com/FREEWING-JP/OrangePi_CedarX/blob/master/cedarx/demo/demoVencoder/EncoderTest.c)
+本项目从 T113 Linux 6.18.39 补丁移植 JPEG 编解码和 D1/T113 IOMMU。组合 DTB 启用 VE 电源域、时钟、复位、IRQ 和 IOMMU。编码与解码节点共享 VE，驱动对同时打开两类节点的操作返回 `EBUSY`。`kvmd` 自动查找 `cedrus-enc`，将 CSI 的 YU12 帧转换为带对齐填充的 NV12，通过 V4L2 M2M 输出独立 JPEG 帧。现有截图和视频流共同使用该路径，设备缺失或编码失败时回退 libjpeg-turbo。 [本项目移植补丁](../software/os/linux/patches/0009-sunxi-t113-cedrus-jpeg.patch) · [公开 JPEG 编码提交](https://github.com/sunxi-mainline/t113-linux-6.18.39/commit/e61479adcc4df0e462e2e4548f095082a0b190dd) · [软件配置](../software/app/ipkvm/README.md#板端接口)
 
-保底方案为 Buildroot 的 libjpeg-turbo 2.1.5、Cortex-A7 和 NEON/VFPv4。核实了 CMake WITH_SIMD=ON、libjpeg.a 中的 NEON FDCT/降采样符号，并在 QEMU Cortex-A7 编解码了一张 16×8 色块图，核对了回读尺寸和像素误差。1080p 的实际软件帧率、CPU 占用和采集叠加时的内存带宽待实板验证。
+已核对补丁顺序，构建 ARM `zImage`、组合 DTB 和静态 `kvmd`，VE 与 IOMMU 节点通过绑定检查。离线检查覆盖 1366×768 等模式的 NV12 填充和非编码节点的拒绝。Debian 实板测试镜像已打包，使用 QEMU virt 内核直启验证了用户态启动、KVM 健康接口、USB gadget 和模拟 STC 关机。软件编码路径此前已在 QEMU Cortex-A7 核对 JPEG 尺寸和颜色。
+
+实板先在 `/sys/class/video4linux/video*/name` 找到 `cedrus-enc`，确认该节点的输出队列列出 NV12，采集队列列出 JPEG。用低分辨率测试帧核对 JPEG 尺寸、颜色和 VE 完成中断，再走 HDMI → CSI → `kvmd` → KVM 网页。验证 720p60 和 1080p30 的稳定帧率、CPU 占用、无信号重连和质量切换，用 `KVMD_MJPEG_DEVICE=off` 对照软件编码。QEMU 无 T113 VE 模型，硬件 JPEG、IOMMU DMA 和实际吞吐待实板验证。
 
 ## 触摸、光照、SD 和 GPIO
 

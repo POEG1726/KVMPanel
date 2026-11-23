@@ -4,3 +4,11 @@
 #include "kvmpanel-capture.dtsi"
 #include "kvmpanel-display.dtsi"
 #include "kvmpanel-remoteproc.dtsi"
+
+&iommu {
+	status = "okay";
+};
+
+&ve {
+	status = "okay";
+};

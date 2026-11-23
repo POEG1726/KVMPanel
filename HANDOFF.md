@@ -2,6 +2,14 @@
 
 最近五项有实际进展的软件工作，最新一项在顶部。全项目状态见 [软件进度](docs/software-progress.md)。
 
+## T113 硬件 MJPEG
+
+核对日期 2026-11-23。
+
+- 已移植 Cedrus JPEG 编码和 T113 IOMMU，`kvmd` 自动发现 `cedrus-enc`，缺失或编码失败时回退 libjpeg-turbo。已构建 ARM 内核、组合 DTB 和静态应用，核对 DT 绑定及 NV12 填充。 [编码说明](docs/linux-6.18.md#jpegmjpeg-编码)
+- 测试镜像为 `build/debian/kvmpanel-debian13-armhf-mjpeg.img.xz`。已检查分区和文件系统。QEMU 用 virt 内核验证了登录、KVM 健康接口、USB gadget 和模拟 STC 关机。
+- 接手上板先确认 JPEG 输出、颜色和 VE 完成中断，再测 LT8619C → CSI → KVM 网页的帧率和 CPU 实占。用 `KVMD_MJPEG_DEVICE=off` 对照软件编码。
+
 ## Windows PC 遥测采集计划
 
 核对日期 2026-11-23。
@@ -32,10 +40,3 @@
 - RTL8211F-CG 的设备树已启用 EMAC，改用本地无源 25 MHz 晶体，配置 PC1 复位和 PC7 中断。SGM3851A 新增 `voltages_uv`，按手册编码并保留默认上电。LT8619C 通过 PC3 复位，使用 GPIO15/PE17 上报视频时序变化，通过 GPIO13 查询 HDMI 5 V。2026-11-22 版 microSD UHS 适配已一起构建。 [板级配置与操作](docs/linux-6.18.md)
 - 已构建 Linux 6.18.64 ARM `zImage`、基础 DTB、DSI DTB 和组合 DTB，另行编译并链接了 LT8619C 与 SGM3851A 的 ARM 模块。组合 DTB 通过相关绑定检查。SGM3851A 编码测试覆盖表 1 的 53 个电压命令。构建输出位于 WSL 的 `~/work/KVMPanel/build/linux-phy-display-integration/`。
 - 接手先核对新版 PHY 晶体网表。从供电、UART0、FEL 和 DDR 开始实板验证，随后测 PHY 时钟、复位和链路，不接面板测 SWIRE 与输出电压，并用示波器和 V4L2 核对 IRQ、HDMI 5 V、EDID 和采集。CARD1 待测 PF 电压、UHS 调谐和冷启动。 [网口时序](docs/development.md#单独验证本板网口) · [首次上板](docs/development.md#首次上板) · [LT8619C 步骤](docs/linux-6.18.md#lt8619c-和并行-csi)
-
-## STC8 电源管理集成
-
-核对日期 2026-11-23。
-
-- 固件 1.1 已加入 STC 本机硬件看门狗，标称超时约 1.71 s。固件、T113 的 UART2 关机路径和 Buildroot 升级工具已提交到 `main`。已重跑 SDCC 构建、状态机测试和 ISP 模拟。 [STC8 离线验证](software/firmware/stc8/README.md#离线验证)
-- 接手从固件 README 的构建和测试入口开始。获准上板后，用 CSV 的理论值核对 ADC 计数范围，实测 UART 收发、供电和复位波形及看门狗恢复。在线升级待外部 UPDATE_HOLD 电路补齐并确认。 [STC8 固件](software/firmware/stc8/README.md) · [引脚分配 CSV](hardware/T113_signal_allocation.csv)

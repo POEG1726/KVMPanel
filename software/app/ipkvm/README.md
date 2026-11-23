@@ -26,7 +26,7 @@ sim 同时监听 TCP `127.0.0.1:7701`，板上监听 Unix socket `/run/kvmd/pane
 
 | 功能 | 实现和部署参数 |
 |---|---|
-| 视频 | 用 `VIDIOC_QUERY_DV_TIMINGS` 查询 LT8619C 时序，`media-ctl` 配置 CSI，四个 mmap 缓冲采集 YU12，libjpeg-turbo 直接编码三个平面。EDID reset 恢复板级默认值，首选 1080p30，并提供 720p60 和 VGA。最后一个订阅者离开后停止采集。设备路径分别由 `KVMD_HDMI_DEVICE`、`KVMD_MEDIA_DEVICE`、`KVMD_VIDEO_DEVICE` 设置，默认是 `/dev/v4l-subdev0`、`/dev/media0`、`/dev/video0`。 |
+| 视频 | `kvmd` 查询 LT8619C 时序并通过 CSI 采集 YU12。发现 `cedrus-enc` 时将 YU12 整理成 NV12，交给 T113 VE 编码。节点缺失、格式不支持或编码失败时用 libjpeg-turbo。编码复用输入和输出 mmap 缓冲，画质变化时重新配置。EDID reset 恢复板级默认值，首选 1080p30，并提供 720p60 和 VGA。最后一个订阅者离开后释放采集和编码。 |
 | USB | 枚举时从 configfs 读取设备号，打开并复用 hidg 描述符，重建或显式重置时刷新。键盘灯和上位机遥测使用 HID Output report。应用 USB 设置时调用镜像内的 `/usr/sbin/kvmpanel-gadget`。开机恢复最近一次 apply 的组合。 |
 | 主板控制 | 使用 libgpiod 1.x 的 `gpioget`、`gpioset`。板级部署用 `KVMD_GPIO_CHIP` 选择主 PIO（默认 gpiochip0）。按新版接线，`KVMD_GPIO_POWER=141`（PE13）、`KVMD_GPIO_RESET=131`（PE3）、`KVMD_GPIO_POWER_LED=140`（PE12）均为高有效。电源状态接口读取 PE12，返回 `{"on":true}` 或 `{"on":false}`。HDD 灯在 H1/H3 间直通。 |
 | 显示和传感器 | 自动查找 bh1750 IIO 和 cpu-thermal 区。背光从 max_brightness 换算，存在多个设备时用 `KVMD_BACKLIGHT` 指定 sysfs 目录。 |
@@ -36,6 +36,8 @@ sim 同时监听 TCP `127.0.0.1:7701`，板上监听 Unix socket `/run/kvmd/pane
 多个控制台共用实板键鼠。最后一个可输入会话退出或转为只读时释放已按下的键和鼠标按钮。两个模式都按配置的 US、UK 或 DE 布局校验整条粘贴，UTF-8 编码上限为 64 KiB。任一字符不可映射时，在发送第一键前返回 `unmappable`。滚轮反向与倍率由客户端换算。防休眠抖动每 30 秒检查一次，拖动期间跳过。
 
 模拟上传和文件操作实际写入数据目录。模拟 URL 下载生成固定 64 MiB 数据，可离线验证进度、暂停、取消、空间和校验和。下载任务保留最近完成的 20 项，真机下载的单次读超时为 60 秒。模拟终端运行当前 Linux 用户的真实 shell。模拟串口使用独立 PTY。
+
+视频节点按 LT8619C、CSI 和 Cedrus 的设备名发现。可用 `KVMD_HDMI_DEVICE`、`KVMD_MEDIA_DEVICE`、`KVMD_VIDEO_DEVICE` 或 `KVMD_MJPEG_DEVICE` 覆盖节点路径。`KVMD_MJPEG_DEVICE=off` 强制软件编码，可用于实板对照。成功打开硬件编码或发生回退时，`kvmd` 记录日志。 [板级编码测试](../../../docs/linux-6.18.md#jpegmjpeg-编码)
 
 ## 应用升级
 

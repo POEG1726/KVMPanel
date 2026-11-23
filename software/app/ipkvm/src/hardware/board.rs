@@ -1,4 +1,8 @@
-use super::{hid::Hid, video::Video, Hardware};
+use super::{
+    hid::Hid,
+    video::{hdmi_device, Video},
+    Hardware,
+};
 use serde_json::{json, Value};
 use std::{
     env,
@@ -179,7 +183,7 @@ impl Hardware for Board {
         let mut cmd = Command::new("v4l2-ctl")
             .args([
                 "-d",
-                &device("KVMD_HDMI_DEVICE", "/dev/v4l-subdev0"),
+                &hdmi_device(),
                 "--keep-edid-checksums",
                 "--set-edid=pad=0,file=-,format=raw",
             ])
@@ -195,11 +199,7 @@ impl Hardware for Board {
         }
     }
     fn read_edid(&self) -> io::Result<Vec<u8>> {
-        run(Command::new("v4l2-ctl").args([
-            "-d",
-            &device("KVMD_HDMI_DEVICE", "/dev/v4l-subdev0"),
-            "--get-edid=pad=0,format=raw",
-        ]))
+        run(Command::new("v4l2-ctl").args(["-d", &hdmi_device(), "--get-edid=pad=0,format=raw"]))
     }
     fn press(&self, button: &str, ms: u64) -> io::Result<()> {
         let field = match button {

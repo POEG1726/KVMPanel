@@ -1,11 +1,59 @@
-use super::board::{device, run};
+use super::board::run;
 use serde_json::{json, Value};
 use std::{
+    env,
+    ffi::{c_void, CString},
+    fs,
     io::{self, Read},
     os::fd::AsRawFd,
+    path::Path,
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
+
+fn named_video_node(name: &str) -> Option<String> {
+    fs::read_dir("/sys/class/video4linux")
+        .ok()?
+        .flatten()
+        .find_map(|entry| {
+            let label = fs::read_to_string(entry.path().join("name")).ok()?;
+            (label.trim() == name || label.starts_with(&format!("{name} ")))
+                .then(|| format!("/dev/{}", entry.file_name().to_string_lossy()))
+        })
+}
+
+pub(super) fn hdmi_device() -> String {
+    env::var("KVMD_HDMI_DEVICE")
+        .ok()
+        .or_else(|| named_video_node("lt8619c"))
+        .unwrap_or_else(|| "/dev/v4l-subdev0".into())
+}
+
+fn media_device() -> String {
+    if let Ok(path) = env::var("KVMD_MEDIA_DEVICE") {
+        return path;
+    }
+    if let Ok(entries) = fs::read_dir("/dev") {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let Some(index) = name.strip_prefix("media") else {
+                continue;
+            };
+            if !index.is_empty()
+                && index.bytes().all(|c| c.is_ascii_digit())
+                && run(Command::new("media-ctl")
+                    .arg("-d")
+                    .arg(entry.path())
+                    .args(["-e", "sun20i-csi-bridge"]))
+                .is_ok()
+            {
+                return format!("/dev/{name}");
+            }
+        }
+    }
+    "/dev/media0".into()
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Mode {
@@ -57,7 +105,7 @@ impl DvTimings {
     }
 }
 
-fn query_mode(path: &std::path::Path) -> io::Result<Mode> {
+fn query_mode(path: &Path) -> io::Result<Mode> {
     let file = std::fs::File::open(path)?;
     let mut timing = DvTimings::default();
     let query = libc::_IOR::<DvTimings>(b'V' as u32, 99);
@@ -90,19 +138,22 @@ impl Drop for Capture {
 }
 impl Capture {
     fn start(mode: Mode) -> io::Result<Self> {
-        let sub = device("KVMD_HDMI_DEVICE", "/dev/v4l-subdev0");
+        let sub = hdmi_device();
         run(Command::new("v4l2-ctl").args(["-d", &sub, "--set-dv-bt-timings", "query"]))?;
         let format = format!("{}x{}", mode.width, mode.height);
         run(Command::new("media-ctl").args([
             "-d",
-            &device("KVMD_MEDIA_DEVICE", "/dev/media0"),
+            &media_device(),
             "-V",
             &format!("\"sun20i-csi-bridge\":0 [fmt:UYVY8_2X8/{format} field:none]"),
         ]))?;
         let child = Command::new("v4l2-ctl")
             .args([
                 "-d",
-                &device("KVMD_VIDEO_DEVICE", "/dev/video0"),
+                &env::var("KVMD_VIDEO_DEVICE")
+                    .ok()
+                    .or_else(|| named_video_node("sun20i-csi-capture"))
+                    .unwrap_or_else(|| "/dev/video0".into()),
                 &format!(
                     "--set-fmt-video=width={},height={},pixelformat=YU12",
                     mode.width, mode.height
@@ -147,14 +198,128 @@ impl Capture {
     }
 }
 
+extern "C" {
+    fn kvmd_mjpeg_open(
+        path: *const libc::c_char,
+        width: u32,
+        height: u32,
+        quality: u32,
+    ) -> *mut c_void;
+    fn kvmd_mjpeg_encode(
+        handle: *mut c_void,
+        raw: *const u8,
+        length: usize,
+        jpeg: *mut *const u8,
+        size: *mut usize,
+    ) -> libc::c_int;
+    fn kvmd_mjpeg_close(handle: *mut c_void);
+}
+
+struct Mjpeg {
+    handle: std::ptr::NonNull<c_void>,
+    quality: u8,
+}
+
+// The C state belongs to this handle, with exclusive use under Board's Video mutex.
+unsafe impl Send for Mjpeg {}
+
+impl Mjpeg {
+    fn open(path: &str, mode: Mode, quality: u8) -> io::Result<Self> {
+        let path = CString::new(path)?;
+        // The path is NUL-terminated and the C side opens it synchronously.
+        let handle = unsafe {
+            kvmd_mjpeg_open(
+                path.as_ptr(),
+                mode.width as u32,
+                mode.height as u32,
+                quality.into(),
+            )
+        };
+        Ok(Self {
+            handle: std::ptr::NonNull::new(handle).ok_or_else(io::Error::last_os_error)?,
+            quality,
+        })
+    }
+
+    fn encode(&mut self, raw: &[u8]) -> io::Result<Vec<u8>> {
+        let mut jpeg = std::ptr::null();
+        let mut size = 0;
+        // The JPEG points to a dequeued buffer owned by this handle, valid until the next call.
+        unsafe {
+            if kvmd_mjpeg_encode(
+                self.handle.as_ptr(),
+                raw.as_ptr(),
+                raw.len(),
+                &mut jpeg,
+                &mut size,
+            ) != 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(std::slice::from_raw_parts(jpeg, size).to_vec())
+        }
+    }
+}
+
+impl Drop for Mjpeg {
+    fn drop(&mut self) {
+        // The handle is owned exclusively here.
+        unsafe { kvmd_mjpeg_close(self.handle.as_ptr()) };
+    }
+}
+
+#[derive(Default)]
+enum Encoder {
+    #[default]
+    Probe,
+    Hardware(Mjpeg),
+    Software,
+}
+
+impl Encoder {
+    fn encode(&mut self, raw: &[u8], mode: Mode, quality: u8) -> io::Result<Vec<u8>> {
+        if matches!(self, Self::Hardware(hw) if hw.quality != quality) {
+            *self = Self::Probe;
+        }
+        if matches!(self, Self::Probe) {
+            let path = env::var("KVMD_MJPEG_DEVICE")
+                .ok()
+                .or_else(|| named_video_node("cedrus-enc"));
+            *self = Self::Software;
+            if let Some(path) = path.filter(|path| path != "off") {
+                match Mjpeg::open(&path, mode, quality) {
+                    Ok(hw) => {
+                        eprintln!(
+                            "kvmd: using hardware MJPEG at {path} ({}x{}, quality {quality})",
+                            mode.width, mode.height
+                        );
+                        *self = Self::Hardware(hw);
+                    }
+                    Err(e) => eprintln!("kvmd: MJPEG device {path} unavailable: {e}"),
+                }
+            }
+        }
+        if let Self::Hardware(hw) = self {
+            match hw.encode(raw) {
+                Ok(jpeg) => return Ok(jpeg),
+                Err(e) => eprintln!("kvmd: hardware MJPEG failed, using software JPEG: {e}"),
+            }
+            *self = Self::Software;
+        }
+        encode(raw, mode.width, mode.height, quality)
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Video {
     capture: Option<Capture>,
     mode: Option<(Instant, Result<Mode, io::ErrorKind>)>,
+    encoder: Encoder,
 }
 impl Video {
     pub fn stop(&mut self) {
         self.capture = None;
+        self.encoder = Encoder::default();
     }
     fn mode(&mut self) -> io::Result<Mode> {
         if let Some((at, result)) = self.mode {
@@ -162,7 +327,7 @@ impl Video {
                 return result.map_err(Into::into);
             }
         }
-        let mode = query_mode(device("KVMD_HDMI_DEVICE", "/dev/v4l-subdev0").as_ref());
+        let mode = query_mode(hdmi_device().as_ref());
         self.mode = Some((
             Instant::now(),
             mode.as_ref().copied().map_err(io::Error::kind),
@@ -197,7 +362,7 @@ impl Video {
                 return Err(e);
             }
         };
-        encode(&raw, mode.width, mode.height, quality)
+        self.encoder.encode(&raw, mode, quality)
     }
 }
 

@@ -19,6 +19,11 @@ fn expand(node: &mut Value, doc: &Value) {
 }
 
 fn main() {
+    let mjpeg = "src/hardware/mjpeg.c";
+    println!("cargo:rerun-if-changed={mjpeg}");
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+        cc::Build::new().file(mjpeg).compile("kvmd_mjpeg");
+    }
     println!("cargo:rerun-if-env-changed=KVMD_API_DIR");
     let api = PathBuf::from(env::var_os("KVMD_API_DIR").unwrap_or_else(|| "../api".into()));
     let openapi = api.join("openapi.yaml");

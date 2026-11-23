@@ -1066,6 +1066,7 @@ dependencies = [
  "axum",
  "axum-server",
  "bcrypt",
+ "cc",
  "clap",
  "flate2",
  "futures-util",

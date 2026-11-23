@@ -206,7 +206,7 @@ export ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
 
 # 仅在新目录执行 clone 和 apply。
 git clone --shared --branch v6.18.64 "$work/upstream/linux" "$linux"
-for patch in "$files"/patches/000{1,2,3,4,5,6,7,8}-*.patch; do
+for patch in "$files"/patches/000{1,2,3,4,5,6,7,8,9}-*.patch; do
     git -C "$linux" apply "$patch"
 done
 mkdir -p "$out"
