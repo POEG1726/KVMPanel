@@ -66,3 +66,15 @@ sudo bash "$project/software/os/debian/build-image.sh" "$out/base-armhf.tar" \
 ## 离线验证
 
 2026-11-23 构建了板用 U-Boot、内核和 Debian SD 镜像，检查了分区、两个 ext4 文件系统、SPL 偏移和两份启动 DTB。在 512 MiB 的 QEMU Cortex-A7 客体用快照验证了首次密码设置、Vim 9.1、数据分区挂载、DHCP、网页与 `/api/health`、USB gadget 配置，以及通过 KVM API 改静态地址和 DNS。虚拟串口测试证明可写根分区时只发取消命令，systemd 清理存储后依次发送准备和待断电命令。关机阻止锁也通过测试。SD 冷启动、最后的 UART2 断电帧和实板外设请见 [当前交接](../../../HANDOFF.md)。
+
+### QEMU 内存占用
+
+2026-11-23 测量同一份 Debian 13 SD 镜像。QEMU 配置为双核 Cortex-A7、512 MiB RAM 和 32 MiB CMA，Linux 6.18.64 报告 `MemTotal` 为 492.2 MiB。进入用户态后每 200 ms 采样，系统占用按 `MemTotal - MemAvailable` 计算。启动窗口截止到串口登录且 `kvmd` 已启动约 3 秒后。
+
+| 阶段 | 系统占用峰值 |
+|---|---:|
+| 首次启动，含 root 密码设置 | 63.0 MiB |
+| 第二次启动 | 108.6 MiB |
+| 第二次启动后空闲 30 秒 | 76.5 MiB |
+
+空闲 30 秒占用 69.6～76.5 MiB，平均 70.7 MiB，窗口结束时可用 422.6 MiB。`kvmd` 首次与第二次启动的采样时点峰值 RSS（`VmHWM`）分别为 6.7 和 36.2 MiB，空闲窗口结束时的 PSS 为 36.2 MiB。采样进程的 RSS 约 0.4 MiB，计入系统占用。测量时 Vim 未启动，无活跃 KVM 会话。实板 HDMI 采集、编码、显示和 DMA 缓冲的峰值待测。

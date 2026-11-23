@@ -8,6 +8,7 @@
 
 - SD 系统采用 Debian 13 armhf 并预装 Vim，使用原板级内核及带 SD 节点的 U-Boot。默认 High Speed，另有 UHS 菜单项。压缩镜像位于本地忽略目录 `build/debian/kvmpanel-debian13-armhf.img.xz`。 [构建与写卡](software/os/debian/README.md)
 - 离线通过分区、文件系统和 DTB 检查。QEMU 验证首次密码设置、Vim、数据分区、KVM 网页、USB gadget、网络配置、关机阻止锁及模拟 STC8 UART 的准备和待断电帧。QEMU 通过内核直启。
+- 512 MiB QEMU 的启动采样最高为 108.6 MiB，空闲 30 秒平均 70.7 MiB、峰值 76.5 MiB。实板 KVM 负载内存待测。 [内存记录](software/os/debian/README.md#qemu-内存占用)
 - 上板从默认 High Speed 冷启动和串口登录开始，核对 SD 读写、以太网、KVM 外设和内核发出的 UART2 最终断电帧。FEL 与 Buildroot initramfs 可用于诊断。 [首次上板](docs/development.md#首次上板)
 
 ## 板级网口、显示电源与 HDMI 采集

@@ -6,7 +6,7 @@
 
 - **接口与 Mock**。OpenAPI、WebSocket、panel socket 和本机 Mock 已合入 `main`。Mock 源码和测试已涵盖关闭绝对鼠标时遥测占用独立 IN 端点的规则。 [接口与运行说明](../software/app/api/README.md)
 - **Linux 基础系统与板级驱动的离线验证**。Linux 6.18.64、板级 DTB、FEL 用 U-Boot 和 Buildroot initramfs 已有构建结果。已有 QEMU 用户态、USB gadget 及 LT8619C、CSIC、TD4322 模块装卸记录，以及 C906/HiFi4 回环固件构建和打包记录。 [构建说明](development.md) · [板级验证范围](linux-6.18.md)
-- **Debian 13 armhf SD 镜像**。已构建板用镜像并预装 Vim。QEMU 验证首次密码设置、数据分区、KVM 网页、USB gadget、DHCP 和静态网络设置，以及模拟 UART 下的 STC8 关机握手。 [镜像与验证说明](../software/os/debian/README.md)
+- **Debian 13 armhf SD 镜像**。已构建板用镜像并预装 Vim。QEMU 验证首次密码设置、数据分区、KVM 网页、USB gadget、网络设置及模拟 STC8 关机。已测启动与空闲峰值，实板负载待测。 [镜像说明](../software/os/debian/README.md) · [内存记录](../software/os/debian/README.md#qemu-内存占用)
 - **PHY、SGM3851A 与 LT8619C 软件**。RTL8211F-CG 启用本地无源晶体方案、PC1 复位和 PC7 中断。SGM3851A 加入有符号微伏接口，编码测试覆盖手册全部 53 个电压命令。LT8619C 加入 PC3 复位、GPIO15 中断和 GPIO13 的 HDMI 5 V 查询。ARM 内核和三份板级 DTB 已构建，相关 DT 绑定检查通过。SGM3851A 与 LT8619C 也分别通过模块编译和链接。 [驱动验证范围](linux-6.18.md)
 - **KVM 网页**。登录、远程控制台、设置、文件和终端工作台已合入 `main`。已有 Chrome 对 Mock 的双语走查，以及 `kvmd --sim` 静态页面、路由和文件往返验证。 [前端验证记录](../software/app/web/README.md)
 - **副屏原型**。LVGL 9、Slint、Qt 6 Quick 的竖屏原型分别在 `feat/panel-proto`、`feat/panel-slint`、`feat/panel-qt`，各带 PC 端帧率和 CPU 记录。 [原型计划](superpowers/plans/2026-11-20-04-panel-prototypes.md)
