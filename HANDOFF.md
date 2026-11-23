@@ -6,7 +6,7 @@
 
 核对日期 2026-11-23。
 
-- 已精简为日常负载、温度、常用频率、功耗、容量和实际吞吐。每张网卡独立上报，Panel 自选字段。已核对现有契约和 Qt/LVGL 原型的旧字段。 [采集计划](docs/superpowers/specs/2026-11-23-pc-telemetry-design.md)
+- 已核对截图、厂商资料和现有字段。采集计划包含电压、电流、功耗限制、BCLK、倍频、FCLK、UCLK、MCLK、DRAM 读写带宽和 DDR5 PMIC 关键读数。网卡独立上报，Panel 自选字段。 [采集计划](docs/superpowers/specs/2026-11-23-pc-telemetry-design.md)
 - 接手先在不同硬件主机跑只读探测，再按计划同步正式清单、Mock、`kvmd` 和副屏布局，完成 HID 批传和实测。原型当前仍提供早期指标。 [实施顺序](docs/superpowers/specs/2026-11-23-pc-telemetry-design.md#实施顺序)
 
 ## 副屏电脑离线页

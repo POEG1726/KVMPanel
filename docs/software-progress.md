@@ -4,7 +4,7 @@
 
 ## 已完成
 
-- **Windows PC 遥测采集计划**。已按日常监控精简为负载、温度、常用频率、功耗、容量和实际吞吐，保留跨硬件发现及逐网卡数据。已核对 Mock、`kvmd` 和 Qt/LVGL 原型字段，记录正式契约的迁移项。 [采集计划](superpowers/specs/2026-11-23-pc-telemetry-design.md)
+- **Windows PC 遥测采集计划**。已纳入超频所需电压、电流、功耗限制、BCLK、倍频、FCLK、UCLK、MCLK 和 DRAM 读写带宽，明确 DDR5 PMIC 采集范围。已核对截图、厂商资料及现有字段，真实采集待实现。 [采集计划](superpowers/specs/2026-11-23-pc-telemetry-design.md)
 - **副屏电脑离线页（原型）**。panel socket 新增每秒一次的 `board` 消息和 `pc_power_on` 动作（电脑开着时拒绝），Mock 可从关机或等待上位机状态启动。Qt 6 和 LVGL 原型都实现了竖屏和横屏的离线页、开机按钮和息屏倒计时，曲线和内存温度行也按已定规则改过。已通过 Mock 测试和两版构建，并在 Mock 下截图核对关机、等待上位机、开机后切回主屏三种状态。实际点击和按键未在窗口里测过，`kvmd` 还不发 `board`。 [Dashboard](../software/app/dashboard/README.md) · [接口](../software/app/api/README.md)
 - **T113 硬件 MJPEG 接入**。组合 DTB 启用 VE 和 IOMMU，`kvmd` 使用 Cedrus JPEG 编码并提供软件回退。ARM 内核、DTB、静态应用已构建，VE 和 IOMMU 绑定通过检查。已打包 Debian 镜像并通过 QEMU 用户态冒烟。 [编码说明](linux-6.18.md#jpegmjpeg-编码)
 - **电脑电源灯状态**。板端 `kvmd` 只读 PE12，REST 和 WebSocket 电源状态只包含 `on`。Mock、类型和网页均已同步。通过 `kvmd` 和 Mock 测试、网页构建及测试，实板电源灯读数待测。 [主板控制接线](../software/app/ipkvm/README.md#板端接口)
