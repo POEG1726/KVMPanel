@@ -45,7 +45,7 @@ kvmpanel-stc-power status
 poweroff
 ```
 
-正常 `poweroff` 由 PID 1 请求 STC 等待，执行服务清理、swapoff、卸载或只读重挂载，再核对剩余挂载并通知 STC 就绪。内核执行完设备及 syscore 关闭后，从 UART2 发送最终断电命令。STC 保存 0 后断电。Linux 未完成确认、UART 无响应或 STC 写 Flash 失败时，主轨保持供电，校准后的双键强关仍可用。正常 reboot 不发断电命令。
+Buildroot 正常 `poweroff` 时由 BusyBox PID 1 先请求 STC 等待，清理服务、挂载和 swap 后再通知 STC 就绪。Debian 使用 `systemctl --check-inhibitors=yes poweroff`，由 systemd 的关机钩子在清理存储后核对挂载和 swap，再向 STC 发准备和待断电命令。两种系统都由内核在设备及 syscore 关闭后经 UART2 发送最终断电帧，STC 保存 0 后断电。若 Linux 未完成确认、UART 无响应或 STC 写 Flash 失败，主轨保持供电。校准后的双键强关仍可用。正常重启保留供电。 [Debian 关机与模拟验证](../../os/debian/README.md#kvm-与断电)
 
 ## 在线升级
 
@@ -56,7 +56,7 @@ PB10/F17 是计划中的 UPDATE_HOLD，输出只接 3.3 V HOLD。完整的外部
 kvmpanel-stc-power update --hold-wired /path/to/kvmpanel-stc8.bin
 ```
 
-工具会先提示升级期间暂停 10 s 强关，然后持续持有 PB10 的 GPIO 文件描述符和同一个独占 UART。它协商约 1500 ms 后进入原厂 ISP，在 2400 8E1 等握手，再用 57600 8E1 写入。下载器复用 [IOsetting/stc8prog](https://github.com/IOsetting/stc8prog/tree/5151cba878b99024a8b4080d9a115ff03f09b74b) 的原厂 ISP 传输实现，检查 08A 型号、EEPROM 保留选项、P5.4 普通 IO 和 IRC 频率，使用仅擦除程序区的命令，保留 Data Flash 与原有选项。升级程序和正常关机用同一把锁，升级中 PID 1 拒绝普通关停和重启。
+工具会先提示升级期间暂停 10 s 强关，然后持续持有 PB10 的 GPIO 文件描述符和同一个独占 UART。它协商约 1500 ms 后进入原厂 ISP，在 2400 8E1 等握手，再用 57600 8E1 写入。下载器复用 [IOsetting/stc8prog](https://github.com/IOsetting/stc8prog/tree/5151cba878b99024a8b4080d9a115ff03f09b74b) 的原厂 ISP 传输实现，检查 08A 型号、EEPROM 保留选项、P5.4 普通 IO 和 IRC 频率，使用仅擦除程序区的命令，保留 Data Flash 与原有选项。升级程序与关机握手共享串口锁。Buildroot 由 BusyBox PID 1 保护普通关机和重启。Debian 的升级入口使用 systemd 关机阻止锁，正常关机与重启遵循该锁。
 
 ROM 退出后，工具切回 9600 8N1，用新的请求确认镜像版本、持久化标志仍为 1、STC 已驱动主轨和 PD 并释放复位，随后才拉低 HOLD。出错时原进程继续持有 HOLD，可按提示向该 PID 发 `SIGUSR1` 重试同一镜像。进程被强制杀死、T113 崩溃或掉电时，GPIO 控制权随内核释放，恢复依赖外部接线和原厂下载入口。
 

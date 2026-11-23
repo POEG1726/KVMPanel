@@ -21,5 +21,6 @@
 
 - **基础系统实板 bring-up**。按授权范围先核对供电和 UART0，再用 FEL 进 RAM 验证 DDR 训练、容量和 Linux 启动。随后验证 USB、网口、Debian SD High Speed 冷启动，以及实板断电后的文件系统。完成 3.3 V 读写测试后，再验证 UHS。 [首次上板](development.md#首次上板) · [写卡与启动](../software/os/debian/README.md)
 - **板端功能联调**。基础系统跑通后验证 LT8619C/CSI、MJPEG 吞吐、USB 键鼠与存储、Windows 遥测、C906/HiFi4 RPMsg、按键、光照、温度和看门狗。确认实际面板与触摸型号后验证 DSI、供电、背光和触摸。 [板级适配清单](linux-6.18.md#结果)
+- **主板状态读取**。新版硬件的 HDD 灯在 H1/H3 间直通，板端只有电源灯输入。应让 KVM 后端在缺少 HDD 灯 GPIO 时仍能返回电源灯状态。 [主板控制接线](../software/app/ipkvm/README.md#板端接口)
 - **副屏方向、离线状态页与正式实现**。先把共享 `panel.orientation` 和离线状态所需数据写进契约，再同步 Mock、`kvmd`、网页设置和副屏。对比三版原型后选定框架，补横屏、触摸坐标转换和 T113 实测。 [当前应用设计](superpowers/specs/2026-11-20-kvmpanel-app-design.md)
 - **电脑端遥测**。真实上位机与板端线格式待定。现有 Mock、`kvmd --sim` 和临时 HID 解码可用于前期联调。 [遥测入口](../software/app/ipkvm/README.md#副屏与遥测)
