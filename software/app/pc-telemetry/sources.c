@@ -112,6 +112,8 @@ struct Sources {
     ULONGLONG net_ms;
     HANDLE wlan;
     uint64_t idle, kernel, user;
+    ULONGLONG next_bclk;
+    double bclk_mhz;
     unsigned last_groups;
 };
 
@@ -549,6 +551,8 @@ void sources_sample(Sources *sources, Sample *sample, unsigned groups)
         sources->next_disk_temperature = 0;
     if ((groups ^ sources->last_groups) & CPU)
         sources->kernel = 0;
+    if ((groups ^ sources->last_groups) & TUNING)
+        sources->next_bclk = 0;
     if ((groups ^ sources->last_groups) & NETWORK)
         sources->net_count = 0;
     sources->last_groups = groups;
@@ -573,6 +577,15 @@ void sources_sample(Sources *sources, Sample *sample, unsigned groups)
         }
         sample->ryzen_access_denied = sources->ryzen_access_denied;
         ryzen_sample(sources->ryzen, sample, groups);
+    }
+    if (groups & TUNING) {
+        const ULONGLONG now = GetTickCount64();
+        if (now >= sources->next_bclk) {
+            sources->bclk_mhz = bclk_read();
+            sources->next_bclk = now + 5000;
+        }
+        if (sources->bclk_mhz > 0)
+            metric_put(sample, "cpu.bclk", "", sources->bclk_mhz);
     }
     if (sources->query && PdhCollectQueryData(sources->query) == ERROR_SUCCESS) {
         PDH_FMT_COUNTERVALUE clock;

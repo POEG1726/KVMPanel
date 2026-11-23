@@ -67,6 +67,7 @@ double hotspot_read(Pawn *pawn, unsigned bus, unsigned device, unsigned function
 Ryzen *ryzen_open(BOOL *access_denied);
 void ryzen_sample(Ryzen *ryzen, Sample *sample, unsigned groups);
 void ryzen_close(Ryzen *ryzen);
+double bclk_read(void);
 
 /** Read DDR5 SPD hub temperatures through a supported SMBus controller. */
 Ddr5 *ddr5_open(void);

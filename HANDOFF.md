@@ -2,19 +2,19 @@
 
 最近五项有实际进展的软件工作，最新一项在顶部。全项目状态见 [软件进度](docs/software-progress.md)。
 
+## Windows PC 遥测采集器
+
+核对日期 2026-11-23。
+
+- 原生 C/Win32 采集器带设置窗口和托盘。Windows x64 构建通过，本机验证 CPU、内存、磁盘、逐网卡和 GPU 基础指标。RTX 5090 管理员探测同时取得核心温度 29 °C、核心热点 31.1875 °C 和显存结温 40 °C。普通权限访问 PawnIO 被拒时仍可采集核心温度及显存结温。 [采集器与只读探测](software/app/pc-telemetry/README.md)
+- 本机验证 Ryzen 时钟域、功耗限值、倍频、供电读数和两条 DDR5 的 SPD 温度、PMIC 告警、功率及六路电压，另已加锁核对 ADC 恢复。按 ZenStates 寄存器路径接入内部 PLL BCLK，本机 `--once` 读取 100 MHz。接手用 `--once` 核对其它主板和非默认频率，再测实板 USB。DRAM 读写带宽和 Intel GPU 深度读取待实现。 [CPU 和 DIMM 采集](software/app/pc-telemetry/README.md#cpu-和-dimm-硬件读数)
+
 ## 板端 Dashboard 与指标选择
 
 核对日期 2026-11-23。
 
 - `kvmd` 每秒上报 `board`，通过 `metric_catalogue` 提供包含隐藏项的清单，检查 PE12 后才处理 `pc_power_on`。板端 Dashboard 用 LVGL framebuffer 逐项显隐、四方向旋转，主机离线时显示板子状态并可息屏唤醒。Rust、Mock、网页、ARM 静态构建及原生和 ARM/QEMU 无屏冒烟均通过。 [Dashboard](software/app/dashboard/README.md) · [协议](software/app/api/README.md#副屏-panel-socket)
 - `build/debian/kvmpanel-debian13-armhf-dashboard.img.xz` 包含副屏、`kvmd`、WS2812 和 MJPEG 内核，已离线检查文件系统、服务及组合 DTB。接手先核对实际屏、触摸设备和 /dev/fb0，再测试 USB 实板数据、开机按钮、息屏和方向。当前主屏用分组指标列表，原型的横屏方案 B 及曲线排版尚待移植。 [镜像构建](software/os/debian/README.md)
-
-## Windows PC 遥测采集器
-
-核对日期 2026-11-23。
-
-- 原生 C/Win32 采集器带设置窗口和托盘。Windows x64 构建通过，本机验证 CPU、内存、磁盘、逐网卡和 GPU 基础指标。RTX 5090 管理员探测同时取得核心温度 29 °C、核心热点 31.1875 °C 和显存结温 40 °C。普通权限访问 PawnIO 被拒时仍可采集核心温度及显存结温。 [采集器与只读探测](software/app/pc-telemetry/README.md)
-- 本机验证 Ryzen 时钟域、功耗限值、倍频、供电读数和两条 DDR5 的 SPD 温度、PMIC 告警、功率及六路电压，另已加锁核对 ADC 恢复。接手用 `--once` 核对其他主机，再测实板 USB。BCLK、DRAM 读写带宽及 Intel GPU 深度读取待实现。 [CPU 和 DIMM 采集](software/app/pc-telemetry/README.md#cpu-和-dimm-硬件读数)
 
 ## WS2812 板级驱动
 
