@@ -31,6 +31,7 @@ Item {
     // Grid: 24 px cells, rgba(94,196,255,.25) lines, layer opacity .25, mask transparent/30%/70%/transparent.
     Item {
         id: grid
+        visible: false // grid removed from the design
         anchors.fill: parent
         opacity: 0.25
         readonly property real cell: 24 * S
