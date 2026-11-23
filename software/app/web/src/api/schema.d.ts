@@ -772,7 +772,8 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** Change MCP input arbitration (mcp permission) */
+        patch: operations["patchMcpInputPolicy"];
         trace?: never;
     };
     "/api/mcp/keys": {
@@ -1334,8 +1335,20 @@ export interface components {
             /** @description Last 4 characters of the key */
             hint: string;
         };
+        /**
+         * @description Human console input can take over an MCP input operation.
+         * @default true
+         */
+        McpHumanInputPriority: boolean;
+        /**
+         * @description Seconds from the last human input before MCP can send input again while priority is enabled.
+         * @default 2
+         */
+        McpHumanInputWait: number;
         McpState: {
             enabled: boolean;
+            human_input_priority: components["schemas"]["McpHumanInputPriority"];
+            human_input_wait_s: components["schemas"]["McpHumanInputWait"];
             keys: components["schemas"]["McpKey"][];
         };
         McpAuditEntry: {
@@ -4057,6 +4070,60 @@ export interface operations {
             };
             /** @description Enabling without a key (error=no_key) */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    patchMcpInputPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    human_input_priority?: components["schemas"]["McpHumanInputPriority"];
+                    human_input_wait_s?: components["schemas"]["McpHumanInputWait"];
+                };
+            };
+        };
+        responses: {
+            /** @description Current MCP state with the updated input policy */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpState"];
+                };
+            };
+            /** @description Invalid request body or parameters */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not logged in or session expired (error=unauthenticated) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Missing permission or role (error=forbidden) */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

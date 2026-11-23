@@ -80,6 +80,7 @@ export function registerWs(app: FastifyInstance, state: State) {
       // A disabled account or ended session loses input rights immediately.
       if (!accountForToken(state, req.cookies[COOKIE])) return socket.close(4401, 'unauthenticated');
       if (account.view_only) return send(conn, { t: 'error', error: 'forbidden' });
+      state.mcpLastHumanInput = state.now();
       if (msg.t === 'key' && msg.down === true && typeof msg.code === 'string' && msg.code in LOCK_KEYS) {
         const k = LOCK_KEYS[msg.code];
         state.locks[k] = !state.locks[k];

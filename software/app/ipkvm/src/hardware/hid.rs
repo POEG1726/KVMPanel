@@ -152,6 +152,15 @@ impl Keyboard {
         }
         b
     }
+
+    fn combined_report(&self, other: &Self) -> [u8; 8] {
+        let mut combined = self.clone();
+        combined.modifiers |= other.modifiers;
+        for &key in &other.keys {
+            combined.change(key, true);
+        }
+        combined.report()
+    }
 }
 
 struct SuspendedInput {
@@ -159,6 +168,7 @@ struct SuspendedInput {
     buttons: u8,
     absolute: bool,
     relative_motion: bool,
+    shared: bool,
 }
 
 #[derive(Default)]
@@ -201,14 +211,52 @@ impl Hid {
         let file = self.ports.get(name).ok_or(io::ErrorKind::NotConnected)?;
         send(file, report)
     }
-    fn key(&mut self, k: u8, down: bool) -> io::Result<()> {
-        let mut next = self.keyboard.clone();
-        next.change(k, down);
-        self.send("keyboard", &next.report())?;
-        self.keyboard = next;
+    fn keyboard_state(&self, human: bool) -> &Keyboard {
+        match &self.suspended {
+            Some(saved) if human => &saved.keyboard,
+            _ => &self.keyboard,
+        }
+    }
+    fn keyboard_report(&self, next: &Keyboard, human: bool) -> [u8; 8] {
+        if self.suspended.as_ref().is_some_and(|saved| saved.shared) {
+            next.combined_report(self.keyboard_state(!human))
+        } else {
+            next.report()
+        }
+    }
+    fn set_keyboard(&mut self, next: Keyboard, human: bool) -> io::Result<()> {
+        self.send("keyboard", &self.keyboard_report(&next, human))?;
+        match &mut self.suspended {
+            Some(saved) if human => saved.keyboard = next,
+            _ => self.keyboard = next,
+        }
         Ok(())
     }
+    fn key(&mut self, k: u8, down: bool, human: bool) -> io::Result<()> {
+        let mut next = self.keyboard_state(human).clone();
+        next.change(k, down);
+        self.set_keyboard(next, human)
+    }
     fn mouse(&mut self, absolute: bool, rel: [i8; 2], wheel: i8) -> io::Result<()> {
+        let buttons = match &self.suspended {
+            Some(saved) if saved.shared => {
+                let mcp = if self.last_abs == absolute {
+                    self.buttons
+                } else {
+                    0
+                };
+                let human = if saved.absolute == absolute {
+                    saved.buttons
+                } else {
+                    0
+                };
+                mcp | human
+            }
+            _ => self.buttons,
+        };
+        self.mouse_report(absolute, buttons, rel, wheel)
+    }
+    fn mouse_report(&self, absolute: bool, buttons: u8, rel: [i8; 2], wheel: i8) -> io::Result<()> {
         let merged = self.ports.contains_key("merged");
         let name = if merged {
             "merged"
@@ -221,7 +269,7 @@ impl Hid {
         if absolute || merged {
             report.push(if absolute { 2 } else { 1 })
         }
-        report.push(self.buttons);
+        report.push(buttons);
         if absolute {
             for coord in self.position {
                 report.extend_from_slice(&(coord >> 1).to_le_bytes())
@@ -235,9 +283,25 @@ impl Hid {
     /// A text stroke may require modifiers different from the user's held keys.
     /// Restore the current keyboard report even if pressing or releasing fails.
     pub fn type_key(&self, modifiers: u8, usage: u8) -> io::Result<()> {
-        type_stroke(self.keyboard.report(), modifiers, usage, |report| {
-            self.send("keyboard", report)
-        })
+        self.type_key_for(modifiers, usage, false)
+    }
+    pub fn human_type_key(&mut self, modifiers: u8, usage: u8) -> io::Result<()> {
+        self.share_input();
+        self.type_key_for(modifiers, usage, true)
+    }
+    fn type_key_for(&self, modifiers: u8, usage: u8, human: bool) -> io::Result<()> {
+        type_stroke(
+            self.keyboard_report(self.keyboard_state(human), human),
+            modifiers,
+            usage,
+            |report| self.send("keyboard", report),
+        )
+    }
+
+    fn share_input(&mut self) {
+        if let Some(saved) = &mut self.suspended {
+            saved.shared = true;
+        }
     }
 
     pub fn jiggle(&mut self) -> io::Result<()> {
@@ -261,13 +325,20 @@ impl Hid {
         }
     }
     pub fn input(&mut self, m: &Value) -> io::Result<()> {
+        self.input_for(m, false)
+    }
+    pub fn human_input(&mut self, m: &Value) -> io::Result<()> {
+        self.share_input();
+        self.input_for(m, true)
+    }
+    fn input_for(&mut self, m: &Value, human: bool) -> io::Result<()> {
         let code = |v: &Value| {
             v.as_str()
                 .and_then(keycode)
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "unsupported HID key"))
         };
         match m["t"].as_str() {
-            Some("key") => self.key(code(&m["code"])?, m["down"] == true),
+            Some("key") => self.key(code(&m["code"])?, m["down"] == true, human),
             Some("shortcut") => {
                 let keys = m["keys"]
                     .as_array()
@@ -275,18 +346,17 @@ impl Hid {
                     .iter()
                     .map(code)
                     .collect::<io::Result<Vec<_>>>()?;
-                let old = self.keyboard.clone();
+                let old = self.keyboard_state(human).clone();
                 let result = (|| {
                     for &k in &keys {
-                        self.key(k, true)?
+                        self.key(k, true, human)?
                     }
                     for &k in keys.iter().rev() {
-                        self.key(k, false)?
+                        self.key(k, false, human)?
                     }
                     Ok(())
                 })();
-                self.keyboard = old;
-                let restored = self.send("keyboard", &self.keyboard.report());
+                let restored = self.set_keyboard(old, human);
                 result.and(restored)
             }
             Some("mouse_abs") | Some("mouse_rel") => {
@@ -296,7 +366,7 @@ impl Hid {
                     m["dx"].as_i64().unwrap_or(0) as i8,
                     m["dy"].as_i64().unwrap_or(0) as i8,
                 ];
-                self.update_mouse_mode(buttons, absolute)?;
+                self.update_mouse_mode(buttons, absolute, human)?;
                 if absolute {
                     self.position = [
                         m["x"].as_u64().unwrap_or(0) as u16,
@@ -315,7 +385,7 @@ impl Hid {
             }
             Some("wheel") => {
                 let abs = if self.ports.contains_key("merged") {
-                    self.last_abs
+                    self.mouse_state(human).0
                 } else {
                     !self.ports.contains_key("relative")
                 };
@@ -344,26 +414,45 @@ impl Hid {
 
     pub fn release_human(&mut self) -> io::Result<()> {
         // A console disconnect invalidates the saved human state, even during MCP input.
-        if let Some(saved) = &mut self.suspended {
-            saved.keyboard = Keyboard::default();
-            saved.buttons = 0;
-            Ok(())
+        let Some(saved) = &self.suspended else {
+            return self.reset();
+        };
+        let keyboard = if saved.shared && saved.keyboard.report() != [0; 8] {
+            self.send("keyboard", &self.keyboard.report())
         } else {
-            self.reset()
+            Ok(())
+        };
+        let mouse = if saved.shared && saved.buttons != 0 {
+            let remaining = if self.last_abs == saved.absolute {
+                self.buttons
+            } else {
+                0
+            };
+            self.mouse_report(saved.absolute, remaining, [0, 0], 0)
+        } else {
+            Ok(())
+        };
+        let saved = self.suspended.as_mut().unwrap();
+        if keyboard.is_ok() {
+            saved.keyboard = Keyboard::default();
         }
+        if mouse.is_ok() {
+            saved.buttons = 0;
+        }
+        keyboard.and(mouse)
     }
 
-    /// Start with neutral HID state so a human modifier cannot affect a tool's chord.
-    pub fn begin_mcp_input(&mut self) -> io::Result<()> {
+    /// Save human state, sending neutral reports first when inputs must take turns.
+    pub fn begin_mcp_input(&mut self, shared: bool) -> io::Result<()> {
         if self.suspended.is_some() {
             return Ok(());
         }
         let held = self.keyboard.report();
-        if held != [0; 8] {
+        if !shared && held != [0; 8] {
             self.send("keyboard", &[0; 8])?;
         }
         let buttons = std::mem::take(&mut self.buttons);
-        if buttons != 0 {
+        if !shared && buttons != 0 {
             if let Err(error) = self.mouse(self.last_abs, [0, 0], 0) {
                 self.buttons = buttons;
                 if held != [0; 8] {
@@ -377,6 +466,7 @@ impl Hid {
             buttons,
             absolute: self.last_abs,
             relative_motion: false,
+            shared,
         });
         Ok(())
     }
@@ -386,6 +476,29 @@ impl Hid {
         let Some(saved) = self.suspended.take() else {
             return Ok(());
         };
+        if saved.shared {
+            let had_keys = self.keyboard.report() != [0; 8];
+            self.keyboard = saved.keyboard;
+            let keys = self.keyboard.report();
+            let keyboard = if had_keys || keys != [0; 8] {
+                self.send("keyboard", &keys)
+            } else {
+                Ok(())
+            };
+            let mcp_buttons = std::mem::replace(&mut self.buttons, saved.buttons);
+            let mcp_absolute = std::mem::replace(&mut self.last_abs, saved.absolute);
+            let mouse = if mcp_buttons != 0 {
+                let remaining = if mcp_absolute == saved.absolute {
+                    saved.buttons
+                } else {
+                    0
+                };
+                self.mouse_report(mcp_absolute, remaining, [0, 0], 0)
+            } else {
+                Ok(())
+            };
+            return keyboard.and(mouse);
+        }
         let keys = if self.keyboard.report() != [0; 8] {
             self.send("keyboard", &[0; 8])
         } else {
@@ -425,20 +538,38 @@ impl Hid {
         }
         json!({"num":self.led&1!=0,"caps":self.led&2!=0,"scroll":self.led&4!=0})
     }
-    fn update_mouse_mode(&mut self, buttons: u8, absolute: bool) -> io::Result<()> {
-        if self.suspended.is_some() && self.last_abs != absolute && self.buttons != 0 {
-            let held = std::mem::take(&mut self.buttons);
-            if let Err(error) = self.mouse(self.last_abs, [0, 0], 0) {
-                self.buttons = held;
+    fn mouse_state(&self, human: bool) -> (bool, u8) {
+        match &self.suspended {
+            Some(saved) if human => (saved.absolute, saved.buttons),
+            _ => (self.last_abs, self.buttons),
+        }
+    }
+    fn set_mouse_state(&mut self, human: bool, absolute: bool, buttons: u8) {
+        match &mut self.suspended {
+            Some(saved) if human => {
+                saved.absolute = absolute;
+                saved.buttons = buttons;
+            }
+            _ => {
+                self.last_abs = absolute;
+                self.buttons = buttons;
+            }
+        }
+    }
+    fn update_mouse_mode(&mut self, buttons: u8, absolute: bool, human: bool) -> io::Result<()> {
+        let (old_mode, held) = self.mouse_state(human);
+        if self.suspended.is_some() && old_mode != absolute && held != 0 {
+            self.set_mouse_state(human, old_mode, 0);
+            if let Err(error) = self.mouse(old_mode, [0, 0], 0) {
+                self.set_mouse_state(human, old_mode, held);
                 return Err(error);
             }
         }
-        self.buttons = buttons;
-        self.last_abs = absolute;
+        self.set_mouse_state(human, absolute, buttons);
         Ok(())
     }
     pub fn mouse_buttons(&mut self, buttons: u8, absolute: bool) -> io::Result<()> {
-        self.update_mouse_mode(buttons, absolute)?;
+        self.update_mouse_mode(buttons, absolute, false)?;
         self.mouse(absolute, [0, 0], 0)
     }
     pub fn host_write(&self, packet: &[u8; 64]) -> io::Result<()> {
@@ -481,6 +612,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn shared_input_releases_only_mcp_keys_and_mouse_buttons() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut hid = Hid::default();
+        for name in ["keyboard", "relative"] {
+            hid.ports
+                .insert(name, File::create(dir.path().join(name)).unwrap());
+        }
+        hid.human_input(&json!({"t":"key","code":"ControlLeft","down":true}))
+            .unwrap();
+        hid.begin_mcp_input(true).unwrap();
+        hid.input(&json!({"t":"key","code":"KeyB","down":true}))
+            .unwrap();
+        hid.human_input(&json!({"t":"key","code":"KeyC","down":true}))
+            .unwrap();
+        hid.mouse_buttons(1, false).unwrap();
+        hid.human_input(&json!({"t":"mouse_rel","dx":3,"dy":0,"buttons":2}))
+            .unwrap();
+        hid.finish_mcp_input().unwrap();
+
+        let keys = fs::read(dir.path().join("keyboard")).unwrap();
+        assert_eq!(
+            keys.chunks_exact(8).collect::<Vec<_>>(),
+            [
+                [1, 0, 0, 0, 0, 0, 0, 0],
+                [1, 0, 5, 0, 0, 0, 0, 0],
+                [1, 0, 6, 5, 0, 0, 0, 0],
+                [1, 0, 6, 0, 0, 0, 0, 0],
+            ]
+        );
+        assert_eq!(
+            fs::read(dir.path().join("relative")).unwrap(),
+            [1, 0, 0, 0, 3, 3, 0, 0, 2, 0, 0, 0]
+        );
+    }
+
+    #[test]
     fn mcp_releases_its_own_input_and_does_not_restore_stale_pointer_coordinates() {
         let dir = tempfile::tempdir().unwrap();
         let mut hid = Hid::default();
@@ -492,7 +659,7 @@ mod tests {
             .unwrap();
         hid.input(&json!({"t":"mouse_abs","x":400,"y":800,"buttons":1}))
             .unwrap();
-        hid.begin_mcp_input().unwrap();
+        hid.begin_mcp_input(false).unwrap();
         hid.input(&json!({"t":"key","code":"KeyB","down":true}))
             .unwrap();
         hid.input(&json!({"t":"mouse_rel","dx":10,"dy":0,"buttons":2}))
@@ -526,9 +693,9 @@ mod tests {
             "keyboard",
             File::create(dir.path().join("keyboard")).unwrap(),
         );
-        hid.key(224, true).unwrap();
-        hid.begin_mcp_input().unwrap();
-        hid.key(5, true).unwrap();
+        hid.key(224, true, true).unwrap();
+        hid.begin_mcp_input(false).unwrap();
+        hid.key(5, true, false).unwrap();
         hid.release_human().unwrap();
         assert_eq!(hid.keyboard.report()[2], 5);
         hid.finish_mcp_input().unwrap();

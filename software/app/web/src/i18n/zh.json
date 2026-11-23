@@ -459,6 +459,10 @@
     "mcp": {
       "enabled": "启用 MCP",
       "enabledHint": "允许客户端通过已分配权限的密钥访问。",
+      "humanPriority": "人工输入优先",
+      "humanPriorityHint": "人工输入会接管 MCP。关闭后，人工与 MCP 的输入可以交错。",
+      "humanWait": "交还等待时间",
+      "humanWaitHint": "开启优先时，从最后一次人工输入起等待 1–60 秒。",
       "keys": "密钥",
       "keyHint": "末四位 {{hint}}",
       "noKey": "还没有密钥",

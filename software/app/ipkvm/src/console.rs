@@ -544,7 +544,13 @@ async fn input_for(
                 let app = app.clone();
                 async move {
                     tokio::task::spawn_blocking(move || {
-                        hid_write(&app, session, |hw| hw.type_key(modifiers, usage))
+                        hid_write(&app, session, |hw| {
+                            if session.is_some() {
+                                hw.human_type_key(modifiers, usage)
+                            } else {
+                                hw.type_key(modifiers, usage)
+                            }
+                        })
                     })
                     .await
                     .map_err(io::Error::other)??;
@@ -555,9 +561,17 @@ async fn input_for(
         }
         _ => {
             let target = app.clone();
-            tokio::task::spawn_blocking(move || hid_write(&target, session, |hw| hw.hid(&event)))
-                .await
-                .map_err(io::Error::other)??;
+            tokio::task::spawn_blocking(move || {
+                hid_write(&target, session, |hw| {
+                    if session.is_some() {
+                        hw.human_hid(&event)
+                    } else {
+                        hw.hid(&event)
+                    }
+                })
+            })
+            .await
+            .map_err(io::Error::other)??;
             if msg["t"] == "key" || msg["t"] == "shortcut" {
                 app.emit("status_changed");
             }
@@ -748,9 +762,11 @@ async fn console(
                                 if !crate::mcp::valid_human_input(&app,&v) {
                                     return Err(ApiError::new(400,if v["t"] == "paste" && v["text"].as_str().is_some_and(|text| text.len() <= 65536) { "unmappable" } else { "bad_message" }));
                                 }
-                                app.mcp.human_input();
-                                let _gate = app.mcp.input.lock().await;
-                                crate::mcp::release_raw_input(&app).await;
+                                let _gate = if app.mcp.human_input(&app) {
+                                    let gate = app.mcp.input.lock().await;
+                                    crate::mcp::release_raw_input(&app).await;
+                                    Some(gate)
+                                } else { None };
                                 input_for(&app,&v,||app.require(&h,"console").is_ok_and(|u|u["view_only"]!=true),Some(id)).await
                             }));
                             None

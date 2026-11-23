@@ -176,4 +176,6 @@ MCP 客户端向 `/api/mcp/v1` 发 Streamable HTTP JSON-RPC POST，带 `Authoriz
 
 网页通过 `GET/PUT /api/mcp` 管理总开关，通过 `/api/mcp/keys` 新建 key，使用 `/api/mcp/keys/{id}` 修改和删除。创建返回 `{key,entry}`，之后从列表只能读到末四位。查询操作日志用 `GET /api/mcp/audit`。网页登录账号有可写控制台权限即可 `POST /api/mcp/stop`，重新开启要有 MCP 管理权限。原有 Bearer 截图和 HID 接口保留，分别检查 `observe` 和 `input`。
 
+`PATCH /api/mcp` 用 `mcp` 权限单独更新人工输入优先策略，可提交一个或两个字段。`human_input_priority` 默认 `true`，`human_input_wait_s` 是 1–60 秒的整数，默认 `2`。`GET /api/mcp` 与 `host_status.control` 返回这两个当前值。优先打开时，有效人工输入可接管正在执行的 MCP 输入。有可写控制台会话时，距离最近人工输入不足等待时间的 MCP 输入返回 `human_active`。关闭优先后，双方可交错输入，急停仍可停止 MCP。
+
 网页状态中的 `status.mcp` 含 `{active,key_name,tool}`。panel socket 发送同一结构并加 `t:mcp`，副屏发 `{t:mcp_stop,id?}` 可急停。主机启动按键用 `config.host` 保存，由 `device` 权限修改。Windows 主机程序使用 [主机端 HID 通道](host-agent.md)。

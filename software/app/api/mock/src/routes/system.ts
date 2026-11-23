@@ -95,7 +95,7 @@ export function registerSystem(app: FastifyInstance, state: State) {
 
   const mcp = requirePerm(state, 'mcp');
   const publicKey = ({ hash: _hash, ...key }: State['mcpKeys'] extends Map<string, infer Entry> ? Entry : never) => key;
-  const mcpState = () => ({ enabled: state.mcpEnabled, keys: [...state.mcpKeys.values()].map(publicKey) });
+  const mcpState = () => ({ enabled: state.mcpEnabled, keys: [...state.mcpKeys.values()].map(publicKey), ...state.mcpInputPolicy });
   app.get('/api/mcp', { preHandler: mcp }, async () => mcpState());
   app.put('/api/mcp', { preHandler: [mcp, bodyGuard('putMcp')] }, async (req, reply) => {
     const { enabled } = req.body as { enabled: boolean };
@@ -105,6 +105,10 @@ export function registerSystem(app: FastifyInstance, state: State) {
       state.events.emit('status_changed');
     }
     state.mcpEnabled = enabled;
+    return mcpState();
+  });
+  app.patch('/api/mcp', { preHandler: [mcp, bodyGuard('patchMcpInputPolicy')] }, async (req) => {
+    Object.assign(state.mcpInputPolicy, req.body);
     return mcpState();
   });
   app.post('/api/mcp/keys', { preHandler: [mcp, bodyGuard('createMcpKey')] }, async (req, reply) => {
@@ -157,6 +161,12 @@ export function registerSystem(app: FastifyInstance, state: State) {
   app.post('/api/mcp/v1/hid', { preHandler: bearer('input') }, async (req, reply) => {
     const m = req.body as { t?: string };
     if (!validInput(m) || m.t === 'ping') return sendError(reply, 400, 'bad_message');
+    const { human_input_priority, human_input_wait_s } = state.mcpInputPolicy;
+    if (human_input_priority && state.mcpLastHumanInput !== null
+      && state.now() - state.mcpLastHumanInput < human_input_wait_s * 1000
+      && state.consoleClients.some(({ user }) => state.accounts.get(user)?.view_only === false)) {
+      return sendError(reply, 409, 'human_active');
+    }
     return reply.code(204).send();
   });
 

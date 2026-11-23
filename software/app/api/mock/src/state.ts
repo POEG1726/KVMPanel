@@ -94,6 +94,8 @@ export interface State {
   /** Open /api/stream sockets that are not paused. */
   activeStreams: number;
   mcpEnabled: boolean;
+  mcpInputPolicy: { human_input_priority: boolean; human_input_wait_s: number };
+  mcpLastHumanInput: number | null;
   update: { channel: 'stable' | 'preview'; server: string };
   updateJobs: Map<string, { id: string; state: 'running' | 'done' | 'failed'; progress: number }>;
   /** USB set the gadget is running (config.usb may be ahead until applied). */
@@ -146,6 +148,8 @@ export function createState(opts: { now?: () => number; sleep?: (ms: number) => 
     consoleClients: [],
     activeStreams: 0,
     mcpEnabled: false,
+    mcpInputPolicy: { human_input_priority: true, human_input_wait_s: 2 },
+    mcpLastHumanInput: null,
     update: { channel: 'stable', server: 'https://updates.example.invalid/kvmpanel' },
     updateJobs: new Map(),
     usbApplied: structuredClone(config.usb),

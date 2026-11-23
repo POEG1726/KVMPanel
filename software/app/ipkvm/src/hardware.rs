@@ -20,6 +20,12 @@ pub trait Hardware: Send + Sync {
     fn type_key(&self, modifiers: u8, usage: u8) -> io::Result<()>;
     fn jiggle(&self) -> io::Result<()>;
     fn hid(&self, msg: &Value) -> io::Result<()>;
+    fn human_hid(&self, msg: &Value) -> io::Result<()> {
+        self.hid(msg)
+    }
+    fn human_type_key(&self, modifiers: u8, usage: u8) -> io::Result<()> {
+        self.type_key(modifiers, usage)
+    }
     fn press(&self, button: &str, duration_ms: u64) -> io::Result<()>;
     fn press_cancellable(
         &self,
@@ -39,7 +45,7 @@ pub trait Hardware: Send + Sync {
         }
         self.press(button, duration_ms)
     }
-    fn begin_mcp_input(&self) -> io::Result<()> {
+    fn begin_mcp_input(&self, _shared: bool) -> io::Result<()> {
         Ok(())
     }
     fn finish_mcp_input(&self) -> io::Result<()> {

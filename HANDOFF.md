@@ -9,7 +9,8 @@
 - **代码**。`/api/mcp/v1` 和 22 个工具已落地，保留 Bearer REST 截图和 HID。分权限密钥、人工接管、电源与介质确认、网页和副屏停止、WS2812 提示及操作日志已接入。Windows 程序用 HID Input 4 和 Output 3 交换请求和回复，剪贴板默认关闭。 [API 契约](software/app/api/README.md#mcp) · [HID 协议](software/app/api/host-agent.md)
 - **构建**。网页、原生和 ARM Dashboard、WSL ARM 静态 `kvmd`、Windows x64 构建通过。ARM `kvmd` 去符号后为 13,030,312 字节，较 MCP 前增加 944 KiB。 [板端构建与验证](software/app/ipkvm/README.md#mcp-服务) · [Windows 构建与模拟](software/app/pc-telemetry/README.md#mcp-主机端通道)
 - **模拟**。Rust 102 项、Mock 79 项、网页 179 项通过。原生和 ARM Linux 来宾中的 `kvmd --sim` 经 HTTP 覆盖全部 22 个工具，包括可写介质确认和强关途中急停。MCP Inspector 验证了截图、点击、开机守护和进 BIOS。无屏副屏验证了横幅和停止，Unix panel socket 联调取消了正在长按的模拟按键。Windows 验证了 `info`、`clipboard`、`eject` 和默认关闭。
-- **实板待测**。接手从 [设计 §13](docs/superpowers/specs/2026-11-23-mcp-design.md#13-验证) 开始，核对 USB 双向吞吐、真实 LUN 2 弹出、绝对坐标、GPIO 急停、BIOS 连按、启动时间线、WS2812 和实际触摸。物理功能键接入按第 10 节留给板级联调。
+- **人工输入优先更新**。设置页和 `host_status.control` 提供优先开关及 1–60 秒交还等待，默认开启及两秒。原生 Rust 104 项、HTTP 全部 22 个工具、Mock 80 项、网页构建和 181 项测试通过。验证了默认拦截与到期放行、关闭后输入交错和急停。上面的 ARM、Windows、Inspector 和副屏记录适用于 MCP 首版。 [管理接口](software/app/api/README.md#mcp)
+- **实板待测**。接手从 [设计 §13](docs/superpowers/specs/2026-11-23-mcp-design.md#13-验证) 开始，核对人工和 MCP 键鼠交错、USB 双向吞吐、真实 LUN 2 弹出、绝对坐标、GPIO 急停、BIOS 连按、启动时间线、WS2812 和实际触摸。物理功能键接入按第 10 节留给板级联调。
 
 ## T113 接口驱动强度
 

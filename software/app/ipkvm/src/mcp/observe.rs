@@ -380,13 +380,15 @@ pub(super) async fn status(app: &App) -> Result<Value, ApiError> {
     .map_err(io::Error::other)?;
     let state = app.mcp.runtime.lock().unwrap();
     let usb = app.applied_usb();
+    let policy = app.system.snapshot().mcp_input_policy;
     Ok(json!({
         "power":{"state":power,"power_button":buttons.0,"reset_button":buttons.1},
         "video":video,"keyboard":keyboard,
         "usb":{"connected":connected,"functions":usb,"relative_only":usb["mouse_abs"]!=true},
         "telemetry":{"online":app.mcp.metrics.online(app)},
         "host_agent":app.mcp.host.status(app),"media":app.storage.mcp_media_status(),
-        "control":{"writable_sessions":app.console.writable_count(),"last_human_input_s":state.last_human.map(|t|t.elapsed().as_secs()),"stopped":state.stopped}
+        "control":{"writable_sessions":app.console.writable_count(),"last_human_input_s":state.last_human.map(|t|t.elapsed().as_secs()),"stopped":state.stopped,
+            "human_input_priority":policy.human_input_priority,"human_input_wait_s":policy.human_input_wait_s}
     }))
 }
 pub(super) fn power_state(app: &App) -> &'static str {

@@ -13,7 +13,8 @@ const AUDIT_KEY = ['mcp-audit'] as const;
 type Scope = components['schemas']['McpScope'];
 type Key = components['schemas']['McpKey'];
 type Draft = components['schemas']['McpKeyEdit'] & { id?: string };
-type Action = { enabled: boolean } | { save: Draft } | { remove: string };
+type InputPolicy = Partial<Pick<components['schemas']['McpState'], 'human_input_priority' | 'human_input_wait_s'>>;
+type Action = { enabled: boolean } | { inputPolicy: InputPolicy } | { save: Draft } | { remove: string };
 const scopes: Scope[] = ['observe', 'input', 'power', 'media', 'host_private'];
 
 export function McpPage() {
@@ -31,6 +32,8 @@ export function McpPage() {
     mutationFn: async (action: Action) => {
       if ('enabled' in action) {
         qc.setQueryData(MCP_KEY, await unwrap(api.PUT('/api/mcp', { body: action })));
+      } else if ('inputPolicy' in action) {
+        qc.setQueryData(MCP_KEY, await unwrap(api.PATCH('/api/mcp', { body: action.inputPolicy })));
       } else if ('remove' in action) {
         await unwrap(api.DELETE('/api/mcp/keys/{id}', { params: { path: { id: action.remove } } }));
         setFresh((current) => current?.id === action.remove ? null : current);
@@ -79,6 +82,7 @@ export function McpPage() {
   };
 
   const keys = mcp.data?.keys ?? [];
+  const wait = mcp.data?.human_input_wait_s;
   const endpoint = `${window.location.origin}/api/mcp/v1`;
   const exampleKey = fresh?.key ?? '<key>';
   return (
@@ -87,6 +91,21 @@ export function McpPage() {
         <Row label={t('settings.mcp.enabled')} hint={t('settings.mcp.enabledHint')}>
           <Switch label={t('settings.mcp.enabled')} checked={!!mcp.data?.enabled}
             disabled={!ready || (!mcp.data?.enabled && !keys.length)} onChange={(enabled) => change({ enabled })} />
+        </Row>
+        <Row label={t('settings.mcp.humanPriority')} hint={t('settings.mcp.humanPriorityHint')}>
+          <Switch label={t('settings.mcp.humanPriority')} checked={mcp.data?.human_input_priority ?? true}
+            disabled={!ready} onChange={(checked) => change({ inputPolicy: { human_input_priority: checked } })} />
+        </Row>
+        <Row label={t('settings.mcp.humanWait')} hint={t('settings.mcp.humanWaitHint')}>
+          <input key={wait} className={s.input} type="number" aria-label={t('settings.mcp.humanWait')}
+            min={1} max={60} step={1} required defaultValue={wait} disabled={!ready}
+            onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }}
+            onBlur={({ currentTarget: field }) => {
+              const seconds = field.valueAsNumber;
+              const valid = field.validity.valid;
+              field.value = wait === undefined ? '' : String(wait);
+              if (valid && seconds !== wait) change({ inputPolicy: { human_input_wait_s: seconds } });
+            }} />
         </Row>
       </Group>
       <Group title={t('settings.mcp.keys')}>

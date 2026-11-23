@@ -452,6 +452,38 @@ describe('MCP page', () => {
     fireEvent.change(screen.getByRole('textbox', { name: t('settings.mcp.name') }), { target: { value: name } });
   }
 
+  it.each([
+    ['en', 'Human input priority', 'Handback delay'],
+    ['zh', '人工输入优先', '交还等待时间'],
+  ])('shows and saves the MCP input policy in %s', async (language, priorityLabel, waitLabel) => {
+    await i18n.changeLanguage(language);
+    mount('mcp');
+    const priority = screen.getByRole('switch', { name: priorityLabel });
+    await waitFor(() => expect(priority).toBeEnabled());
+    expect(priority).toBeChecked();
+    fireEvent.click(priority);
+    await waitFor(() => expect(priority).not.toBeChecked());
+    await waitFor(() => expect(priority).toBeEnabled());
+
+    const wait = screen.getByRole('spinbutton', { name: waitLabel });
+    expect(wait).toHaveValue(2);
+    fireEvent.change(wait, { target: { value: '61' } });
+    fireEvent.blur(wait);
+    expect(wait).toHaveValue(2);
+    wait.focus();
+    fireEvent.change(wait, { target: { value: '12' } });
+    fireEvent.keyDown(wait, { key: 'Enter' });
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: waitLabel })).toHaveValue(12));
+    expect(requests.filter(({ key }) => key === 'PATCH /api/mcp').map(({ body }) => body)).toEqual([
+      { human_input_priority: false }, { human_input_wait_s: 12 },
+    ]);
+
+    cleanup();
+    mount('mcp');
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: waitLabel })).toHaveValue(12));
+    expect(screen.getByRole('switch', { name: priorityLabel })).not.toBeChecked();
+  });
+
   it('creates a scoped key, edits it, and confirms deletion', async () => {
     mount('mcp');
     const button = await screen.findByRole('button', { name: t('settings.mcp.create') });

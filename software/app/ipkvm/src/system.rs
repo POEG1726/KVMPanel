@@ -36,6 +36,7 @@ pub(crate) struct Settings {
     pub(crate) mcp_keys: Vec<crate::mcp::Key>,
     key_hint: Option<String>,
     pub(crate) mcp_enabled: bool,
+    pub(crate) mcp_input_policy: crate::mcp::InputPolicy,
     jobs: BTreeMap<String, Value>,
 }
 impl Default for Settings {
@@ -48,6 +49,7 @@ impl Default for Settings {
             mcp_keys: Vec::new(),
             key_hint: None,
             mcp_enabled: false,
+            mcp_input_policy: Default::default(),
             jobs: Default::default(),
         }
     }

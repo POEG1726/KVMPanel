@@ -457,6 +457,10 @@
     "mcp": {
       "enabled": "Enable MCP",
       "enabledHint": "Allow access using keys with assigned permissions.",
+      "humanPriority": "Human input priority",
+      "humanPriorityHint": "Console input takes over from MCP. When off, console and MCP input can interleave.",
+      "humanWait": "Handback delay",
+      "humanWaitHint": "1–60 seconds after the last console input when priority is on.",
       "keys": "Keys",
       "keyHint": "Ends with {{hint}}",
       "noKey": "No keys yet",

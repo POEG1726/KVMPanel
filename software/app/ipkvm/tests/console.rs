@@ -93,6 +93,116 @@ async fn console_socket_authorization_and_read_only() {
 }
 
 #[tokio::test]
+async fn mcp_input_policy_controls_handback_and_takeover_independently_of_stop() {
+    let s = Server::new().await;
+    let admin = s.login("admin", "admin").await;
+    let key = checked(
+        s.call(
+            "POST",
+            "/api/mcp/keys",
+            &admin,
+            Some(json!({"name":"input","scopes":["input","observe"]})),
+        )
+        .await,
+        "createMcpKey",
+        201,
+    )
+    .await;
+    let key = key["key"].as_str().unwrap();
+    assert_eq!(
+        s.call("PUT", "/api/mcp", &admin, Some(json!({"enabled":true})))
+            .await
+            .status(),
+        200
+    );
+    let call_tool = |name: &str, args: Value| {
+        let req = s.client.post(format!("{}/api/mcp/v1", s.url)).bearer_auth(key)
+            .json(&json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":args}}));
+        async move {
+            let response = req.send().await.unwrap().error_for_status().unwrap();
+            response.json::<Value>().await.unwrap()["result"].clone()
+        }
+    };
+    let patch = |body: Value| s.call("PATCH", "/api/mcp", &admin, Some(body));
+    let click = || call_tool("click_mouse", json!({"button":"left"}));
+    let input = |code| json!({"t":"key","code":code,"down":true});
+
+    let control = call_tool("host_status", json!({})).await;
+    assert_eq!(
+        control["structuredContent"]["control"]["human_input_priority"],
+        true
+    );
+    assert_eq!(
+        control["structuredContent"]["control"]["human_input_wait_s"],
+        2
+    );
+    let mut ws = open(&s, "/api/ws", &admin).await;
+    send(&mut ws, input("CapsLock")).await;
+    next_json(&mut ws, |m| {
+        m["t"] == "status" && m["locks"]["caps"] == true
+    })
+    .await;
+    assert_eq!(click().await["structuredContent"]["error"], "human_active");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(click().await["structuredContent"]["ok"], true);
+
+    let after = checked(
+        patch(json!({"human_input_wait_s":60})).await,
+        "patchMcpInputPolicy",
+        200,
+    )
+    .await;
+    assert_eq!(after["human_input_priority"], true);
+    assert_eq!(click().await["structuredContent"]["error"], "human_active");
+    checked(
+        patch(json!({"human_input_priority":false})).await,
+        "patchMcpInputPolicy",
+        200,
+    )
+    .await;
+    assert_eq!(click().await["structuredContent"]["ok"], true);
+    let holding = tokio::spawn(call_tool(
+        "press_keys",
+        json!({"keys":["KeyA"],"hold_ms":1500}),
+    ));
+    next_json(&mut ws, |m| {
+        m["t"] == "status" && m["mcp"]["tool"] == "press_keys"
+    })
+    .await;
+    send(&mut ws, input("NumLock")).await;
+    next_json(&mut ws, |m| m["t"] == "status" && m["locks"]["num"] == true).await;
+    assert!(
+        !holding.is_finished(),
+        "human reports must reach the host while MCP is holding a key"
+    );
+    assert_eq!(holding.await.unwrap()["structuredContent"]["ok"], true);
+
+    let dragging = tokio::spawn(call_tool(
+        "drag_mouse",
+        json!({"from":{"x":0,"y":0},"to":{"x":1,"y":1},"button":"left","duration_ms":5000}),
+    ));
+    next_json(&mut ws, |m| {
+        m["t"] == "status" && m["mcp"]["tool"] == "drag_mouse"
+    })
+    .await;
+    assert_eq!(
+        s.call("POST", "/api/mcp/stop", &admin, None).await.status(),
+        204
+    );
+    assert_eq!(
+        timeout(Duration::from_secs(2), dragging)
+            .await
+            .unwrap()
+            .unwrap()["structuredContent"]["error"],
+        "stopped"
+    );
+    let state = checked(s.call("GET", "/api/mcp", &admin, None).await, "getMcp", 200).await;
+    assert_eq!(state["enabled"], false);
+    assert_eq!(state["human_input_priority"], false);
+    assert_eq!(state["human_input_wait_s"], 60);
+}
+
+#[tokio::test]
 async fn power_and_wake_on_lan_contract() {
     let s = Server::new().await;
     let c = s.login("admin", "admin").await;

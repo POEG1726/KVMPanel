@@ -202,7 +202,8 @@ async fn report(app: &App, permit: &Permit, event: Value) -> Result<(), ApiError
 }
 pub(super) async fn begin(app: &App) -> Result<(), ApiError> {
     let hw = app.hw.clone();
-    tokio::task::spawn_blocking(move || hw.begin_mcp_input())
+    let shared = !app.system.snapshot().mcp_input_policy.human_input_priority;
+    tokio::task::spawn_blocking(move || hw.begin_mcp_input(shared))
         .await
         .map_err(io::Error::other)?
         .map_err(ApiError::device)

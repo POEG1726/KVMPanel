@@ -125,7 +125,14 @@ def check(client):
     client.tool(observe, "power", {"action": "press"}, error="forbidden_scope")
     client.rpc(all_scopes, "tools/call", {"name": "boot_watch", "arguments": {"start": "none", "retries": 1}}, error=-32602)
 
-    client.tool(all_scopes, "host_status")
+    _, fields = client.tool(all_scopes, "host_status")
+    assert fields["control"]["human_input_priority"] is True
+    assert fields["control"]["human_input_wait_s"] == 2
+    settings = client.request("PATCH", "/api/mcp", {"human_input_priority": False, "human_input_wait_s": 7})
+    assert settings["enabled"] is True
+    _, fields = client.tool(all_scopes, "host_status")
+    assert fields["control"]["human_input_priority"] is False
+    assert fields["control"]["human_input_wait_s"] == 7
     screenshot, fields = client.tool(all_scopes, "screenshot", {
         "region": {"x": 0.1, "y": 0.1, "w": 0.8, "h": 0.8}, "max_width": 320, "quality": 50,
     })

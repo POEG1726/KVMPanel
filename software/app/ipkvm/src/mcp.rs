@@ -31,6 +31,22 @@ const ALLOWED_VERSIONS: [&str; 2] = ["2025-06-18", "2025-11-25"];
 const CONFIRM_LIFETIME: Duration = Duration::from_secs(30);
 const ACTIVITY: Duration = Duration::from_secs(10);
 
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct InputPolicy {
+    pub(crate) human_input_priority: bool,
+    pub(crate) human_input_wait_s: u64,
+}
+
+impl Default for InputPolicy {
+    fn default() -> Self {
+        Self {
+            human_input_priority: true,
+            human_input_wait_s: 2,
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Key {
     id: String,
@@ -211,26 +227,29 @@ impl Mcp {
             )
     }
 
-    pub(crate) fn human_input(&self) {
+    pub(crate) fn human_input(&self, app: &App) -> bool {
         let mut state = self.runtime.lock().unwrap();
         state.last_human = Some(Instant::now());
-        state.human.send_replace(Interrupt::Human);
-        state.human = watch::channel(Interrupt::Running).0;
+        let priority = app.system.snapshot().mcp_input_policy.human_input_priority;
+        if priority {
+            state.human.send_replace(Interrupt::Human);
+            state.human = watch::channel(Interrupt::Running).0;
+        }
+        priority
     }
 
     fn permit(&self, app: &App, input: bool) -> Result<Permit, ApiError> {
         let state = self.runtime.lock().unwrap();
-        if state.blocked
-            || !app.system.snapshot().mcp_enabled
-            || app.config()["kvm"]["enabled"] != true
-        {
+        let settings = app.system.snapshot();
+        if state.blocked || !settings.mcp_enabled || app.config()["kvm"]["enabled"] != true {
             return Err(ApiError::new(403, "stopped"));
         }
         if input
+            && settings.mcp_input_policy.human_input_priority
             && app.console.writable_count() > 0
-            && state
-                .last_human
-                .is_some_and(|when| when.elapsed() < Duration::from_secs(5))
+            && state.last_human.is_some_and(|when| {
+                when.elapsed() < Duration::from_secs(settings.mcp_input_policy.human_input_wait_s)
+            })
         {
             return Err(ApiError::new(409, "human_active"));
         }
@@ -341,7 +360,12 @@ impl Drop for ActiveCall<'_> {
 
 pub(crate) fn routes() -> Router<App> {
     Router::new()
-        .route("/api/mcp", get(get_settings).put(put_settings))
+        .route(
+            "/api/mcp",
+            get(get_settings)
+                .put(put_settings)
+                .patch(patch_input_policy),
+        )
         .route("/api/mcp/keys", post(create_key))
         .route(
             "/api/mcp/keys/{id}",
@@ -366,7 +390,9 @@ fn settings(app: &App) -> Value {
         .iter()
         .map(|key| key.entry(&state.used))
         .collect();
-    json!({"enabled":settings.mcp_enabled,"keys":entries})
+    json!({"enabled":settings.mcp_enabled,"keys":entries,
+        "human_input_priority":settings.mcp_input_policy.human_input_priority,
+        "human_input_wait_s":settings.mcp_input_policy.human_input_wait_s})
 }
 
 async fn get_settings(State(app): State<App>, h: HeaderMap) -> Result<Json<Value>, ApiError> {
@@ -398,6 +424,29 @@ async fn put_settings(
         state.stopped = false;
         state.blocked = false;
     }
+    Ok(Json(settings(&app)))
+}
+
+async fn patch_input_policy(
+    State(app): State<App>,
+    h: HeaderMap,
+    JsonBody(mut body): JsonBody,
+) -> Result<Json<Value>, ApiError> {
+    app.require(&h, "mcp")?;
+    validate("patchMcpInputPolicy", &body)?;
+    crate::normalize_numbers(&mut body);
+    let _management = app.mcp.management.lock().await;
+    app.system
+        .change(move |settings| {
+            if let Some(priority) = body["human_input_priority"].as_bool() {
+                settings.mcp_input_policy.human_input_priority = priority;
+            }
+            if let Some(seconds) = body["human_input_wait_s"].as_u64() {
+                settings.mcp_input_policy.human_input_wait_s = seconds;
+            }
+            Ok(())
+        })
+        .await?;
     Ok(Json(settings(&app)))
 }
 
@@ -1205,7 +1254,7 @@ mod tests {
             .unwrap();
         let input = app.mcp.permit(&app, true).unwrap();
         let observe = app.mcp.permit(&app, false).unwrap();
-        app.mcp.human_input();
+        assert!(app.mcp.human_input(&app));
         assert_eq!(input.interrupted().await.code, "human_took_over");
         assert!(observe.running());
         stop_service(&app, true).await.unwrap();
@@ -1256,6 +1305,8 @@ mod tests {
         let app = App::new(dir.path(), true).unwrap();
         let state = app.system.snapshot();
         assert!(state.mcp_enabled);
+        assert!(state.mcp_input_policy.human_input_priority);
+        assert_eq!(state.mcp_input_policy.human_input_wait_s, 2);
         let key = &state.mcp_keys[0];
         assert_eq!(key.hash, digest(raw));
         assert_eq!(key.name, "default");

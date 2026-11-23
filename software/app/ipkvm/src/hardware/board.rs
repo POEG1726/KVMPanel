@@ -162,6 +162,12 @@ impl Hardware for Board {
     fn hid(&self, msg: &Value) -> io::Result<()> {
         self.hid.lock().unwrap().input(msg)
     }
+    fn human_hid(&self, msg: &Value) -> io::Result<()> {
+        self.hid.lock().unwrap().human_input(msg)
+    }
+    fn human_type_key(&self, modifiers: u8, usage: u8) -> io::Result<()> {
+        self.hid.lock().unwrap().human_type_key(modifiers, usage)
+    }
     fn reset_hid(&self) -> io::Result<()> {
         let _enumeration = self.enumeration.lock().unwrap();
         let mut hid = self.hid.lock().unwrap();
@@ -171,8 +177,8 @@ impl Hardware for Board {
     fn release_hid(&self) -> io::Result<()> {
         self.hid.lock().unwrap().release_human()
     }
-    fn begin_mcp_input(&self) -> io::Result<()> {
-        self.hid.lock().unwrap().begin_mcp_input()
+    fn begin_mcp_input(&self, shared: bool) -> io::Result<()> {
+        self.hid.lock().unwrap().begin_mcp_input(shared)
     }
     fn finish_mcp_input(&self) -> io::Result<()> {
         self.hid.lock().unwrap().finish_mcp_input()

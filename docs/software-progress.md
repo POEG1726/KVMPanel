@@ -5,6 +5,7 @@
 ## 已完成
 
 - **MCP 服务离线实现**。板端提供标准 Streamable HTTP、22 个工具、分权限密钥、审计和网页及副屏急停。Windows 上位机通过厂商 HID 提供窗口和显示器信息、受限剪贴板和共享盘安全弹出。Rust、Mock、网页测试与 Windows x64、WSL ARM 构建通过。全部工具通过原生及 ARM Linux 来宾 HTTP 模拟。MCP Inspector 和无屏副屏验证通过。 [板端验证](../software/app/ipkvm/README.md#mcp-服务) · [上位机验证](../software/app/pc-telemetry/README.md#mcp-主机端通道)
+- **MCP 人工输入优先设置**。网页可设置优先开关及 1–60 秒交还等待，默认开启及两秒。原生模拟验证默认拦截与到期放行、关闭后输入交错、急停仍生效和 `host_status` 返回设置。Rust 104 项、Mock 80 项、网页构建及 181 项测试通过。实板键鼠交错待测。 [接口与默认值](../software/app/api/README.md#mcp)
 - **全志 DDR PHY ZQ 寄存器对照**。离线核对 R528、D1、V853 与 T113 Tina SPL 的 ZQ 写入，复核 D1 板级配置、Centauri Boot0 的 ZQ 参数和全志公开手册。已追出 H3 六个半字节到三个 ZQDR 的校准路径，并核对 T113-i 的 DX0/DX1 引脚和 240 Ω ZQ 参考。 [ZQ 查证](../software/os/vendor/tina/README.md#主控-zq-编码查证)
 - **SDC0、RGMII 与 DDR3 颗粒驱动配置**。SD 启动的 SPL、U-Boot 和 Linux 将 SDC0 设为 Level 3（典型 45 Ω），RGMII 的 PG 引脚设为 `drive-strength = <40>`。SD/FEL SPL 启用主控读端 ODT，三星 DDR3 用 `MR1=0x40` 选 40 Ω 输出和 120 Ω RTT_NOM。SD/FEL U-Boot 与三份板级 DTB 构建通过，核对了 SPL 指令和 DTB 属性。实板待复测。 [启动配置](../software/os/u-boot/README.md) · [板级设备树](linux-6.18.md#触摸光照sd-和-gpio)
 - **Windows 遥测缺值保留**。已知指标缺测时上报 `null`，副屏保留行并显示 `—`。Windows x64 构建、本机 BCLK 和 DRAM 有无读取组件的探测、HID 编码模拟及板端缺值恢复测试通过。实板 USB 待测。 [遥测协议](../software/app/pc-telemetry/README.md#usb-与-panel)

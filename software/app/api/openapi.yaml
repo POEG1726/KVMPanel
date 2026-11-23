@@ -1084,6 +1084,29 @@ paths:
               schema: { $ref: '#/components/schemas/McpState' }
         '401': *unauthenticated
         '403': *forbidden
+    patch:
+      operationId: patchMcpInputPolicy
+      summary: Change MCP input arbitration (mcp permission)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                human_input_priority: { $ref: '#/components/schemas/McpHumanInputPriority' }
+                human_input_wait_s: { $ref: '#/components/schemas/McpHumanInputWait' }
+      responses:
+        '200':
+          description: Current MCP state with the updated input policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/McpState' }
+        '400': *badRequest
+        '401': *unauthenticated
+        '403': *forbidden
   /api/mcp/keys:
     post:
       operationId: createMcpKey
@@ -1737,12 +1760,24 @@ components:
         created: { type: integer, description: Unix milliseconds }
         last_used: { type: [integer, 'null'], description: Unix milliseconds }
         hint: { type: string, description: Last 4 characters of the key }
+    McpHumanInputPriority:
+      type: boolean
+      default: true
+      description: Human console input can take over an MCP input operation.
+    McpHumanInputWait:
+      type: integer
+      minimum: 1
+      maximum: 60
+      default: 2
+      description: Seconds from the last human input before MCP can send input again while priority is enabled.
     McpState:
       type: object
-      required: [enabled, keys]
+      required: [enabled, keys, human_input_priority, human_input_wait_s]
       additionalProperties: false
       properties:
         enabled: { type: boolean }
+        human_input_priority: { $ref: '#/components/schemas/McpHumanInputPriority' }
+        human_input_wait_s: { $ref: '#/components/schemas/McpHumanInputWait' }
         keys:
           type: array
           maxItems: 8
