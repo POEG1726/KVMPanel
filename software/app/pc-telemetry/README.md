@@ -49,3 +49,18 @@ Get-Content .\build\pc-telemetry\probe.json -Raw | ConvertFrom-Json
 ## USB 与 Panel
 
 自动查找默认 VID/PID 的 KVMPanel 厂商 HID 集合，使用 64 字节 Output report 3。每个报告可包含多条 ASCII `指标ID=值`，以换行隔开。缺值用 `指标ID=null`，`--once` 也使用 JSON `null`。`!会话:采样毫秒` 心跳可在低采样频率下保持连接，`:设备ID=名称` 携带可读设备名。Windows 调整设置时开始新会话，板端清理上次的指标。需要本仓库新版 `kvmd` 才能接收批量和动态设备字段。物理 USB 的持续吞吐和热插拔尚待实板验证。 [板端接口](../ipkvm/README.md#副屏与遥测)
+
+## MCP 主机端通道
+
+报告 4 使用异步 HID 读取。遥测、能力声明和主机端回复均由同一线程通过报告 3 写入。收到请求后暂停遥测，按序等待每片应答，完成或超时后恢复。旧 HID 描述符仍支持原有遥测。主动控制台中的采集器优先使用 HID，如果只有后台采集器，它仍可维持遥测并拒绝剪贴板读取。 [HID 协议](../api/host-agent.md)
+
+- **KVM 采集的显示器**默认跟随主显示器。手动选择时保存显示器接口标识，断开后临时回退到主显示器。`info` 使用实际像素布局，光标在采集画面外时返回 `null`。
+- **允许 KVM 读取剪贴板**默认关闭，保存于当前 Windows 用户设置。开启后只读当前活动且已解锁的本地会话，锁屏、安全桌面、屏保和后台会话拒绝读取。剪贴板内容按 UTF-8 字符边界截断，完整 JSON 包含转义在内最多 16 KiB。 [Windows 会话状态](https://learn.microsoft.com/en-us/windows/win32/api/wtsapi32/ns-wtsapi32-wtsinfoex_level1_w)
+- 收回共享盘时，采集器先核对存储 LUN 与 HID 的 USB 父设备为同一实例，再核对 LUN 2。锁定并刷新该磁盘的 Windows 卷，随后卸载这些卷并弹出该 LUN 的介质。目标不唯一、权限不足、卷繁忙或驱动拒绝时，板端按确认令牌流程处理。 [LUN 查询](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddscsi/ni-ntddscsi-ioctl_scsi_get_address) · [卷锁定](https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ni-winioctl-fsctl_lock_volume) · [介质弹出](https://learn.microsoft.com/en-us/windows-hardware/drivers/storage/general-storage-io-control-codes)
+
+Windows x64 使用 MSVC `/W4 /WX` 构建通过。以下模拟验证实际报告解析、应答序号和分片重组、`info`、剪贴板默认关闭及访问限制、Unicode 与 16 KiB 截断、`eject` 成功和失败回复。测试使用注入的 Windows 数据，无需连接 KVMPanel，也不会读取真实剪贴板或弹出介质。USB 双向吞吐、显示器坐标和 Windows 对实际共享 LUN 的弹出仍待实板验证。
+
+```powershell
+$test = Start-Process .\build\pc-telemetry\KVMPanelTelemetry.exe -ArgumentList '--test-host-agent' -Wait -PassThru
+$test.ExitCode # 0 表示通过
+```

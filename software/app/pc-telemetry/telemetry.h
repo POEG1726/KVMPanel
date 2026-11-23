@@ -9,6 +9,7 @@
 
 #include <windows.h>
 #include <stdint.h>
+#include "host_agent.h"
 
 enum {
     CPU = 1, MEMORY = 2, GPU = 4, JUNCTION = 8, NETWORK = 16,
@@ -43,6 +44,7 @@ typedef struct Radeon Radeon;
 typedef struct Pawn Pawn;
 typedef struct Ryzen Ryzen;
 typedef struct Ddr5 Ddr5;
+typedef enum { USB_OK, USB_INTERRUPTED, USB_LOST } UsbResult;
 
 /** Begin a reading cycle while preserving the known metric IDs. */
 void sample_begin(Sample *sample, BOOL reset);
@@ -86,8 +88,12 @@ void ddr5_close(Ddr5 *ddr5);
 
 /** Discover and update the KVMPanel HID collection. */
 Usb *usb_open(void);
-BOOL usb_send(Usb *usb, const Sample *sample, BOOL send_labels, HANDLE interrupt);
-BOOL usb_hello(Usb *usb, uint64_t session, unsigned interval);
+UsbResult usb_send(Usb *usb, const Sample *sample, BOOL send_labels, HANDLE interrupt);
+HANDLE usb_input_event(const Usb *usb);
+void usb_configure(Usb *usb, uint64_t session, unsigned interval, BOOL clipboard);
+ULONGLONG usb_announcement_deadline(const Usb *usb);
+UsbResult usb_announce(Usb *usb, HANDLE interrupt);
+UsbResult usb_service_agent(Usb *usb, const HostSettings *settings, HANDLE interrupt);
 void usb_close(Usb *usb);
 
 #endif

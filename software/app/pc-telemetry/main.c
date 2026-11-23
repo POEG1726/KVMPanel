@@ -12,7 +12,7 @@
 #include <wchar.h>
 
 enum {
-    IDC_INTERVAL = 101, IDC_APPLY, IDC_SETTINGS, IDC_EXIT, IDC_GROUP = 120,
+    IDC_INTERVAL = 101, IDC_APPLY, IDC_SETTINGS, IDC_EXIT, IDC_CLIPBOARD, IDC_CAPTURE, IDC_GROUP = 120,
     WM_TRAY = WM_APP + 1, WM_SAMPLE, WM_SHOW_SETTINGS,
 };
 static const wchar_t window_class[] = L"KVMPanelTelemetry";
@@ -26,10 +26,15 @@ static const wchar_t *group_names[] = {
 
 typedef struct {
     unsigned interval, groups, generation;
+    HostSettings host;
 } Options;
 
 static SRWLOCK options_lock = SRWLOCK_INIT;
-static Options options = {.interval = DEFAULT_INTERVAL, .groups = ALL_GROUPS, .generation = 1};
+static const Options defaults = {.interval = DEFAULT_INTERVAL, .groups = ALL_GROUPS, .generation = 1,
+                                 .host = {.clipboard = HOST_CLIPBOARD_DEFAULT}};
+static Options options;
+static HostDisplays capture_displays;
+static wchar_t unavailable_capture[MAX_DEVICE_ID_LEN];
 static HANDLE wake, worker, usb_ready, usb_cancel, usb_worker;
 static volatile LONG stopping;
 static SRWLOCK sample_lock = SRWLOCK_INIT;
@@ -52,6 +57,7 @@ static Options read_options(void)
 
 static void load_options(void)
 {
+    options = defaults;
     DWORD interval = DEFAULT_INTERVAL, groups = ALL_GROUPS, size = sizeof(DWORD);
     RegGetValueW(HKEY_CURRENT_USER, settings_path, L"IntervalMs", RRF_RT_REG_DWORD,
                  NULL, &interval, &size);
@@ -61,9 +67,38 @@ static void load_options(void)
     if (interval >= MIN_INTERVAL && interval <= MAX_INTERVAL)
         options.interval = interval;
     options.groups = groups & ALL_GROUPS;
+    DWORD clipboard = HOST_CLIPBOARD_DEFAULT;
+    size = sizeof(clipboard);
+    if (RegGetValueW(HKEY_CURRENT_USER, settings_path, L"AllowClipboard", RRF_RT_REG_DWORD,
+                     NULL, &clipboard, &size) == ERROR_SUCCESS)
+        options.host.clipboard = clipboard == TRUE;
+    size = sizeof(options.host.monitor);
+    if (RegGetValueW(HKEY_CURRENT_USER, settings_path, L"CaptureMonitor", RRF_RT_REG_SZ,
+                     NULL, options.host.monitor, &size) != ERROR_SUCCESS)
+        options.host.monitor[0] = L'\0';
 }
 
-static BOOL save_options(unsigned interval, unsigned groups)
+static void session_marker_name(wchar_t name[56], DWORD session)
+{
+    swprintf_s(name, 56, L"Global\\KVMPanelTelemetrySession.%lu", session);
+}
+
+/** Prefer the active user's instance, while a sole background instance can still report disabled. */
+static BOOL active_instance_exists(void)
+{
+    const DWORD session = WTSGetActiveConsoleSessionId();
+    if (session == MAXDWORD || host_local_session())
+        return FALSE;
+    wchar_t name[56];
+    session_marker_name(name, session);
+    HANDLE instance = OpenEventW(SYNCHRONIZE, FALSE, name);
+    if (!instance)
+        return GetLastError() == ERROR_ACCESS_DENIED;
+    CloseHandle(instance);
+    return TRUE;
+}
+
+static BOOL save_options(unsigned interval, unsigned groups, const HostSettings *host)
 {
     HKEY key;
     if (RegCreateKeyExW(HKEY_CURRENT_USER, settings_path, 0, NULL, 0, KEY_SET_VALUE,
@@ -73,16 +108,24 @@ static BOOL save_options(unsigned interval, unsigned groups)
                                                    (const BYTE *)&interval, sizeof(interval));
     const LSTATUS group_result = RegSetValueExW(key, L"Groups", 0, REG_DWORD,
                                                 (const BYTE *)&groups, sizeof(groups));
+    const DWORD clipboard = host->clipboard ? 1u : 0u;
+    const LSTATUS clipboard_result = RegSetValueExW(key, L"AllowClipboard", 0, REG_DWORD,
+                                                    (const BYTE *)&clipboard, sizeof(clipboard));
+    const DWORD monitor_size = (DWORD)((wcslen(host->monitor) + 1) * sizeof(*host->monitor));
+    const LSTATUS monitor_result = RegSetValueExW(key, L"CaptureMonitor", 0, REG_SZ,
+                                                  (const BYTE *)host->monitor, monitor_size);
     RegCloseKey(key);
-    if (interval_result != ERROR_SUCCESS || group_result != ERROR_SUCCESS)
+    if (interval_result != ERROR_SUCCESS || group_result != ERROR_SUCCESS ||
+        clipboard_result != ERROR_SUCCESS || monitor_result != ERROR_SUCCESS)
         return FALSE;
     AcquireSRWLockExclusive(&options_lock);
     options.interval = interval;
     options.groups = groups;
+    options.host = *host;
     ++options.generation;
+    SetEvent(usb_cancel);
     ReleaseSRWLockExclusive(&options_lock);
     SetEvent(wake);
-    SetEvent(usb_cancel);
     SetEvent(usb_ready);
     return TRUE;
 }
@@ -130,34 +173,58 @@ static DWORD WINAPI transmit_worker(void *context)
     Usb *usb = NULL;
     if (!sample)
         return 1;
-    ULONGLONG next_hello = 0, next_usb = 0, next_labels = 0;
+    ULONGLONG next_usb = 0, next_labels = 0;
     uint64_t session = GetTickCount64() ^ ((uint64_t)GetCurrentProcessId() << 32);
     uint64_t sent = 0;
     unsigned generation = 0;
     while (!InterlockedCompareExchange(&stopping, 0, 0)) {
-        const Options settings = read_options();
+        AcquireSRWLockShared(&options_lock);
+        const Options settings = options;
+        if (settings.generation != generation && !InterlockedCompareExchange(&stopping, 0, 0))
+            ResetEvent(usb_cancel);
+        ReleaseSRWLockShared(&options_lock);
         const ULONGLONG now = GetTickCount64();
         if (settings.generation != generation) {
             generation = settings.generation;
             ++session;
-            next_hello = next_labels = now;
+            next_labels = now;
             sent = 0;
-            ResetEvent(usb_cancel);
+        }
+        if (active_instance_exists()) {
+            usb_close(usb);
+            usb = NULL;
+            InterlockedExchange(&usb_connected, FALSE);
+            WaitForSingleObject(usb_ready, 250);
+            continue;
         }
         if (now >= next_usb && !usb) {
             usb = usb_open();
             next_usb = now + 2500;
             if (usb) {
-                next_hello = next_labels = now;
+                ++session;
+                next_labels = now;
                 sent = 0;
             }
         }
-        if (usb && now >= next_hello) {
-            if (!usb_hello(usb, session, settings.interval)) {
+        if (usb) {
+            const UsbResult agent = usb_service_agent(usb, &settings.host, usb_cancel);
+            if (agent == USB_LOST) {
                 usb_close(usb);
                 usb = NULL;
+            } else if (agent == USB_INTERRUPTED) {
+                continue;
             }
-            next_hello = now + 1000;
+        }
+        const ULONGLONG send_now = GetTickCount64();
+        if (usb) {
+            usb_configure(usb, session, settings.interval, settings.host.clipboard);
+            const UsbResult announcements = usb_announce(usb, usb_cancel);
+            if (announcements == USB_LOST) {
+                usb_close(usb);
+                usb = NULL;
+            } else if (announcements == USB_INTERRUPTED) {
+                continue;
+            }
         }
         if (usb) {
             uint64_t captured = 0;
@@ -168,20 +235,26 @@ static DWORD WINAPI transmit_worker(void *context)
                 captured = sample_number;
             }
             ReleaseSRWLockShared(&sample_lock);
-            const BOOL labels = now >= next_labels;
-            if (captured && !usb_send(usb, sample, labels, usb_cancel)) {
-                usb_close(usb);
-                usb = NULL;
-            } else if (captured) {
+            const BOOL labels = send_now >= next_labels;
+            if (captured) {
+                const UsbResult result = usb_send(usb, sample, labels, usb_cancel);
+                if (result == USB_LOST) {
+                    usb_close(usb);
+                    usb = NULL;
+                }
                 sent = captured;
-                if (labels)
-                    next_labels = now + 30000;
+                if (labels && result == USB_OK)
+                    next_labels = send_now + 30000;
+                if (result == USB_INTERRUPTED)
+                    continue;
             }
         }
         InterlockedExchange(&usb_connected, usb != NULL);
-        const ULONGLONG deadline = usb ? next_hello : next_usb;
+        const ULONGLONG deadline = usb ? usb_announcement_deadline(usb) : next_usb;
         const ULONGLONG after = GetTickCount64();
-        WaitForSingleObject(usb_ready, after < deadline ? (DWORD)(deadline - after) : 0);
+        const HANDLE signals[] = {usb_ready, usb_input_event(usb)};
+        WaitForMultipleObjects(signals[1] ? 2 : 1, signals, FALSE,
+                               after < deadline ? (DWORD)(deadline - after) : 0);
     }
     usb_close(usb);
     free(sample);
@@ -203,6 +276,33 @@ static HWND control(HWND parent, DWORD style, const wchar_t *klass, const wchar_
     return child;
 }
 
+/** Keep the selected monitor ID when Windows reports a changed display arrangement. */
+static void fill_capture(HWND window, const wchar_t *chosen)
+{
+    HWND combo = GetDlgItem(window, IDC_CAPTURE);
+    SendMessageW(combo, CB_RESETCONTENT, 0, 0);
+    SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"主显示器（自动）");
+    host_displays(&capture_displays);
+    unsigned selected = 0;
+    for (unsigned i = 0; i < capture_displays.count; ++i) {
+        const HostDisplay *display = &capture_displays.items[i];
+        wchar_t label[180];
+        swprintf_s(label, _countof(label), L"%ls (%ld×%ld, %ld,%ld)", display->name,
+                   display->area.right - display->area.left, display->area.bottom - display->area.top,
+                   display->area.left, display->area.top);
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)label);
+        if (_wcsicmp(chosen, display->id) == 0)
+            selected = i + 1;
+    }
+    unavailable_capture[0] = L'\0';
+    if (!selected && chosen[0]) {
+        wcscpy_s(unavailable_capture, _countof(unavailable_capture), chosen);
+        SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"已保存的显示器（当前未连接）");
+        selected = capture_displays.count + 1;
+    }
+    SendMessageW(combo, CB_SETCURSEL, selected, 0);
+}
+
 static void create_controls(HWND window)
 {
     wchar_t interval[16];
@@ -218,9 +318,16 @@ static void create_controls(HWND window)
                               IDC_GROUP + (int)i, 18, 82 + (int)i * 25, 416, 22);
         SendMessageW(button, BM_SETCHECK, options.groups & (1u << i) ? BST_CHECKED : BST_UNCHECKED, 0);
     }
-    status_control = control(window, SS_LEFT, L"STATIC", L"正在采样…", 0, 18, 296, 420, 48);
+    HWND clipboard = control(window, WS_TABSTOP | BS_AUTOCHECKBOX, L"BUTTON", L"允许 KVM 读取剪贴板",
+                             IDC_CLIPBOARD, 18, 291, 415, 22);
+    SendMessageW(clipboard, BM_SETCHECK, options.host.clipboard ? BST_CHECKED : BST_UNCHECKED, 0);
+    control(window, 0, L"STATIC", L"KVM 采集的显示器", 0, 18, 322, 150, 22);
+    control(window, WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, L"COMBOBOX", L"", IDC_CAPTURE,
+            168, 318, 264, 190);
+    fill_capture(window, options.host.monitor);
+    status_control = control(window, SS_LEFT, L"STATIC", L"正在采样…", 0, 18, 356, 420, 48);
     control(window, WS_TABSTOP | BS_DEFPUSHBUTTON, L"BUTTON", L"应用", IDC_APPLY,
-            337, 350, 95, 30);
+            337, 410, 95, 30);
 }
 
 static void add_tray(HWND window)
@@ -254,7 +361,13 @@ static void apply_controls(HWND window)
     for (unsigned i = 0; i < _countof(group_names); ++i)
         if (IsDlgButtonChecked(window, IDC_GROUP + (int)i) == BST_CHECKED)
             groups |= 1u << i;
-    if (!save_options((unsigned)interval, groups))
+    HostSettings host = {.clipboard = IsDlgButtonChecked(window, IDC_CLIPBOARD) == BST_CHECKED};
+    const LRESULT index = SendDlgItemMessageW(window, IDC_CAPTURE, CB_GETCURSEL, 0, 0);
+    if (index > 0 && index <= (LRESULT)capture_displays.count)
+        wcscpy_s(host.monitor, _countof(host.monitor), capture_displays.items[index - 1].id);
+    else if (index == (LRESULT)capture_displays.count + 1)
+        wcscpy_s(host.monitor, _countof(host.monitor), unavailable_capture);
+    if (!save_options((unsigned)interval, groups, &host))
         MessageBoxW(window, L"无法保存当前用户设置。", L"KVMPanel 遥测", MB_ICONERROR);
 }
 
@@ -272,6 +385,11 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wp, LPARAM
     case WM_SHOW_SETTINGS:
         show_settings(window);
         return 0;
+    case WM_DISPLAYCHANGE: {
+        const Options refreshed = read_options();
+        fill_capture(window, refreshed.host.monitor);
+        return 0;
+    }
     case WM_TRAY:
         if (lp == WM_LBUTTONDBLCLK) {
             show_settings(window);
@@ -396,7 +514,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR arguments, int
         return 1;
     BOOL once = count == 2 && wcscmp(argv[1], L"--once") == 0;
     BOOL hidden = count == 2 && wcscmp(argv[1], L"--tray") == 0;
+    BOOL test = count == 2 && wcscmp(argv[1], L"--test-host-agent") == 0;
     LocalFree(argv);
+    if (test)
+        return defaults.host.clipboard == FALSE ? host_agent_test() : 1;
     load_options();
     if (once)
         return probe();
@@ -412,6 +533,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR arguments, int
         return 0;
     }
 
+    DWORD session;
+    wchar_t marker_name[56];
+    HANDLE session_marker = NULL;
+    if (ProcessIdToSessionId(GetCurrentProcessId(), &session)) {
+        session_marker_name(marker_name, session);
+        session_marker = CreateEventW(NULL, FALSE, FALSE, marker_name);
+    }
+
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
     dpi = GetDpiForSystem();
     taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
@@ -424,7 +553,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR arguments, int
     HWND window = NULL;
     if (wake && usb_ready && usb_cancel && RegisterClassW(&definition)) {
         const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-        RECT size = {0, 0, px(450), px(395)};
+        RECT size = {0, 0, px(450), px(455)};
         AdjustWindowRectExForDpi(&size, style, FALSE, 0, dpi);
         window = CreateWindowW(window_class, L"KVMPanel 遥测设置", style,
                                CW_USEDEFAULT, CW_USEDEFAULT, size.right - size.left,
@@ -465,6 +594,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR arguments, int
         CloseHandle(usb_ready);
     if (usb_cancel)
         CloseHandle(usb_cancel);
+    if (session_marker)
+        CloseHandle(session_marker);
     CloseHandle(singleton);
     return window && worker && usb_worker ? 0 : 1;
 }
