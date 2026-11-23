@@ -50,6 +50,7 @@ struct Mount {
 struct Runtime {
     mount: Option<Mount>,
     exported: bool,
+    share_generation: u64,
     switching_share: bool,
     needs_recovery: bool,
     pending: HashSet<PathBuf>,
@@ -139,6 +140,7 @@ impl Storage {
             state: Mutex::new(Runtime {
                 mount,
                 exported,
+                share_generation: 0,
                 needs_recovery,
                 ..Default::default()
             }),
@@ -207,6 +209,36 @@ impl Storage {
         Some(json!({"used":total.saturating_sub(free),"total":total}))
     }
 
+    pub(crate) fn mcp_media_status(&self) -> Value {
+        media_state(&self.state.lock().unwrap())
+    }
+    pub(crate) fn share_state(&self) -> (bool, u64) {
+        let state = self.state.lock().unwrap();
+        (state.exported, state.share_generation)
+    }
+    pub(crate) fn mcp_eject(
+        &self,
+        expected: &Value,
+        writable_confirmed: bool,
+        connected: impl FnOnce() -> bool,
+    ) -> Result<(), ApiError> {
+        let _gate = self.lun_gate.lock().unwrap();
+        self.recover_luns()?;
+        let mut state = self.state.lock().unwrap();
+        if media_state(&state) != *expected {
+            return Err(ApiError::new(409, "media_changed"));
+        }
+        if let Some(m) = &state.mount {
+            if !m.readonly && !writable_confirmed && connected() {
+                return Err(ApiError::new(409, "media_changed"));
+            }
+            self.lun
+                .bind(None, &m.mode, true)
+                .map_err(ApiError::device)?;
+        }
+        state.mount = None;
+        Ok(())
+    }
     pub fn eject(&self) -> Result<(), ApiError> {
         let _gate = self.lun_gate.lock().unwrap();
         self.recover_luns()?;
@@ -705,18 +737,119 @@ async fn share(State(app): State<App>, h: HeaderMap) -> Reply {
     .await
 }
 
+pub(crate) async fn list_media(app: App) -> Result<Value, ApiError> {
+    blocking(move || {
+        let volume = &app.storage.volumes["sd"];
+        let mut dirs = vec![PathBuf::new()];
+        let mut files = Vec::new();
+        let mut visited = 0;
+        while let Some(path) = dirs.pop() {
+            let dir = volume.open(&path, libc::O_RDONLY | libc::O_DIRECTORY, false)?;
+            for entry in fs::read_dir(fd_path(&dir)).map_err(error)? {
+                let entry = entry.map_err(error)?;
+                visited += 1;
+                if visited > 10_000 {
+                    return Err(ApiError::new(409, "too_many_files"));
+                }
+                let child = path.join(entry.file_name());
+                let ft = entry.file_type().map_err(error)?;
+                if ft.is_dir() {
+                    dirs.push(child);
+                } else if ft.is_file()
+                    && !child
+                        .file_name()
+                        .is_some_and(|name| name.to_string_lossy().starts_with('.'))
+                    && child
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .is_some_and(|ext| {
+                            matches!(ext.to_ascii_lowercase().as_str(), "iso" | "img")
+                        })
+                {
+                    files.push(format!("/{}", child.display()));
+                }
+            }
+        }
+        files.sort();
+        Ok(json!({"files":files}))
+    })
+    .await
+}
+
+pub(crate) async fn drop_file(
+    app: App,
+    name: String,
+    data: Vec<u8>,
+    export: bool,
+) -> Result<Value, ApiError> {
+    let (exported, generation) = app.storage.share_state();
+    if exported {
+        return Err(ApiError::new(409, "share_exported"));
+    }
+    let target = Target::new("share", &format!("/{name}"))?;
+    let displayed = target.displayed();
+    if target.path.components().count() == 2 {
+        let app = app.clone();
+        let parent = target.path.parent().unwrap().to_owned();
+        blocking(move || {
+            let s = &app.storage;
+            s.ensure_ready()?;
+            let state = s.state.lock().unwrap();
+            let relative = Target {
+                root: "share".into(),
+                path: parent,
+            };
+            let leaf = s.volumes["share"].parent(&relative)?;
+            s.ensure_writable(
+                &state,
+                &fs::canonicalize(fd_path(&leaf.dir))
+                    .map_err(error)?
+                    .join(&leaf.name),
+            )?;
+            match fs::create_dir(leaf.path()) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+                Err(e) => Err(error(e)),
+            }
+        })
+        .await?;
+    }
+    let transfer = AsyncTransfer::begin(app.clone(), target, data.len() as u64, false).await?;
+    transfer.write(axum::body::Bytes::from(data)).await?;
+    transfer.finish(None).await?;
+    if export {
+        set_share_state(app.clone(), true, Some(generation)).await?;
+    }
+    Ok(json!({"path":displayed,"exported_to_host":app.storage.share_state().0}))
+}
+
 async fn set_share(State(app): State<App>, h: HeaderMap, JsonBody(b): JsonBody) -> Reply {
     app.require(&h, "media")?;
     validate("setShare", &b)?;
+    Ok(ok(set_share_state(
+        app,
+        b["exported_to_host"] == true,
+        None,
+    )
+    .await?))
+}
+
+pub(crate) async fn set_share_state(
+    app: App,
+    export: bool,
+    expected: Option<u64>,
+) -> Result<Value, ApiError> {
     blocking(move || {
         let s = &app.storage;
         let _gate = s.lun_gate.lock().unwrap();
         s.recover_luns()?;
-        let export = b["exported_to_host"] == true;
         {
             let mut state = s.state.lock().unwrap();
+            if expected.is_some_and(|value| value != state.share_generation) {
+                return Err(ApiError::new(409, "share_changed"));
+            }
             if export == state.exported {
-                return Ok(ok(json!({"exported_to_host":export})));
+                return Ok(json!({"exported_to_host":export}));
             }
             if !state.pending.is_empty() {
                 return Err(ApiError::new(409, "share_busy"));
@@ -735,7 +868,8 @@ async fn set_share(State(app): State<App>, h: HeaderMap, JsonBody(b): JsonBody) 
             return Err(ApiError::device(e));
         }
         state.exported = export;
-        Ok(ok(json!({"exported_to_host":export})))
+        state.share_generation = state.share_generation.wrapping_add(1);
+        Ok(json!({"exported_to_host":export}))
     })
     .await
 }
@@ -757,6 +891,10 @@ async fn media(State(app): State<App>, h: HeaderMap) -> Reply {
 async fn mount(State(app): State<App>, h: HeaderMap, JsonBody(b): JsonBody) -> Reply {
     app.require(&h, "media")?;
     validate("mountMedia", &b)?;
+    Ok(ok(mount_media(app, b).await?))
+}
+
+pub(crate) async fn mount_media(app: App, b: Value) -> Result<Value, ApiError> {
     let t = Target::new("sd", vstr(&b, "path"))?;
     blocking(move || {
         app.storage.ensure_ready()?;
@@ -797,7 +935,7 @@ async fn mount(State(app): State<App>, h: HeaderMap, JsonBody(b): JsonBody) -> R
         let out = media_state(&state);
         drop(state);
         app.emit("status_changed");
-        Ok(ok(out))
+        Ok(out)
     })
     .await
 }

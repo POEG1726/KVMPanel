@@ -60,6 +60,13 @@ fn main() {
             }
         }
     }
+    let mcp_path = api.join("schema/mcp.schema.json");
+    println!("cargo:rerun-if-changed={}", mcp_path.display());
+    let mcp: Value = serde_json::from_slice(&fs::read(mcp_path).unwrap()).unwrap();
+    for (name, tool) in mcp["tools"].as_object().unwrap() {
+        schemas[format!("mcp/{name}")] = tool["inputSchema"].clone();
+    }
+    schemas["McpTools"] = mcp["tools"].clone();
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     fs::write(
         out.join("schemas.json"),

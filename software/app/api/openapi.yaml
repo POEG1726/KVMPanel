@@ -1283,7 +1283,12 @@ paths:
             image/jpeg:
               schema: { type: string, format: binary }
         '401':
-          description: Missing/wrong key or MCP disabled (error=unauthenticated)
+          description: Missing or invalid key (error=unauthenticated)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: MCP disabled, disallowed Host or Origin, or missing observe scope (error=mcp_disabled, bad_origin, or forbidden_scope)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -1306,12 +1311,22 @@ paths:
       responses:
         '204': *noContent
         '400':
-          description: Not a valid input message (error=bad_message)
+          description: Invalid input or text unsupported by the keyboard layout (error=bad_message or unmappable)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '401':
           description: error=unauthenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: MCP disabled, disallowed Host or Origin, or missing input scope (error=mcp_disabled, bad_origin, or forbidden_scope)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Human input or emergency stop interrupted or blocked the request (error=human_active, human_took_over, or stopped)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

@@ -8,7 +8,7 @@ use std::{
 };
 
 mod board;
-mod hid;
+pub(crate) mod hid;
 pub(crate) mod layout;
 mod pattern;
 mod video;
@@ -21,6 +21,39 @@ pub trait Hardware: Send + Sync {
     fn jiggle(&self) -> io::Result<()>;
     fn hid(&self, msg: &Value) -> io::Result<()>;
     fn press(&self, button: &str, duration_ms: u64) -> io::Result<()>;
+    fn press_cancellable(
+        &self,
+        button: &str,
+        duration_ms: u64,
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> io::Result<()> {
+        let until = std::time::Instant::now() + std::time::Duration::from_millis(duration_ms);
+        while std::time::Instant::now() < until {
+            if cancelled() {
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        if cancelled() {
+            return Err(io::ErrorKind::Interrupted.into());
+        }
+        self.press(button, duration_ms)
+    }
+    fn begin_mcp_input(&self) -> io::Result<()> {
+        Ok(())
+    }
+    fn finish_mcp_input(&self) -> io::Result<()> {
+        Ok(())
+    }
+    fn mouse_buttons(&self, _: u8, _: bool) -> io::Result<()> {
+        Ok(())
+    }
+    fn host_write(&self, _: &[u8; 64]) -> io::Result<()> {
+        Err(io::ErrorKind::NotConnected.into())
+    }
+    fn power_buttons(&self) -> (bool, bool) {
+        (true, true)
+    }
     fn power(&self) -> io::Result<Value>;
     fn hdmi(&self) -> io::Result<Value>;
     fn locks(&self) -> io::Result<Value>;
@@ -46,6 +79,10 @@ struct Sim {
     locks: Mutex<Value>,
 }
 impl Hardware for Sim {
+    #[cfg(test)]
+    fn host_write(&self, _: &[u8; 64]) -> io::Result<()> {
+        Ok(())
+    }
     fn usb_bound(&self) -> io::Result<bool> {
         Ok(true)
     }
@@ -119,6 +156,10 @@ impl Hardware for Sim {
         Ok(())
     }
 }
+pub(crate) fn sim_still(quality: u8) -> io::Result<Bytes> {
+    pattern::pattern(0, quality)
+}
+
 pub fn open(sim: bool) -> io::Result<Arc<dyn Hardware>> {
     if !sim {
         return Ok(Arc::new(board::Board::default()));

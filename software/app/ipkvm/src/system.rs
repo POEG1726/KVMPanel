@@ -11,13 +11,12 @@ use axum::{
     extract::State,
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{get, post},
     Json, Router,
 };
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs, io,
@@ -26,17 +25,17 @@ use std::{
     time::Duration,
 };
 pub use update::{prepare_update, verify_update};
-use uuid::Uuid;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
-struct Settings {
+pub(crate) struct Settings {
     scripts: BTreeMap<String, String>,
     network: Value,
     update: Value,
     key_hash: Option<String>,
+    pub(crate) mcp_keys: Vec<crate::mcp::Key>,
     key_hint: Option<String>,
-    mcp_enabled: bool,
+    pub(crate) mcp_enabled: bool,
     jobs: BTreeMap<String, Value>,
 }
 impl Default for Settings {
@@ -46,6 +45,7 @@ impl Default for Settings {
             network: json!({"mode":"dhcp","dns":{"mode":"dhcp","servers":[]},"https":{"enabled":false,"port":443},"http_port":80,"bind":"0.0.0.0"}),
             update: json!({"channel":"stable","server":"https://updates.example.invalid/kvmpanel"}),
             key_hash: None,
+            mcp_keys: Vec::new(),
             key_hint: None,
             mcp_enabled: false,
             jobs: Default::default(),
@@ -73,7 +73,19 @@ impl System {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Settings::default(),
             Err(e) => return Err(e),
         };
-        if update::recover_jobs(data_dir, &mut settings.jobs)? {
+        let migrated = settings
+            .key_hash
+            .take()
+            .map(|hash| {
+                if settings.mcp_keys.is_empty() {
+                    settings.mcp_keys.push(crate::mcp::Key::migrated(
+                        hash,
+                        settings.key_hint.take().unwrap_or_default(),
+                    ));
+                }
+            })
+            .is_some();
+        if update::recover_jobs(data_dir, &mut settings.jobs)? || migrated {
             atomic_write(&path, &serde_json::to_vec(&settings)?)?;
         }
         Ok(Self {
@@ -88,10 +100,10 @@ impl System {
             latest: Default::default(),
         })
     }
-    fn snapshot(&self) -> Arc<Settings> {
+    pub(crate) fn snapshot(&self) -> Arc<Settings> {
         self.store.current.read().unwrap().clone()
     }
-    async fn change<T: Send + 'static>(
+    pub(crate) async fn change<T: Send + 'static>(
         &self,
         f: impl FnOnce(&mut Settings) -> Result<T, ApiError> + Send + 'static,
     ) -> Result<T, ApiError> {
@@ -116,6 +128,10 @@ impl System {
     }
 }
 
+pub(crate) fn mcp_tail_address(app: &App) -> Vec<String> {
+    app.mcp.tailscale.lock().unwrap().clone()
+}
+
 pub fn routes() -> Router<App> {
     Router::new()
         .merge(terminal::routes())
@@ -125,11 +141,6 @@ pub fn routes() -> Router<App> {
         .route("/api/network", get(network::get).put(network::put))
         .route("/api/tailscale", get(tailscale::get))
         .route("/api/tailscale/{action}", post(tailscale::action))
-        .route("/api/mcp", get(mcp_state).put(set_mcp))
-        .route("/api/mcp/key", delete(revoke))
-        .route("/api/mcp/regenerate", post(regenerate))
-        .route("/api/mcp/v1/screenshot", get(screenshot))
-        .route("/api/mcp/v1/hid", post(hid))
         .route("/api/branding/logo", get(logo).put(put_logo))
         .route("/api/about", get(about))
 }
@@ -250,86 +261,6 @@ async fn about() -> Json<Value> {
     Json(json!({"name":"KVMPanel","version":VERSION,"licenses_url":"/licenses.txt"}))
 }
 
-fn mcp(s: &Settings) -> Value {
-    json!({"enabled":s.mcp_enabled,"key_hint":s.key_hint})
-}
-async fn mcp_state(State(app): State<App>, h: HeaderMap) -> Result<Json<Value>, ApiError> {
-    app.require(&h, "mcp")?;
-    Ok(Json(mcp(&app.system.snapshot())))
-}
-async fn set_mcp(
-    State(app): State<App>,
-    h: HeaderMap,
-    JsonBody(body): JsonBody,
-) -> Result<Json<Value>, ApiError> {
-    app.require(&h, "mcp")?;
-    validate("putMcp", &body)?;
-    app.system
-        .change(move |s| {
-            s.mcp_enabled = body["enabled"] == true;
-            if s.mcp_enabled && s.key_hash.is_none() {
-                return Err(ApiError::new(409, "no_key"));
-            }
-            Ok(Json(mcp(s)))
-        })
-        .await
-}
-async fn revoke(State(app): State<App>, h: HeaderMap) -> Result<StatusCode, ApiError> {
-    app.require(&h, "mcp")?;
-    app.system
-        .change(move |s| {
-            s.mcp_enabled = false;
-            s.key_hash = None;
-            s.key_hint = None;
-            Ok(StatusCode::NO_CONTENT)
-        })
-        .await
-}
-async fn regenerate(State(app): State<App>, h: HeaderMap) -> Result<Json<Value>, ApiError> {
-    app.require(&h, "mcp")?;
-    let key = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
-    app.system
-        .change(move |s| {
-            s.mcp_enabled = true;
-            s.key_hash = Some(hex::encode(Sha256::digest(key.as_bytes())));
-            s.key_hint = Some(key[key.len() - 4..].into());
-            Ok(Json(json!({"key":key})))
-        })
-        .await
-}
-fn bearer(app: &App, h: &HeaderMap) -> Result<(), ApiError> {
-    let denied = || ApiError::new(401, "unauthenticated");
-    let key = h
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .ok_or_else(denied)?;
-    let settings = app.system.snapshot();
-    if settings.mcp_enabled
-        && settings.key_hash.as_deref() == Some(&hex::encode(Sha256::digest(key.as_bytes())))
-    {
-        Ok(())
-    } else {
-        Err(denied())
-    }
-}
-async fn screenshot(State(app): State<App>, h: HeaderMap) -> Result<Response, ApiError> {
-    bearer(&app, &h)?;
-    let frame = crate::console::snapshot(&app).await?;
-    Ok(([(header::CONTENT_TYPE, "image/jpeg")], frame).into_response())
-}
-async fn hid(
-    State(app): State<App>,
-    h: HeaderMap,
-    JsonBody(body): JsonBody,
-) -> Result<StatusCode, ApiError> {
-    bearer(&app, &h)?;
-    if body["t"] == "ping" {
-        return Err(ApiError::new(400, "bad_message"));
-    }
-    crate::console::input(&app, &body, || bearer(&app, &h).is_ok()).await?;
-    Ok(StatusCode::NO_CONTENT)
-}
 const LOGO_MAX: usize = 256 * 1024;
 async fn put_logo(
     State(app): State<App>,

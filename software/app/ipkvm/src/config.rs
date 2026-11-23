@@ -162,6 +162,7 @@ impl App {
             let _ = self.config_updates.send(next.clone());
         }
         if paused {
+            self.mcp.kvm_paused();
             self.emit("disconnect_sessions")
         }
         self.emit("config_changed");
@@ -200,6 +201,7 @@ impl App {
                 *self.cfg.applied.write().unwrap() = desired.clone();
                 Ok(())
             })?;
+        self.mcp.host.clear();
         self.emit("usb_reenumerated");
         Ok(())
     }

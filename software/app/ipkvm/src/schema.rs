@@ -12,6 +12,10 @@ static SCHEMAS: LazyLock<Value> = LazyLock::new(|| {
 static VALIDATORS: LazyLock<Mutex<HashMap<String, Arc<Validator>>>> =
     LazyLock::new(Default::default);
 
+pub(crate) fn mcp_tools() -> &'static serde_json::Map<String, Value> {
+    SCHEMAS["McpTools"].as_object().unwrap()
+}
+
 pub fn default_config() -> Value {
     let mut cfg = json!({});
     for (section, schema) in SCHEMAS["Config"]["properties"].as_object().unwrap() {

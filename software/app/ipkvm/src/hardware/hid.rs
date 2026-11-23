@@ -35,7 +35,7 @@ fn read(mut f: &File) -> io::Result<Option<Vec<u8>>> {
         Err(e) => Err(e),
     }
 }
-fn keycode(code: &str) -> Option<u8> {
+pub(crate) fn keycode(code: &str) -> Option<u8> {
     let bytes = code.as_bytes();
     if let [b'K', b'e', b'y', c @ b'A'..=b'Z'] = bytes {
         return Some(4 + c - b'A');
@@ -153,6 +153,14 @@ impl Keyboard {
         b
     }
 }
+
+struct SuspendedInput {
+    keyboard: Keyboard,
+    buttons: u8,
+    absolute: bool,
+    relative_motion: bool,
+}
+
 #[derive(Default)]
 pub(super) struct Hid {
     ports: HashMap<&'static str, File>,
@@ -161,6 +169,7 @@ pub(super) struct Hid {
     position: [u16; 2],
     last_abs: bool,
     led: u8,
+    suspended: Option<SuspendedInput>,
 }
 impl Hid {
     pub fn enumerate() -> io::Result<Self> {
@@ -233,7 +242,7 @@ impl Hid {
 
     pub fn jiggle(&mut self) -> io::Result<()> {
         // Do not drag a selection, and do not jump an absolute pointer to an unknown starting position.
-        if self.buttons != 0 {
+        if self.buttons != 0 || self.suspended.is_some() {
             return Ok(());
         }
         if self.ports.contains_key("relative") || self.ports.contains_key("merged") {
@@ -281,22 +290,28 @@ impl Hid {
                 result.and(restored)
             }
             Some("mouse_abs") | Some("mouse_rel") => {
-                self.buttons = m["buttons"].as_u64().unwrap_or(0) as u8;
-                self.last_abs = m["t"] == "mouse_abs";
-                if self.last_abs {
+                let absolute = m["t"] == "mouse_abs";
+                let buttons = m["buttons"].as_u64().unwrap_or(0) as u8;
+                let motion = [
+                    m["dx"].as_i64().unwrap_or(0) as i8,
+                    m["dy"].as_i64().unwrap_or(0) as i8,
+                ];
+                self.update_mouse_mode(buttons, absolute)?;
+                if absolute {
                     self.position = [
                         m["x"].as_u64().unwrap_or(0) as u16,
                         m["y"].as_u64().unwrap_or(0) as u16,
-                    ]
+                    ];
                 }
-                self.mouse(
-                    self.last_abs,
-                    [
-                        m["dx"].as_i64().unwrap_or(0) as i8,
-                        m["dy"].as_i64().unwrap_or(0) as i8,
-                    ],
-                    0,
-                )
+                self.mouse(absolute, motion, 0)?;
+                if let Some(saved) = &mut self.suspended {
+                    if absolute {
+                        saved.relative_motion = false;
+                    } else if motion != [0, 0] {
+                        saved.relative_motion = true;
+                    }
+                }
+                Ok(())
             }
             Some("wheel") => {
                 let abs = if self.ports.contains_key("merged") {
@@ -315,6 +330,7 @@ impl Hid {
         }
         self.keyboard = Keyboard::default();
         self.buttons = 0;
+        self.suspended = None;
         if self.ports.contains_key("keyboard") {
             self.send("keyboard", &self.keyboard.report())?
         }
@@ -325,6 +341,80 @@ impl Hid {
         }
         Ok(())
     }
+
+    pub fn release_human(&mut self) -> io::Result<()> {
+        // A console disconnect invalidates the saved human state, even during MCP input.
+        if let Some(saved) = &mut self.suspended {
+            saved.keyboard = Keyboard::default();
+            saved.buttons = 0;
+            Ok(())
+        } else {
+            self.reset()
+        }
+    }
+
+    /// Start with neutral HID state so a human modifier cannot affect a tool's chord.
+    pub fn begin_mcp_input(&mut self) -> io::Result<()> {
+        if self.suspended.is_some() {
+            return Ok(());
+        }
+        let held = self.keyboard.report();
+        if held != [0; 8] {
+            self.send("keyboard", &[0; 8])?;
+        }
+        let buttons = std::mem::take(&mut self.buttons);
+        if buttons != 0 {
+            if let Err(error) = self.mouse(self.last_abs, [0, 0], 0) {
+                self.buttons = buttons;
+                if held != [0; 8] {
+                    let _ = self.send("keyboard", &held);
+                }
+                return Err(error);
+            }
+        }
+        self.suspended = Some(SuspendedInput {
+            keyboard: std::mem::take(&mut self.keyboard),
+            buttons,
+            absolute: self.last_abs,
+            relative_motion: false,
+        });
+        Ok(())
+    }
+
+    /// Release only the tool's state and restore any human input that is still held.
+    pub fn finish_mcp_input(&mut self) -> io::Result<()> {
+        let Some(saved) = self.suspended.take() else {
+            return Ok(());
+        };
+        let keys = if self.keyboard.report() != [0; 8] {
+            self.send("keyboard", &[0; 8])
+        } else {
+            Ok(())
+        };
+        self.keyboard = saved.keyboard;
+        let restored_keys = self.keyboard.report();
+        let keyboard = if restored_keys != [0; 8] {
+            keys.and(self.send("keyboard", &restored_keys))
+        } else {
+            keys
+        };
+
+        let buttons = if std::mem::take(&mut self.buttons) != 0 {
+            self.mouse(self.last_abs, [0, 0], 0)
+        } else {
+            Ok(())
+        };
+        // An absolute report after relative travel would snap to a stale position.
+        // A subsequent human pointer event supplies a fresh position and mask.
+        let mouse = if saved.buttons != 0 && !(saved.absolute && saved.relative_motion) {
+            self.buttons = saved.buttons;
+            self.last_abs = saved.absolute;
+            buttons.and(self.mouse(saved.absolute, [0, 0], 0))
+        } else {
+            buttons
+        };
+        keyboard.and(mouse)
+    }
     pub fn locks(&mut self) -> Value {
         if let Some(b) = self
             .ports
@@ -334,6 +424,29 @@ impl Hid {
             self.led = b[0]
         }
         json!({"num":self.led&1!=0,"caps":self.led&2!=0,"scroll":self.led&4!=0})
+    }
+    fn update_mouse_mode(&mut self, buttons: u8, absolute: bool) -> io::Result<()> {
+        if self.suspended.is_some() && self.last_abs != absolute && self.buttons != 0 {
+            let held = std::mem::take(&mut self.buttons);
+            if let Err(error) = self.mouse(self.last_abs, [0, 0], 0) {
+                self.buttons = held;
+                return Err(error);
+            }
+        }
+        self.buttons = buttons;
+        self.last_abs = absolute;
+        Ok(())
+    }
+    pub fn mouse_buttons(&mut self, buttons: u8, absolute: bool) -> io::Result<()> {
+        self.update_mouse_mode(buttons, absolute)?;
+        self.mouse(absolute, [0, 0], 0)
+    }
+    pub fn host_write(&self, packet: &[u8; 64]) -> io::Result<()> {
+        let name = ["merged", "absolute", "telemetry"]
+            .into_iter()
+            .find(|name| self.ports.contains_key(name))
+            .ok_or(io::ErrorKind::NotConnected)?;
+        self.send(name, packet)
     }
     pub fn telemetry(&self) -> io::Result<Option<Vec<u8>>> {
         for name in ["merged", "absolute", "telemetry"] {
@@ -366,6 +479,61 @@ fn type_stroke(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_releases_its_own_input_and_does_not_restore_stale_pointer_coordinates() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut hid = Hid::default();
+        for name in ["keyboard", "relative", "absolute"] {
+            hid.ports
+                .insert(name, File::create(dir.path().join(name)).unwrap());
+        }
+        hid.input(&json!({"t":"key","code":"ControlLeft","down":true}))
+            .unwrap();
+        hid.input(&json!({"t":"mouse_abs","x":400,"y":800,"buttons":1}))
+            .unwrap();
+        hid.begin_mcp_input().unwrap();
+        hid.input(&json!({"t":"key","code":"KeyB","down":true}))
+            .unwrap();
+        hid.input(&json!({"t":"mouse_rel","dx":10,"dy":0,"buttons":2}))
+            .unwrap();
+        hid.finish_mcp_input().unwrap();
+
+        let key_reports = fs::read(dir.path().join("keyboard")).unwrap();
+        let reports: Vec<_> = key_reports.chunks_exact(8).collect();
+        assert_eq!(
+            reports,
+            [
+                [1, 0, 0, 0, 0, 0, 0, 0],
+                [0; 8],
+                [0, 0, 5, 0, 0, 0, 0, 0],
+                [0; 8],
+                [1, 0, 0, 0, 0, 0, 0, 0],
+            ]
+        );
+        assert_eq!(fs::read(dir.path().join("absolute")).unwrap().len(), 14);
+        assert_eq!(
+            fs::read(dir.path().join("relative")).unwrap(),
+            [2, 10, 0, 0, 0, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn console_disconnect_discards_saved_keyboard_without_interrupting_mcp() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut hid = Hid::default();
+        hid.ports.insert(
+            "keyboard",
+            File::create(dir.path().join("keyboard")).unwrap(),
+        );
+        hid.key(224, true).unwrap();
+        hid.begin_mcp_input().unwrap();
+        hid.key(5, true).unwrap();
+        hid.release_human().unwrap();
+        assert_eq!(hid.keyboard.report()[2], 5);
+        hid.finish_mcp_input().unwrap();
+        assert_eq!(hid.keyboard.report(), [0; 8]);
+    }
     #[test]
     fn reports_use_open_files_until_the_next_enumeration() {
         let dir = tempfile::tempdir().unwrap();

@@ -4557,8 +4557,17 @@ export interface operations {
                     "image/jpeg": string;
                 };
             };
-            /** @description Missing/wrong key or MCP disabled (error=unauthenticated) */
+            /** @description Missing or invalid key (error=unauthenticated) */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description MCP disabled, disallowed Host or Origin, or missing observe scope (error=mcp_disabled, bad_origin, or forbidden_scope) */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4597,7 +4606,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Not a valid input message (error=bad_message) */
+            /** @description Invalid input or text unsupported by the keyboard layout (error=bad_message or unmappable) */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -4608,6 +4617,24 @@ export interface operations {
             };
             /** @description error=unauthenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description MCP disabled, disallowed Host or Origin, or missing input scope (error=mcp_disabled, bad_origin, or forbidden_scope) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Human input or emergency stop interrupted or blocked the request (error=human_active, human_took_over, or stopped) */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

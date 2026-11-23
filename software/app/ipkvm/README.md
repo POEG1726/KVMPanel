@@ -43,6 +43,30 @@ sim 同时监听 TCP `127.0.0.1:7701`，板上监听 Unix socket `/run/kvmd/pane
 
 视频节点按 LT8619C、CSI 和 Cedrus 的设备名发现。可用 `KVMD_HDMI_DEVICE`、`KVMD_MEDIA_DEVICE`、`KVMD_VIDEO_DEVICE` 或 `KVMD_MJPEG_DEVICE` 覆盖节点路径。`KVMD_MJPEG_DEVICE=off` 强制软件编码，可用于实板对照。成功打开硬件编码或发生回退时，`kvmd` 记录日志。 [板级编码测试](../../../docs/linux-6.18.md#jpegmjpeg-编码)
 
+## MCP 服务
+
+网页 MCP 设置页生成分权限的 Bearer key。客户端连接同一 HTTP/HTTPS 监听上的 `/api/mcp/v1`，使用 Streamable HTTP JSON。管理接口、工具 Schema、权限和现有 REST 兼容入口见 [API 契约](../api/README.md#mcp)。Windows 端与板端使用同一 [HID 协议](../api/host-agent.md)。
+
+截图沿用现有 MJPEG 帧。需要裁剪或缩放时用 libjpeg-turbo 解码，再对输出图像编码。等待工具比较 1/8 分辨率的亮度图。回看有网页订阅时复用视频流，只有回看订阅时约每秒采一帧。带 MCP 的 ARM 构建仍沿用 Bootlin sysroot 的静态 libturbojpeg。运行原生 Linux 模拟器时，截图及帧差需要 `libturbojpeg.so.0`，Ubuntu 24.04 对应的包名为 `libturbojpeg`。
+
+网页和副屏停止入口会撤销 MCP 输入与可取消的电源动作。共享盘和虚拟介质切换会完成当前一致性操作。人工输入接管前会先释放 MCP 的键鼠状态。MCP 电源脉冲使用可取消的 `gpioset` 子进程，普通网页和副屏电源入口保留现有脉冲行为。
+
+在 WSL 的仓库根目录启动离线验证。脚本会创建临时数据目录和回环监听，通过 HTTP 检查全部工具、确认令牌及急停，并清理模拟进程。
+
+```sh
+. "$HOME/.cargo/env"
+export CARGO_TARGET_DIR="$HOME/work/KVMPanel/build/kvmd-cargo"
+cargo test --locked --manifest-path software/app/ipkvm/Cargo.toml
+cargo build --locked --manifest-path software/app/ipkvm/Cargo.toml --bin kvmd
+python3 software/app/ipkvm/tests/mcp_http.py "$CARGO_TARGET_DIR/debug/kvmd"
+```
+
+2026-11-23 离线结果。原生 Rust 49 个单元测试及 53 个集成测试通过。全部 22 个工具在原生 `--sim` 和 QEMU Cortex-A7 Linux 来宾中的 ARM 静态 `--sim` 通过 HTTP 验证，涵盖可写介质确认和强关途中急停。来宾测试发现 32 位 `openat2` 打开超过 2 GiB 的镜像需要 `O_LARGEFILE`，补齐后约 12.2 GB 的模拟磁盘挂载及确认卸载通过。MCP Inspector CLI 另验证 `tools/list`、截图、点击、开机守护和进 BIOS。
+
+用相同 ARMv7 musl 目标、Cortex-A7 参数和 Bootlin sysroot 对比 `98f4a7f`。去符号的 `kvmd` 从 12,063,656 字节增至 13,030,312 字节，增加 966,656 字节（944 KiB）。ARM 模拟使用同一份去符号可执行文件。实际 HDMI、GPIO、USB HID 和 LED 路径待实板复测。
+
+观察类审计在内存中按密钥和分钟合并，分钟结束或正常退出时写盘。突然断电可能丢失尚未落盘的观察记录。密钥的最近使用时间最多每分钟持久化一次。
+
 ## 应用升级
 
 板端暂从 `<server>/<channel>.json` 读取 `version`、`package`、`sha256`。`package` 可以是相对清单的 URL。离线包通过 `X-Sha256` 校验。当前包为不压缩的 tar，包含 kvmd、panel、web/index.html 和网页资源，最大 256 MiB。后端在数据目录暂存，校验完成后原子切换 apps/current，重启服务。

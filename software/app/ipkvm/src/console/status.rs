@@ -82,7 +82,7 @@ fn sample(app: App) -> Value {
         .values()
         .cloned()
         .collect();
-    json!({"t":"status","hdmi":hdmi,"stream":{"fps":fps,"kbps":kbps},"power":power,"locks":locks,"sessions":sessions,"media":app.media_status()})
+    json!({"t":"status","hdmi":hdmi,"stream":{"fps":fps,"kbps":kbps},"power":power,"locks":locks,"sessions":sessions,"media":app.media_status(),"mcp":app.mcp.activity()})
 }
 
 async fn publish(app: App, tx: watch::Sender<Snapshot>, mut events: broadcast::Receiver<String>) {
@@ -121,10 +121,7 @@ mod tests {
     #[test]
     fn leds_read_once_until_invalidated() {
         let cache = PowerCache::default();
-        assert_eq!(
-            cache.read(|| Ok(json!({"on":true}))).unwrap()["on"],
-            true
-        );
+        assert_eq!(cache.read(|| Ok(json!({"on":true}))).unwrap()["on"], true);
         assert_eq!(
             cache.read(|| panic!("cached LED sample was lost")).unwrap()["on"],
             true

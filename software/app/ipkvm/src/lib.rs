@@ -2,6 +2,7 @@ mod auth;
 mod config;
 pub mod console;
 pub mod hardware;
+mod mcp;
 pub mod panel;
 mod schema;
 pub mod storage;
@@ -111,7 +112,8 @@ pub(crate) fn atomic_write_mode(path: &Path, data: &[u8], mode: u32) -> io::Resu
 
     let parent = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
     let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
-    tmp.as_file().set_permissions(fs::Permissions::from_mode(mode))?;
+    tmp.as_file()
+        .set_permissions(fs::Permissions::from_mode(mode))?;
     tmp.write_all(data)?;
     tmp.as_file().sync_all()?;
     tmp.persist(path)?;
@@ -146,6 +148,7 @@ pub struct Inner {
     pub storage: Arc<storage::Storage>,
     pub system: system::System,
     pub console: console::Console,
+    mcp: mcp::Mcp,
     pub sim: bool,
     pub data_dir: PathBuf,
     pub started: Instant,
@@ -166,6 +169,7 @@ impl App {
             storage: Arc::new(storage::Storage::new(data_dir, sim)?),
             system: system::System::new(data_dir)?,
             console: console::Console::new(data_dir)?,
+            mcp: mcp::Mcp::new(data_dir),
             sim,
             data_dir: data_dir.to_owned(),
             started: Instant::now(),
@@ -241,6 +245,14 @@ async fn api_errors(req: Request, next: axum::middleware::Next) -> Response {
     }
     response
 }
+pub fn mcp_flush_audit(app: &App) {
+    mcp::flush_audit(app);
+}
+
+pub async fn mcp_background(app: App) {
+    mcp::background(app).await;
+}
+
 pub fn router(app: App, web: &Path) -> Router {
     Router::new()
         .route(
@@ -249,6 +261,7 @@ pub fn router(app: App, web: &Path) -> Router {
         )
         .merge(storage::routes())
         .merge(system::routes())
+        .merge(mcp::routes())
         .merge(console::routes())
         .merge(auth::routes())
         .merge(config::routes())

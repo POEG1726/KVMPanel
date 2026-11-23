@@ -25,7 +25,7 @@ use std::{
 use tokio::sync::{broadcast, watch};
 
 mod status;
-mod video;
+pub(crate) mod video;
 
 #[derive(Default)]
 struct Sessions {
@@ -58,7 +58,10 @@ pub struct Console {
     hid_write: Mutex<()>,
     next_id: AtomicU64,
     frames: tokio::sync::Mutex<Option<watch::Sender<video::Frame>>>,
+    fast_video: std::sync::atomic::AtomicUsize,
     pub sim_signal: AtomicBool,
+    pub sim_session: AtomicU64,
+    pub sim_stable: AtomicBool,
     pub sim_pc_connected: AtomicBool,
     pub(crate) stats: Mutex<(u64, u64)>,
 }
@@ -80,10 +83,22 @@ impl Console {
             hid_write: Mutex::new(()),
             next_id: AtomicU64::default(),
             frames: tokio::sync::Mutex::new(None),
+            fast_video: Default::default(),
             sim_signal: AtomicBool::new(true),
+            sim_session: AtomicU64::new(1),
+            sim_stable: AtomicBool::new(false),
             sim_pc_connected: AtomicBool::new(true),
             stats: Mutex::new((0, 0)),
         })
+    }
+    pub(crate) fn writable_count(&self) -> usize {
+        self.sessions
+            .lock()
+            .unwrap()
+            .entries
+            .values()
+            .filter(|v| v["view_only"] == false)
+            .count()
     }
     pub fn session_count(&self) -> usize {
         self.sessions.lock().unwrap().entries.len()
@@ -236,6 +251,47 @@ async fn press(
 }
 
 /// Serialize the live LED check with power pulses from both interfaces.
+pub(crate) fn pulse_cancellable(
+    app: &App,
+    button: &str,
+    ms: u64,
+    expected_power: Option<bool>,
+    cancelled: impl Fn() -> bool + Sync,
+) -> Result<(), ApiError> {
+    let mut last = app.console.power_write.lock().unwrap();
+    if cancelled() {
+        return Err(ApiError::new(409, "stopped"));
+    }
+    if let Some(expected) = expected_power {
+        let power = app.hw.power().map_err(ApiError::device)?;
+        if power["on"].as_bool() != Some(expected) {
+            return Err(ApiError::new(
+                409,
+                if expected { "pc_off" } else { "pc_on" },
+            ));
+        }
+        if !expected && last.is_some_and(|last| last.elapsed() < Duration::from_secs(5)) {
+            return Err(ApiError::new(409, "pc_on"));
+        }
+    }
+    let result = app
+        .hw
+        .press_cancellable(button, ms, &cancelled)
+        .map_err(|e| {
+            if e.kind() == io::ErrorKind::Interrupted {
+                ApiError::new(409, "stopped")
+            } else {
+                ApiError::device(e)
+            }
+        });
+    if expected_power == Some(false) && result.is_ok() {
+        *last = Some(std::time::Instant::now());
+    }
+    app.console.power_cache.invalidate();
+    app.emit("status_changed");
+    result
+}
+
 pub(crate) fn panel_power_on(app: &App) -> Result<(), ApiError> {
     let mut last = app.console.power_write.lock().unwrap();
     let power = app.hw.power().map_err(ApiError::device)?;
@@ -248,7 +304,7 @@ pub(crate) fn panel_power_on(app: &App) -> Result<(), ApiError> {
     app.emit("status_changed");
     Ok(())
 }
-fn mac(text: &str) -> Option<[u8; 6]> {
+pub(crate) fn mac(text: &str) -> Option<[u8; 6]> {
     text.trim()
         .split(['-', ':'])
         .map(|s| {
@@ -339,6 +395,11 @@ async fn wake(
     app.require(&h, "power")?;
     validate("wakeOnLan", &v)?;
     let mac = mac(v["mac"].as_str().unwrap()).ok_or_else(|| ApiError::new(400, "bad_mac"))?;
+    wake_mac(&app, mac).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub(crate) async fn wake_mac(app: &App, mac: [u8; 6]) -> Result<(), ApiError> {
     if !app.sim {
         let mut packet = [0xff; 102];
         for field in packet[6..].chunks_exact_mut(6) {
@@ -352,7 +413,19 @@ async fn wake(
             .await
             .map_err(ApiError::device)?;
     }
-    Ok(StatusCode::NO_CONTENT)
+    Ok(())
+}
+
+pub(crate) async fn saved_mac(app: &App, name: &str) -> Result<[u8; 6], ApiError> {
+    let devices = app.console.wol.lock().await;
+    let matches: Vec<_> = devices.iter().filter(|v| v["name"] == name).collect();
+    if matches.len() > 1 {
+        return Err(ApiError::new(409, "ambiguous_device"));
+    }
+    matches
+        .first()
+        .and_then(|v| mac(v["mac"].as_str()?))
+        .ok_or_else(|| ApiError::new(404, "not_found"))
 }
 
 async fn type_paste<F, Fut>(
@@ -495,8 +568,14 @@ async fn input_for(
 
 pub async fn jiggler(app: App) {
     run_jiggler(
-        || app.config()["hid"]["jiggler"] == true,
+        || app.config()["hid"]["jiggler"] == true && app.mcp.input.try_lock().is_ok(),
         || async {
+            if app.mcp.raw_input.lock().unwrap().is_some() {
+                return;
+            }
+            let Ok(_gate) = app.mcp.input.try_lock() else {
+                return;
+            };
             let hw = app.hw.clone();
             if let Ok(Err(e)) = tokio::task::spawn_blocking(move || hw.jiggle()).await {
                 eprintln!("mouse jiggler: {e}");
@@ -666,6 +745,12 @@ async fn console(
                             let app=app.clone();
                             let h=h.clone();
                             operation=Some(Box::pin(async move{
+                                if !crate::mcp::valid_human_input(&app,&v) {
+                                    return Err(ApiError::new(400,if v["t"] == "paste" && v["text"].as_str().is_some_and(|text| text.len() <= 65536) { "unmappable" } else { "bad_message" }));
+                                }
+                                app.mcp.human_input();
+                                let _gate = app.mcp.input.lock().await;
+                                crate::mcp::release_raw_input(&app).await;
                                 input_for(&app,&v,||app.require(&h,"console").is_ok_and(|u|u["view_only"]!=true),Some(id)).await
                             }));
                             None

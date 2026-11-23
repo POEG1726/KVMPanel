@@ -151,14 +151,21 @@ async fn branding_mcp_keys_and_bearer() {
         checked(enable(true).await, "putMcp", 409).await["error"],
         "no_key"
     );
-    let make_key = || s.call("POST", "/api/mcp/regenerate", &c, None);
-    let key = checked(make_key().await, "regenerateMcpKey", 200).await["key"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    assert!(key.len() >= 32);
+    let make_key = || {
+        s.call(
+            "POST",
+            "/api/mcp/keys",
+            &c,
+            Some(json!({"name":"Integration","scopes":["observe","input"]})),
+        )
+    };
+    let first = checked(make_key().await, "createMcpKey", 201).await;
+    let key = first["key"].as_str().unwrap().to_owned();
+    let first_id = first["entry"]["id"].as_str().unwrap();
+    assert!(key.starts_with("kvp_"));
+    checked(enable(true).await, "putMcp", 200).await;
     let state = checked(s.call("GET", "/api/mcp", &c, None).await, "getMcp", 200).await;
-    assert_eq!(state["key_hint"], key[key.len() - 4..]);
+    assert_eq!(state["keys"][0]["hint"], key[key.len() - 4..]);
     assert!(!state.to_string().contains(&key));
     let shot = |key: &str| {
         s.client
@@ -198,20 +205,28 @@ async fn branding_mcp_keys_and_bearer() {
         checked(enable(false).await, "putMcp", 200).await["enabled"],
         false
     );
-    assert_eq!(shot(&key).await.unwrap().status(), 401);
+    assert_eq!(shot(&key).await.unwrap().status(), 403);
     checked(enable(true).await, "putMcp", 200).await;
-    let next = checked(make_key().await, "regenerateMcpKey", 200).await["key"]
-        .as_str()
-        .unwrap()
-        .to_owned();
+    let second = checked(make_key().await, "createMcpKey", 201).await;
+    let next = second["key"].as_str().unwrap();
+    let next_id = second["entry"]["id"].as_str().unwrap();
     assert_ne!(key, next);
-    assert_eq!(shot(&key).await.unwrap().status(), 401);
-    assert_eq!(shot(&next).await.unwrap().status(), 200);
+    assert_eq!(shot(&key).await.unwrap().status(), 200);
+    assert_eq!(shot(next).await.unwrap().status(), 200);
     assert_eq!(
-        s.call("DELETE", "/api/mcp/key", &c, None).await.status(),
+        s.call("DELETE", &format!("/api/mcp/keys/{first_id}"), &c, None)
+            .await
+            .status(),
         204
     );
-    assert_eq!(shot(&next).await.unwrap().status(), 401);
+    assert_eq!(shot(&key).await.unwrap().status(), 401);
+    assert_eq!(
+        s.call("DELETE", &format!("/api/mcp/keys/{next_id}"), &c, None)
+            .await
+            .status(),
+        204
+    );
+    assert_eq!(shot(next).await.unwrap().status(), 403);
 }
 
 #[tokio::test]

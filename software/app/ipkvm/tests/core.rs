@@ -41,7 +41,7 @@ async fn health_config_permissions_and_usb() {
     let original = check(&s, "GET", "/api/config", &a, None, 200, "getConfig").await;
     assert_eq!(
         original,
-        json!({"panel":{"language":"en","orientation":"normal","auto_brightness":true,"brightness":70,"offline_sleep_min":5,"thresholds":{"cpu.tctl":85,"gpu.mem_junction":95,"mem.dimm.*":60},"hidden_metrics":[]},"function_key":{"short":"toggle_settings","long":"toggle_screen"},"usb":{"keyboard":true,"mouse_rel":true,"mouse_abs":true,"mouse_merge":false,"storage":true,"net":false,"net_mode":"ncm","acm":false,"telemetry":true},"web":{"language":"auto","workspace_open":"float","remember_float":true,"menubar":"auto_hide","title":"KVMPanel"},"video":{"quality":80,"fps_max":30,"scale":"fit","frame_diff":true},"hid":{"keyboard_layout":"us","mouse_mode":"abs","wheel_dir":"normal","wheel_speed":1,"jiggler":false,"leader_key":null},"serial":{"device":null,"baud":115200},"device":{"hostname":"kvmpanel","ssh":true,"mdns":true,"watchdog":false},"kvm":{"enabled":true}})
+        json!({"panel":{"language":"en","orientation":"normal","auto_brightness":true,"brightness":70,"offline_sleep_min":5,"thresholds":{"cpu.tctl":85,"gpu.mem_junction":95,"mem.dimm.*":60},"hidden_metrics":[]},"function_key":{"short":"toggle_settings","long":"toggle_screen"},"usb":{"keyboard":true,"mouse_rel":true,"mouse_abs":true,"mouse_merge":false,"storage":true,"net":false,"net_mode":"ncm","acm":false,"telemetry":true},"web":{"language":"auto","workspace_open":"float","remember_float":true,"menubar":"auto_hide","title":"KVMPanel"},"video":{"quality":80,"fps_max":30,"scale":"fit","frame_diff":true},"hid":{"keyboard_layout":"us","mouse_mode":"abs","wheel_dir":"normal","wheel_speed":1,"jiggler":false,"leader_key":null},"serial":{"device":null,"baud":115200},"device":{"hostname":"kvmpanel","ssh":true,"mdns":true,"watchdog":false},"kvm":{"enabled":true},"host":{"setup_key":"Delete","boot_menu_key":null,"tap_interval_ms":200,"tap_duration_s":15}})
     );
     assert_eq!(
         check(&s, "GET", "/api/usb/budget", &a, None, 200, "getUsbBudget").await,
@@ -442,7 +442,12 @@ async fn persisted_accounts_config_scripts_wol_mcp_and_logo_survive_restart() {
         .unwrap();
     assert_eq!(put.status(), 204);
     let key = s
-        .call("POST", "/api/mcp/regenerate", &a, None)
+        .call(
+            "POST",
+            "/api/mcp/keys",
+            &a,
+            Some(json!({"name":"Survives","scopes":["observe","input"]})),
+        )
         .await
         .json::<Value>()
         .await
@@ -450,6 +455,12 @@ async fn persisted_accounts_config_scripts_wol_mcp_and_logo_survive_restart() {
         .as_str()
         .unwrap()
         .to_owned();
+    assert_eq!(
+        s.call("PUT", "/api/mcp", &a, Some(json!({"enabled":true})))
+            .await
+            .status(),
+        200
+    );
     let restarted = App::new(s.dir.path(), true).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());

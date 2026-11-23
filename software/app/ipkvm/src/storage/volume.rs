@@ -86,8 +86,9 @@ impl Volume {
             path.as_os_str()
         };
         let name = CString::new(name.as_bytes()).map_err(|_| ApiError::new(400, "bad_path"))?;
+        // The raw syscall bypasses libc's large-file handling on 32-bit ARM.
         let how = OpenHow {
-            flags: (flags | libc::O_CLOEXEC | libc::O_NONBLOCK) as u64,
+            flags: (flags | libc::O_CLOEXEC | libc::O_NONBLOCK | libc::O_LARGEFILE) as u64,
             mode: 0,
             resolve: RESOLVE_IN_ROOT
                 | if system {

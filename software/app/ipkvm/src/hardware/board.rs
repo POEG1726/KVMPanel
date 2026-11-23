@@ -169,7 +169,13 @@ impl Hardware for Board {
         hid.reset()
     }
     fn release_hid(&self) -> io::Result<()> {
-        self.hid.lock().unwrap().reset()
+        self.hid.lock().unwrap().release_human()
+    }
+    fn begin_mcp_input(&self) -> io::Result<()> {
+        self.hid.lock().unwrap().begin_mcp_input()
+    }
+    fn finish_mcp_input(&self) -> io::Result<()> {
+        self.hid.lock().unwrap().finish_mcp_input()
     }
     fn locks(&self) -> io::Result<Value> {
         Ok(self.hid.lock().unwrap().locks())
@@ -223,6 +229,57 @@ impl Hardware for Board {
         ]));
         let release = run(Command::new("gpioset").args([&chip, &idle]));
         pulse.and(release).map(|_| ())
+    }
+    fn press_cancellable(
+        &self,
+        button: &str,
+        ms: u64,
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> io::Result<()> {
+        let field = match button {
+            "power" => "POWER",
+            "reset" => "RESET",
+            _ => return Err(io::ErrorKind::InvalidInput.into()),
+        };
+        let _guard = self.pulse.lock().unwrap();
+        if cancelled() {
+            return Err(io::ErrorKind::Interrupted.into());
+        }
+        let (chip, line, low) = gpio(field)?;
+        let active = format!("{line}={}", (!low) as u8);
+        let idle = format!("{line}={}", low as u8);
+        let mut pulse = Command::new("gpioset")
+            .args(["-m", "signal", &chip, &active])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+        let result = loop {
+            if cancelled() {
+                break Err(io::ErrorKind::Interrupted.into());
+            }
+            if std::time::Instant::now() >= deadline {
+                break Ok(());
+            }
+            match pulse.try_wait() {
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
+                Ok(Some(status)) => break Err(io::Error::other(format!("gpioset: {status}"))),
+                Err(error) => break Err(error),
+            }
+        };
+        let _ = pulse.kill();
+        let _ = pulse.wait();
+        let release = run(Command::new("gpioset").args([&chip, &idle]));
+        result.and(release.map(|_| ()))
+    }
+    fn mouse_buttons(&self, buttons: u8, absolute: bool) -> io::Result<()> {
+        self.hid.lock().unwrap().mouse_buttons(buttons, absolute)
+    }
+    fn host_write(&self, data: &[u8; 64]) -> io::Result<()> {
+        self.hid.lock().unwrap().host_write(data)
+    }
+    fn power_buttons(&self) -> (bool, bool) {
+        (gpio("POWER").is_ok(), gpio("RESET").is_ok())
     }
     fn power(&self) -> io::Result<Value> {
         Ok(json!({"on":indicator("POWER_LED")?}))

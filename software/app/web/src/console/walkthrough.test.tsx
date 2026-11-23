@@ -26,7 +26,7 @@ function consoleView(viewOnly = false) {
 }
 
 it.each([false, true])('shows MCP activity and only offers stop to writable sessions (view only: %s)', async (viewOnly) => {
-  const request = vi.fn(async (_request: Request) => new Response(null, { status: 204 }));
+  const request = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(null, { status: 204 }));
   configureApi({ fetch: request });
   const ws = consoleView(viewOnly);
   const status = { t: 'status', power: { on: true }, sessions: [], stream: { fps: 0, kbps: 0 } };
@@ -41,7 +41,8 @@ it.each([false, true])('shows MCP activity and only offers stop to writable sess
     fireEvent.click(stop!);
     await waitFor(() => expect(request).toHaveBeenCalled());
     expect(request.mock.calls).toHaveLength(1);
-    const [sent] = request.mock.lastCall!;
+    const [input, init] = request.mock.lastCall!;
+    const sent = new Request(input, init);
     expect(sent.method).toBe('POST');
     expect(new URL(sent.url).pathname).toBe('/api/mcp/stop');
   }

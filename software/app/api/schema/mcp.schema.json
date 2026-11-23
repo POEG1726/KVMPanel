@@ -57,6 +57,7 @@
         "additionalProperties": false
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",
@@ -213,6 +214,7 @@
         "additionalProperties": false
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",
@@ -273,6 +275,7 @@
         "additionalProperties": false
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",
@@ -329,6 +332,7 @@
         "additionalProperties": false
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",
@@ -428,6 +432,7 @@
         ]
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",
@@ -544,6 +549,7 @@
         ]
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",
@@ -641,6 +647,7 @@
         "additionalProperties": false
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",
@@ -715,6 +722,7 @@
         "additionalProperties": false
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",
@@ -794,6 +802,7 @@
         "additionalProperties": false
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",
@@ -855,6 +864,7 @@
         "additionalProperties": false
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",
@@ -980,6 +990,7 @@
         ]
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",
@@ -1070,6 +1081,7 @@
         ]
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",
@@ -1177,6 +1189,7 @@
         "additionalProperties": false
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",
@@ -1258,6 +1271,7 @@
         ]
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",
@@ -1319,6 +1333,7 @@
         "additionalProperties": false
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",
@@ -1452,6 +1467,7 @@
         ]
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",
@@ -1563,6 +1579,7 @@
         "additionalProperties": false
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",
@@ -1657,6 +1674,7 @@
         ]
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",
@@ -1768,6 +1786,7 @@
         ]
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object"
@@ -1851,6 +1870,7 @@
         "additionalProperties": false
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",
@@ -1913,6 +1933,7 @@
         "additionalProperties": false
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",
@@ -1979,6 +2000,7 @@
         "additionalProperties": false
       },
       "outputSchema": {
+        "type": "object",
         "anyOf": [
           {
             "type": "object",

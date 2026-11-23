@@ -50,6 +50,21 @@ async fn status(app: &App, pc: bool) -> io::Result<Value> {
         .await
         .map_err(io::Error::other)
 }
+pub(crate) fn mcp_metric_catalogue(app: &App) -> Vec<Value> {
+    let mut config = app.config()["panel"].clone();
+    config["hidden_metrics"] = json!([]);
+    metrics::snapshot(0.0, &config, None, None)
+}
+
+pub(crate) fn mcp_metric(app: &App, id: &str, reading: Option<f64>) -> Option<Value> {
+    let mut config = app.config()["panel"].clone();
+    config["hidden_metrics"] = json!([]);
+    let values = [(id.to_owned(), reading)].into();
+    metrics::snapshot(0.0, &config, Some(&values), None)
+        .into_iter()
+        .next()
+}
+
 fn sample_status(app: &App, pc: bool, info: &Value) -> Value {
     let speed = info["link_mbps"].as_u64().unwrap_or_default();
     let ip = info["ip"]
@@ -176,8 +191,22 @@ async fn collect(app: App, host: Arc<Mutex<Host>>) {
     loop {
         poll.tick().await;
         let hw = app.hw.clone();
-        if let Ok(Ok(Some(raw))) = tokio::task::spawn_blocking(move || hw.telemetry()).await {
+        let request_app = app.clone();
+        if let Ok(Ok(Some(raw))) = tokio::task::spawn_blocking(move || {
+            let raw = hw.telemetry()?;
+            if let Some(raw) = &raw {
+                request_app.mcp.host.packet(&request_app, raw);
+            }
+            Ok::<_, io::Error>(raw)
+        })
+        .await
+        {
             if let Some(report) = metrics::vendor_report(&raw) {
+                match &report {
+                    VendorReport::Hello(session, _) => app.mcp.host.heartbeat(*session),
+                    VendorReport::Values(items) => app.mcp.metrics.received(items),
+                    _ => {}
+                }
                 host.lock()
                     .unwrap()
                     .report(report, Instant::now(), now_ms());
@@ -237,6 +266,9 @@ async fn sampler(app: App, tx: broadcast::Sender<Value>, pc: watch::Sender<bool>
         } else {
             host.online(now)
         };
+        app.mcp
+            .metrics
+            .connection(connected, host.session.map(|(id, _)| id));
         if connected != was_connected {
             was_connected = connected;
             pc.send_replace(connected);
@@ -257,7 +289,7 @@ async fn sampler(app: App, tx: broadcast::Sender<Value>, pc: watch::Sender<bool>
         let panel = &app.config()["panel"];
         let mut asleep = false;
         if !app.sim {
-            if connected {
+            if connected || app.mcp.activity()["active"] == true {
                 offline_since = None;
             } else {
                 offline_since.get_or_insert(now);
@@ -298,6 +330,7 @@ async fn sampler(app: App, tx: broadcast::Sender<Value>, pc: watch::Sender<bool>
                 samples,
                 Some(&host.names),
             );
+            app.mcp.metrics.snapshot(metrics.clone(), app.sim);
             let catalogue = metrics.iter().map(|metric| {
                 json!({"id":metric["id"],"label":metric["label"],"unit":metric["unit"],"group":metric["group"]})
             }).collect();
@@ -388,6 +421,8 @@ async fn client<T: AsyncRead + AsyncWrite + Unpin>(
     let connected = *pc.borrow();
     let initial = status(&app, connected).await?;
     reply(&mut write, initial).await?;
+    let mut previous_mcp = Value::Null;
+    let mut mcp_tick = tokio::time::interval(Duration::from_millis(150));
     loop {
         tokio::select! {
             biased;
@@ -397,6 +432,15 @@ async fn client<T: AsyncRead + AsyncWrite + Unpin>(
                 if code==1012{
                     reply(&mut write,json!({"t":"kvm_restarting"})).await?;
                     return write.shutdown().await;
+                }
+            },
+            _=mcp_tick.tick()=>{
+                let mcp = app.mcp.activity();
+                if mcp != previous_mcp {
+                    previous_mcp = mcp.clone();
+                    let mut msg = mcp;
+                    msg["t"] = "mcp".into();
+                    reply(&mut write,msg).await?;
                 }
             },
             event=events.recv()=>match event{
@@ -426,7 +470,13 @@ async fn client<T: AsyncRead + AsyncWrite + Unpin>(
             next=lines.next(), if applies.len()<16=>match next{
                 Some(Ok(line))=>{
                     let msg:Value=serde_json::from_str(&line).unwrap_or(Value::Null);
-                    if msg["t"]=="get_config" {
+                    if msg["t"]=="mcp_stop" && validate("FromPanel", &msg).is_ok() {
+                        let result = crate::mcp::stop_from_function_key(&app).await;
+                        let mut out = json!({"t":"result","ok":result.is_ok()});
+                        if let Some(id) = msg.get("id") { out["id"] = id.clone(); }
+                        if let Err(error) = result { out["error"] = error.code.into(); }
+                        reply(&mut write,out).await?;
+                    } else if msg["t"]=="get_config" {
                         reply(&mut write,request(&app,msg)).await?;
                     } else if msg["t"]=="action" && msg["action"]=="usb_apply" {
                         // The request ID lets this peer query the config while re-enumeration runs.

@@ -55,6 +55,7 @@ async fn main() -> io::Result<()> {
         }
     }
     tokio::spawn(kvmd::console::jiggler(app.clone()));
+    tokio::spawn(kvmd::mcp_background(app.clone()));
     kvmd::system::start_services(app.clone());
     let panel = args.panel.unwrap_or_else(|| {
         if args.sim {
@@ -68,6 +69,7 @@ async fn main() -> io::Result<()> {
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let stop = async {
         tokio::select! {_=term.recv()=>{}, _=tokio::signal::ctrl_c()=>{}}
+        kvmd::mcp_flush_audit(&app);
         app.emit("kvm_restarting");
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         Ok(())

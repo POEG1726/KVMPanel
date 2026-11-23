@@ -3,7 +3,7 @@ use futures_util::{Sink, SinkExt};
 
 use std::time::Instant;
 
-pub(super) fn hdmi(app: &App) -> Value {
+pub(crate) fn hdmi(app: &App) -> Value {
     let absent = || json!({"signal":false,"width":0,"height":0,"fps":0});
     if app.sim && !app.console.sim_signal.load(Ordering::Relaxed) {
         return absent();
@@ -11,7 +11,7 @@ pub(super) fn hdmi(app: &App) -> Value {
     app.hw.hdmi().unwrap_or_else(|_| absent())
 }
 #[derive(Clone)]
-pub(super) enum Frame {
+pub(crate) enum Frame {
     Pending,
     NoSignal,
     DeviceError(std::sync::Arc<io::Error>),
@@ -26,7 +26,7 @@ impl Frame {
             Err(e) => Self::DeviceError(e.into()),
         }
     }
-    fn snapshot(&self) -> Result<Vec<u8>, ApiError> {
+    pub(crate) fn snapshot(&self) -> Result<Vec<u8>, ApiError> {
         match self {
             Self::Jpeg(bytes) => Ok(bytes.to_vec()),
             Self::NoSignal => Err(ApiError::new(503, "no_signal")),
@@ -35,7 +35,30 @@ impl Frame {
         }
     }
 }
-async fn subscribe(app: &App) -> watch::Receiver<Frame> {
+pub(crate) struct Subscription {
+    app: App,
+    pub(crate) rx: watch::Receiver<Frame>,
+    fast: bool,
+}
+impl Drop for Subscription {
+    fn drop(&mut self) {
+        if self.fast {
+            self.app.console.fast_video.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+}
+pub(crate) async fn subscribe(app: &App, fast: bool) -> Subscription {
+    if fast {
+        app.console.fast_video.fetch_add(1, Ordering::Relaxed);
+    }
+    let rx = frame_channel(app).await;
+    Subscription {
+        app: app.clone(),
+        rx,
+        fast,
+    }
+}
+async fn frame_channel(app: &App) -> watch::Receiver<Frame> {
     let mut frames = app.console.frames.lock().await;
     if let Some(tx) = frames.as_ref() {
         return tx.subscribe();
@@ -62,13 +85,21 @@ async fn produce(app: App, tx: watch::Sender<Frame>) {
             }
         }
         let cfg = app.config();
-        let fps = cfg["video"]["fps_max"].as_u64().unwrap_or(30).clamp(1, 60);
+        let fast = app.console.fast_video.load(Ordering::Relaxed) > 0;
+        let fps = if fast {
+            cfg["video"]["fps_max"].as_u64().unwrap_or(30).clamp(1, 60)
+        } else {
+            1
+        };
         let quality = cfg["video"]["quality"].as_u64().unwrap_or(80) as u8;
         let deadline = tokio::time::Instant::now() + Duration::from_secs_f64(1. / fps as f64);
         let source = app.clone();
         let next = tokio::task::spawn_blocking(move || {
             if source.sim && !source.console.sim_signal.load(Ordering::Relaxed) {
                 return Frame::NoSignal;
+            }
+            if source.sim && source.console.sim_stable.load(Ordering::Relaxed) {
+                return Frame::captured(crate::hardware::sim_still(quality));
             }
             Frame::captured(source.hw.frame(quality))
         })
@@ -90,7 +121,16 @@ async fn produce(app: App, tx: watch::Sender<Frame>) {
             bytes = 0;
             start = Instant::now();
         }
-        tokio::time::sleep_until(deadline).await;
+        if !fast {
+            while tokio::time::Instant::now() < deadline
+                && tx.receiver_count() > 0
+                && app.console.fast_video.load(Ordering::Relaxed) == 0
+            {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        } else {
+            tokio::time::sleep_until(deadline).await;
+        }
     }
 }
 
@@ -98,10 +138,10 @@ pub async fn snapshot(app: &App) -> Result<Vec<u8>, ApiError> {
     if app.sim && !app.console.sim_signal.load(Ordering::Relaxed) {
         return Err(ApiError::new(503, "no_signal"));
     }
-    let mut frames = subscribe(app).await;
+    let mut frames = subscribe(app, true).await;
     let ready = tokio::time::timeout(
         Duration::from_secs(5),
-        frames.wait_for(|frame| !matches!(frame, Frame::Pending)),
+        frames.rx.wait_for(|frame| !matches!(frame, Frame::Pending)),
     )
     .await;
     match ready {
@@ -148,9 +188,9 @@ async fn stream_socket(
         close(&mut socket, c).await;
         return;
     }
-    let mut frames = subscribe(&app).await;
+    let mut frames = subscribe(&app, true).await;
     // A new receiver must see the cached frame even before the next capture.
-    frames.mark_changed();
+    frames.rx.mark_changed();
     let mut last = None;
     let mut paused = false;
     loop {
@@ -166,7 +206,7 @@ async fn stream_socket(
                 match event{
                     Ok(event) if event=="sessions_changed"=>{},
                     Ok(_)=>continue,
-                    Err(broadcast::error::RecvError::Lagged(_))=>{events=events.resubscribe();last=None;frames.mark_changed();},
+                    Err(broadcast::error::RecvError::Lagged(_))=>{events=events.resubscribe();last=None;frames.rx.mark_changed();},
                     Err(broadcast::error::RecvError::Closed)=>return,
                 }
                 if let Some(code)=app.socket_code(&h,"console",""){close(&mut socket,code).await;return;}
@@ -176,15 +216,15 @@ async fn stream_socket(
                     None|Some(Err(_))|Some(Ok(Message::Close(_)))=>return,
                     Some(Ok(Message::Text(raw)))=>match serde_json::from_str::<Value>(&raw).ok().as_ref().and_then(|v|v["t"].as_str()) {
                         Some("pause")=>paused=true,
-                        Some("resume")=>{paused=false;last=None;frames.mark_changed();},
+                        Some("resume")=>{paused=false;last=None;frames.rx.mark_changed();},
                         _=>{}
                     },
                     _=>{}
                 }
             },
-            result=frames.changed()=>{
+            result=frames.rx.changed()=>{
                 if result.is_err(){return;}
-                let frame=frames.borrow_and_update().clone();
+                let frame=frames.rx.borrow_and_update().clone();
                 let Frame::Jpeg(frame)=frame else {last=None;continue};
                 if paused || (app.config()["video"]["frame_diff"]==true && last.as_ref()==Some(&frame)){continue;}
                 if !send_frame(&mut socket,frame.clone()).await{return;}
