@@ -179,7 +179,7 @@ python3 "$project/software/os/linux/qemu-smoke.py" --diagnostics \
 3. 插入测试 U 盘，检查 `lsusb`、`dmesg` 和新出现的块设备，再做只读读取。检查 `/sys/class/udc` 是否有 MUSB 控制器，USB0 的 Linux 枚举需要配置 gadget 功能。
 4. 网口和 microSD 分开验证。网口用 `ip link set eth0 up`、`ethtool eth0` 检查链路，再用 `udhcpc -n -q -i eth0` 获取地址并测试收发。CARD1 用组合 DTB 验证。先测 PF 识别时的 3.3 V 和 UHS 协商后的 1.8 V，再用 `dmesg` 和 `/sys/kernel/debug/mmc0/ios` 核对模式、实际频率、容量与只读读取。
 
-基础外设跑通后，再验证从 microSD 冷启动。按实测结果决定持久启动布局、内核加载方式和根文件系统，并保留 FEL 恢复路径。
+基础外设跑通后，用 [Debian SD 镜像](../software/os/debian/README.md) 验证 microSD 冷启动和持久存储。镜像把 SPL/U-Boot 放在卡头，内核和 DTB 由 extlinux 从第一分区读取。首次使用默认 High Speed，FEL 和 Buildroot initramfs 可用于恢复与诊断。
 
 ## 单独验证本板网口
 

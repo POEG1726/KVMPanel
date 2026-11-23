@@ -103,8 +103,15 @@ impl<S: Send + Sync> FromRequest<S> for JsonBody {
     }
 }
 pub fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
+    atomic_write_mode(path, data, 0o600)
+}
+
+pub(crate) fn atomic_write_mode(path: &Path, data: &[u8], mode: u32) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
     let parent = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
     let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
+    tmp.as_file().set_permissions(fs::Permissions::from_mode(mode))?;
     tmp.write_all(data)?;
     tmp.as_file().sync_all()?;
     tmp.persist(path)?;

@@ -151,6 +151,40 @@ static int init_command(int argc, char **argv)
     return stc_request(fd, cmd, 0, &reply);
 }
 
+/** @brief Arm the STC after the systemd shutdown hook checks local storage. */
+static int late_poweroff(int fd)
+{
+    int mounts, swaps, clean_mounts, clean_swaps, saved;
+    uint16_t reply;
+
+    mounts = open("/proc/self/mountinfo", O_RDONLY | O_CLOEXEC);
+    if (mounts < 0)
+        return -1;
+    swaps = open("/proc/swaps", O_RDONLY | O_CLOEXEC);
+    if (swaps < 0) {
+        saved = errno;
+        close(mounts);
+        errno = saved;
+        return -1;
+    }
+    clean_mounts = mounts_quiet(mounts);
+    clean_swaps = swaps_quiet(swaps);
+    if (!clean_mounts || !clean_swaps) {
+        stc_request(fd, CMD_CANCEL_OFF, 0, &reply);
+        errno = EBUSY;
+        return -1;
+    }
+    if (stc_request(fd, CMD_PREPARE_OFF, 0, &reply) < 0)
+        return -1;
+    if (stc_request(fd, CMD_ARM_OFF, 0, &reply) == 0)
+        return 0;
+
+    saved = errno;
+    stc_request(fd, CMD_CANCEL_OFF, 0, &reply);
+    errno = saved;
+    return -1;
+}
+
 /** @brief Validate the local firmware image and hold PB10 across every ISP attempt. */
 static int update(int fd, const char *path)
 {
@@ -221,9 +255,10 @@ int main(int argc, char **argv)
         perror(argv[1]);
         return 1;
     }
-    if (!((argc == 2 && !strcmp(argv[1], "status")) ||
+    if (!((argc == 2 && (!strcmp(argv[1], "status") || !strcmp(argv[1], "late-poweroff"))) ||
           (argc == 4 && !strcmp(argv[1], "update") && !strcmp(argv[2], "--hold-wired")))) {
-        fprintf(stderr, "Usage: %s status | update --hold-wired IMAGE.bin\n", argv[0]);
+        fprintf(stderr, "Usage: %s status | late-poweroff | update --hold-wired IMAGE.bin\n",
+                argv[0]);
         return 2;
     }
     lock = open(STC_LOCK, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
@@ -238,6 +273,8 @@ int main(int argc, char **argv)
     }
     if (argc == 4) {
         result = update(fd, argv[3]);
+    } else if (!strcmp(argv[1], "late-poweroff")) {
+        result = late_poweroff(fd);
     } else {
         result = stc_request(fd, CMD_VERSION, 0, &version) ||
             stc_request(fd, CMD_STATUS, 0, &status);

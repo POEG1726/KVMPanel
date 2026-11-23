@@ -206,6 +206,14 @@ pub fn device_action(app: &App, action: &str) -> Result<(), ApiError> {
             if !app.sim {
                 let (cmd, args): (&str, &[&str]) = match action {
                     "restart_kvm" => ("/etc/init.d/S95kvmd", &["restart"]),
+                    "reboot" if Path::new("/run/systemd/system").is_dir() => (
+                        "/usr/bin/systemctl",
+                        &["--check-inhibitors=yes", "--no-block", "reboot"],
+                    ),
+                    "shutdown" if Path::new("/run/systemd/system").is_dir() => (
+                        "/usr/bin/systemctl",
+                        &["--check-inhibitors=yes", "--no-block", "poweroff"],
+                    ),
                     "reboot" => ("/sbin/reboot", &[]),
                     _ => ("/sbin/poweroff", &[]),
                 };

@@ -1,0 +1,20 @@
+[Unit]
+Description=KVMPanel service
+RequiresMountsFor=/data /mnt/sd
+ConditionPathIsMountPoint=/data
+After=network.target
+
+[Service]
+Type=forking
+PIDFile=/run/kvmd/kvmd.pid
+RuntimeDirectory=kvmd
+Environment=PATH=/usr/libexec/kvmpanel:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=KVMD_NETWORKD=1
+ExecStart=/usr/libexec/kvmd/run-service start
+ExecStop=/usr/libexec/kvmd/run-service stop
+Restart=on-failure
+RestartSec=2s
+TimeoutStartSec=100s
+
+[Install]
+WantedBy=multi-user.target

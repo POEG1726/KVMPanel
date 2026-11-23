@@ -1,5 +1,5 @@
 use super::bad_body;
-use crate::{atomic_write, validate, ApiError, App, JsonBody};
+use crate::{atomic_write, atomic_write_mode, validate, ApiError, App, JsonBody};
 use axum::{extract::State, http::HeaderMap, Json};
 use serde_json::Value;
 use std::{
@@ -102,9 +102,63 @@ fn write_interfaces(path: &Path, cfg: &Value) -> io::Result<()> {
     atomic_write(path, ifconfig(cfg).as_bytes())
 }
 
+fn prefix_length(mask: Ipv4Addr) -> Option<u32> {
+    let bits = u32::from(mask);
+    let prefix = bits.leading_ones();
+    (prefix + bits.trailing_zeros() == 32).then_some(prefix)
+}
+
+fn networkd_config(cfg: &Value) -> io::Result<String> {
+    let mut file = "[Match]\nName=eth0\n\n[Network]\n".to_owned();
+    if cfg["mode"] == "dhcp" {
+        file.push_str("DHCP=ipv4\n");
+    } else {
+        let parse = |key: &str| {
+            cfg[key]
+                .as_str()
+                .and_then(|s| s.parse::<Ipv4Addr>().ok())
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, key.to_owned()))
+        };
+        let prefix = prefix_length(parse("mask")?)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid netmask"))?;
+        file.push_str(&format!(
+            "Address={}/{prefix}\nGateway={}\n",
+            parse("ip")?,
+            parse("gateway")?
+        ));
+    }
+    if cfg["dns"]["mode"] == "manual" {
+        for server in cfg["dns"]["servers"].as_array().into_iter().flatten() {
+            let address = server
+                .as_str()
+                .and_then(|s| s.parse::<IpAddr>().ok())
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid DNS address"))?;
+            file.push_str(&format!("DNS={address}\n"));
+        }
+        file.push_str("\n[DHCPv4]\nUseDNS=no\n\n[IPv6AcceptRA]\nUseDNS=no\n");
+    }
+    Ok(file)
+}
+
 pub(super) async fn apply(app: &App, cfg: &Value) -> io::Result<()> {
     let _lock = app.system.net_apply.lock().await;
     if &app.system.network() != cfg {
+        return Ok(());
+    }
+    if std::env::var_os("KVMD_NETWORKD").is_some_and(|value| value == "1") {
+        let file = networkd_config(cfg)?;
+        tokio::task::spawn_blocking(move || {
+            let path = Path::new("/etc/systemd/network/20-eth0.network");
+            if fs::read(path).as_deref().ok() == Some(file.as_bytes()) {
+                return Ok(());
+            }
+            atomic_write_mode(path, file.as_bytes(), 0o644)
+        })
+        .await
+        .map_err(io::Error::other)??;
+        if !Command::new("networkctl").arg("reload").status().await?.success() {
+            return Err(io::Error::other("networkctl reload failed"));
+        }
         return Ok(());
     }
     let path = app.data_dir.join("interfaces");
@@ -161,6 +215,15 @@ pub(super) async fn put(
             return Err(bad_body(&format!("/{key}")));
         }
     }
+    if body["mode"] == "static"
+        && body["mask"]
+            .as_str()
+            .and_then(|s| s.parse().ok())
+            .and_then(prefix_length)
+            .is_none()
+    {
+        return Err(bad_body("/mask"));
+    }
     if !app.sim {
         super::listeners::validate_settings(&app, &body).await?;
         if body["dns"]["servers"]
@@ -205,5 +268,19 @@ mod test {
     #[test]
     fn static_interfaces() {
         assert_eq!(ifconfig(&json!({"mode":"static","ip":"10.7.0.2","mask":"255.255.0.0","gateway":"10.7.0.1"})), "iface eth0 inet static\n  address 10.7.0.2\n  netmask 255.255.0.0\n  gateway 10.7.0.1\n")
+    }
+
+    #[test]
+    fn static_networkd_with_manual_dns() {
+        let text = networkd_config(&json!({
+            "mode": "static", "ip": "10.7.0.2", "mask": "255.255.255.0",
+            "gateway": "10.7.0.1", "dns": {"mode": "manual", "servers": ["1.1.1.1", "::1"]}
+        }))
+        .unwrap();
+        assert_eq!(
+            text,
+            "[Match]\nName=eth0\n\n[Network]\nAddress=10.7.0.2/24\nGateway=10.7.0.1\nDNS=1.1.1.1\nDNS=::1\n\n[DHCPv4]\nUseDNS=no\n\n[IPv6AcceptRA]\nUseDNS=no\n"
+        );
+        assert_eq!(prefix_length("255.0.255.0".parse().unwrap()), None);
     }
 }

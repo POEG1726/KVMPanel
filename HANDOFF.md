@@ -2,6 +2,14 @@
 
 最近五项有实际进展的软件工作，最新一项在顶部。全项目状态见 [软件进度](docs/software-progress.md)。
 
+## Debian 13 SD 镜像
+
+核对日期 2026-11-23。
+
+- SD 系统采用 Debian 13 armhf 并预装 Vim，使用原板级内核及带 SD 节点的 U-Boot。默认 High Speed，另有 UHS 菜单项。压缩镜像位于本地忽略目录 `build/debian/kvmpanel-debian13-armhf.img.xz`。 [构建与写卡](software/os/debian/README.md)
+- 离线通过分区、文件系统和 DTB 检查。QEMU 验证首次密码设置、Vim、数据分区、KVM 网页、USB gadget、网络配置、关机阻止锁及模拟 STC8 UART 的准备和待断电帧。QEMU 通过内核直启。
+- 上板从默认 High Speed 冷启动和串口登录开始，核对 SD 读写、以太网、KVM 外设和内核发出的 UART2 最终断电帧。FEL 与 Buildroot initramfs 可用于诊断。 [首次上板](docs/development.md#首次上板)
+
 ## 板级网口、显示电源与 HDMI 采集
 
 核对日期 2026-11-23。
@@ -30,10 +38,3 @@
 
 - 网页已合入 `main`，此前用 Mock 走查双语登录、控制台、设置和工作台，并用 `kvmd --sim` 验证静态路由和文件传输。 [联调记录](software/app/web/README.md#工作台与联调)
 - 后续从 `software/app/web/` 接手。契约有改动时，先重新生成 API 类型，再跑前端测试和打包验证。 [开发说明](software/app/web/README.md)
-
-## C906 与 HiFi4 回环固件
-
-核对日期 2026-11-22。
-
-- remoteproc、mailbox、RPMsg 和两份回环固件已合入 `main`，已有交叉构建、打包及固件地址与 DT 预留区核对记录。 [板级验证范围](docs/linux-6.18.md#c906hifi4-与-gpadc)
-- 获准实板验证后，按开发说明先单独启动两核并做 RPMsg 回环，再验证同时运行和重复启停。 [构建与回环步骤](docs/development.md#c906-和-hifi4)

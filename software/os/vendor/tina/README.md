@@ -12,7 +12,7 @@ Tina 参考配置是 `tina-t113i-overlay/device/config/chips/t113_i/configs/evb1
 
 ## microSD 冷启动
 
-2026-11-22 版以 CARD1 microSD 为板载启动介质。验证顺序是 FEL 加载到 RAM、核对 SMHC0 的只读访问，再验证从 SD 装载 SPL 和 U-Boot。镜像布局待上板确认。 [板级接线](../../../../hardware/README.md)
+2026-11-22 版以 CARD1 microSD 为板载启动介质。验证顺序是 FEL 加载到 RAM、核对 SMHC0 的只读访问，再验证从 SD 装载 SPL、U-Boot 和 Debian。镜像使用 MBR 和两个 ext4 分区，冷启动待实板确认。 [Debian 镜像](../../debian/README.md) · [板级接线](../../../../hardware/README.md)
 
 ## 旧版的 SPI NAND 调研
 

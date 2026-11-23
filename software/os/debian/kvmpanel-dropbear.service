@@ -1,0 +1,9 @@
+[Unit]
+Description=KVMPanel SSH server
+RequiresMountsFor=/data
+After=network.target
+
+[Service]
+Type=forking
+PIDFile=/run/dropbear.pid
+ExecStart=/usr/sbin/dropbear -R -P /run/dropbear.pid

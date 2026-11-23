@@ -1,5 +1,7 @@
 # FEL 启动配置
 
+SD 镜像使用带 SMHC0 节点的 DTB，构建和写卡见 [Debian SD 镜像](../debian/README.md)。
+
 `configs/kvmpanel_fel_defconfig` 用于 U-Boot 2026.10。它使用 R528 的 SPL DDR3 驱动、Tina T113-i 的 DDR3 参考参数、UART0 和 RAM 环境。目标是通过 FEL 启动，等待本板验证。DDR 参数来源和启动介质说明见 [T113-i 启动链](../vendor/tina/README.md)。
 
 ## 构建

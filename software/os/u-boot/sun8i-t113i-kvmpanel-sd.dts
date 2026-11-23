@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
+#include "sun8i-t113i-kvmpanel.dts"
+
+&mmc0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&mmc0_pins>;
+	bus-width = <4>;
+	max-frequency = <50000000>;
+	vmmc-supply = <&reg_3v3_main>;
+	no-1-8-v;
+	broken-cd;
+	status = "okay";
+};
