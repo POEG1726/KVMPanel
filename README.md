@@ -7,7 +7,9 @@ KVMPanel is a board built around the Allwinner T113-i. It mounts in a PC case an
 - **IP KVM**: view the screen and drive the keyboard and mouse from a browser, with power control, virtual media and file access over the network.
 - **Case dashboard**: a touchscreen on the case that shows live CPU, GPU, memory and system stats sent by a program on the PC.
 
-It also presses the motherboard's front-panel buttons (power, reset, BCLK+/−, safe boot) and offers an MCP server so AI agents can operate the PC through the KVM.
+It also presses the motherboard's front-panel buttons (power, reset, BCLK+/−, safe boot).
+
+The IP KVM is built mainly for AI control: agents connect to its MCP server and operate the PC through screenshots, keyboard and mouse. The T113-i has no H.264 or H.265 encoder, so video is MJPEG. That is not a real drawback here: agents look at single frames, and every MJPEG frame is already a JPEG screenshot.
 
 Hardware revision 2026-11-22. The software builds and passes simulator and QEMU tests; bring-up on a real board has not started yet.
 
