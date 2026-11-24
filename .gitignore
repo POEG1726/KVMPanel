@@ -24,3 +24,6 @@ node_modules/
 
 # Brainstorm mockups
 .superpowers/
+
+# Git worktrees for isolated tasks
+/.worktrees/
