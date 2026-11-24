@@ -1,29 +1,47 @@
-# Local upstream repositories and acquisition state
+# Local agent instructions and handoff notes
+/AGENTS.md
+/HANDOFF.md
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Upstream sources and local working areas
 /sources/repos/
 /sources/donors/
 /downloads/
 /build/
 /artifacts/
 /logs/
+/.worktrees/
+.superpowers/
+
+# Build outputs
+target/
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
 __pycache__/
 *.py[cod]
 .venv/
-.env
-.env.*
-!.env.example
-node_modules/
 *.log
+
 # Local EDA snapshots and reference documents
 /hardware/eda/*.epro
 /hardware/eda/*.epro2
 /hardware/exports/generated/
 /hardware/reference/datasheets/
-# Vendor archives / credentials must not enter the project repository.
+
+# Secrets
+.env
+.env.*
+!.env.example
 *.key
 *.pem
 
-# Brainstorm mockups
-.superpowers/
-
-# Git worktrees for isolated tasks
-/.worktrees/
+# Editors and OS files
+.vs/
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
