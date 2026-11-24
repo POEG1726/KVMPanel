@@ -1,6 +1,4 @@
-# Local agent instructions and handoff notes
-/AGENTS.md
-/HANDOFF.md
+# Local agent settings
 CLAUDE.local.md
 .claude/settings.local.json
 
