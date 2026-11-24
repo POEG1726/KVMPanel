@@ -19,13 +19,13 @@
 #define ISP_MAX_MS       3000
 
 /* Inclusive VCC-referenced ADC counts. Boundaries come from adjacent
- * 1%-tolerance resistor states; see README.md for the calculated margins. */
+ * 1%-tolerance E12 keypad states; see README.md for the calculated margins. */
 #ifndef KEY_BOTH_LOW
-#define KEY_BOTH_LOW     132
-#define KEY_BOTH_HIGH    161
-#define KEY_IDLE_LOW     249
+#define KEY_BOTH_LOW     163
+#define KEY_BOTH_HIGH    210
+#define KEY_IDLE_LOW     313
 #define KEY_IDLE_HIGH    1023
-#define KEY_HYSTERESIS   4
+#define KEY_HYSTERESIS   6
 #elif !defined(KEY_BOTH_HIGH) || !defined(KEY_IDLE_LOW) || \
       !defined(KEY_IDLE_HIGH) || !defined(KEY_HYSTERESIS)
 #error Set both ADC windows and hysteresis together

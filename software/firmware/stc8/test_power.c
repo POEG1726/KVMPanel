@@ -13,7 +13,7 @@
 #include "power.h"
 #include "protocol.h"
 
-enum { IDLE = 268, BOTH = 143, SINGLE = 180 };
+enum { IDLE = 338, BOTH = 187, SINGLE = 235 };
 static uint8_t flash[1024], levels[3], isp_calls, writes, events_used;
 static uint8_t events[16];
 static uint16_t now;
@@ -112,7 +112,7 @@ static void gestures(void)
     boot();
     run(80, BOTH); /* A button already down at boot is not a fresh gesture. */
     run(100, IDLE);
-    const uint16_t other_states[] = {0, 35, 37, 81, 85, 117, 122, 177, 184, 226, 234};
+    const uint16_t other_states[] = {0, 44, 47, 91, 96, 137, 142, 231, 239, 284, 293};
     for (unsigned int i = 0; i < sizeof(other_states) / sizeof(other_states[0]); ++i) {
         run(600, other_states[i]);
         run(100, IDLE);
@@ -152,8 +152,8 @@ static void gestures(void)
 /** @brief Accept both tolerance extremes with quantization of the real ladder. */
 static void tolerance_edges(void)
 {
-    const uint16_t idle[] = {263, 272};
-    const uint16_t both[] = {141, 146};
+    const uint16_t idle[] = {333, 343};
+    const uint16_t both[] = {183, 190};
     for (unsigned int i = 0; i < sizeof(idle) / sizeof(idle[0]); ++i) {
         for (unsigned int j = 0; j < sizeof(both) / sizeof(both[0]); ++j) {
             memset(flash, 0xff, sizeof(flash));

@@ -38,7 +38,7 @@ enum {
 };
 
 #define STATUS_TAKEOVER (STATUS_MAIN | STATUS_PD | STATUS_RESET_RELEASED | STATUS_FLAG)
-#define STC_APP_VERSION 0x0102
+#define STC_APP_VERSION 0x0103
 #define STC_IMAGE_END   0x1f00
 
 /** @brief Update the CRC-8/ATM accumulator with one byte. */

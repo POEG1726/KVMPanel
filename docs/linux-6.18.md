@@ -30,7 +30,9 @@ C906 和 HiFi4 由 A7 上的 Linux remoteproc 加载。板级 DT 使用 CPUX mai
 
 三个驱动通过 ARMv7 `W=1` 编译，最终内核和板级 DTB 已生成。已核对两份 ELF 的加载段、RPMsg resource table 与 DT 的地址和大小，预留区和本次 FEL 镜像互不重叠。QEMU 的板外测试通过，覆盖 Buildroot 镜像启动、固件目录、诊断程序和既有基础服务。两个核的复位、时钟和 RPMsg 收发待在实板验证。
 
-H7.1 的 `KEY_ADC` 直连 STC 的 P3.2，经 Q1 连到 T113-i 的 `GPADC0`（`T113_ADC`），`GPADC1` 悬空。板级 DT 和内核配置开放 GPADC0 供 Linux 读取。GPADC0 的 IIO 设备名为 `sun20i-gpadc`。驱动每次读取 `in_voltage0_raw` 时发起一次转换，用数据就绪中断等待结果。驱动的 scale 为 1800 mV / 4096 计数。运行中的 `kvmd` 以 20 ms 周期读取，同全松开基准作比分类，设备树沿用现有 GPADC0 定义。基础、DSI 和组合 DTB 用同一内核源码重编译，产物与本次改动前逐字节一致。FUNC 单按才派发动作，双键开关机仍由 STC 独立处理。 [新版网表](../hardware/exports/2026-11-22/Netlist_Schematic2_2026-11-22.enet) · [T113-i 数据手册 §5.7](../hardware/reference/datasheets/T113-i_Datasheet_V1.4.pdf) · [路径覆盖与窗口](../software/app/ipkvm/README.md#机箱物理按键)
+H7.1 的 `KEY_ADC` 直连 STC 的 P3.2，经 Q1 连到 T113-i 的 `GPADC0`（`T113_ADC`），`GPADC1` 悬空。板级 DT 和内核配置开放 GPADC0 供 Linux 读取。GPADC0 的 IIO 设备名为 `sun20i-gpadc`。驱动每次读取 `in_voltage0_raw` 时发起一次转换，用数据就绪中断等待结果。驱动的 scale 为 1800 mV / 4096 计数。运行中的 `kvmd` 以 20 ms 周期读取，同全松开基准作比分类，设备树沿用现有 GPADC0 定义。首次接入时重编译了基础、DSI 和组合 DTB，产物与接入前逐字节一致。FUNC 单按才派发动作，双键开关机仍由 STC 独立处理。 [新版网表](../hardware/exports/2026-11-22/Netlist_Schematic2_2026-11-22.enet) · [路径覆盖与窗口](../software/app/ipkvm/README.md#机箱物理按键)
+
+2026-11-23 E12 版按键使用三路 2.2 kΩ 上拉，BCLK+、BCLK−、FUNC 加权分别为 33 kΩ、15 kΩ、6.8 kΩ，R46 仍为 2.49 kΩ，全部 1%。`STC_5V=5.25 V` 时全松开最高为 1.75493 V，距 AVCC 推荐下限 1.782 V 约 27.07 mV。GPADC 的输入量程为 0 至 AVCC，推荐 AVCC 为 1.782–1.818 V。更高的 `STC_5V` 可能使松开读数截幅，`kvmd` 将 4095 作为全松开样本并保留基准。 [T113-i 数据手册 §2.11.10、表 5-2](../hardware/reference/datasheets/T113-i_Datasheet_V1.4.pdf) · [按键电阻和标称电压](../hardware/T113_signal_allocation.csv)
 
 ## MIPI DSI
 

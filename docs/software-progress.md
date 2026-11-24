@@ -4,7 +4,7 @@
 
 ## 已完成
 
-- **机箱物理按键**。代码已接入 `kvmd` GPADC0 校准和 FUNC 配置动作，STC 1.2 启用正式双键窗口。构建通过 SDCC、三份板级 DTB、WSL ARM 静态 `kvmd` 及原生和 ARM 副屏。模拟通过 Rust 55 项单测及 54 项集成、Mock 81 项、HTTP 22 个 MCP 工具、可写 ADC 文件、无屏副屏及 STC 状态机和 ISP 回归。实板待测 GPADC 读数、窗口余量、STC 手势、FUNC 短长按手感和急停。 [T113 说明](../software/app/ipkvm/README.md#机箱物理按键) · [STC 说明](../software/firmware/stc8/README.md)
+- **机箱物理按键**。E12 阻值已同步到硬件分配表、STC 1.3 窗口和 `kvmd` 比例窗口。GPADC 满量程码可确认松开，保留已学基准。SDCC、WSL ARM 静态 `kvmd` 及网页构建通过。模拟通过 Rust 57 项单测及 54 项集成、Mock 81 项、网页 181 项、HTTP 22 个 MCP 工具、可写 ADC 文件截幅与急停、无屏副屏，以及 STC 状态机和 ISP 回归。实板待测新阻值对应的 ADC 读数、窗口余量、STC 手势、FUNC 短长按手感和急停。 [T113 说明](../software/app/ipkvm/README.md#机箱物理按键) · [STC 说明](../software/firmware/stc8/README.md)
 
 - **MCP 服务离线实现**。板端提供标准 Streamable HTTP、22 个工具、分权限密钥、审计和网页及副屏急停。Windows 上位机通过厂商 HID 提供窗口和显示器信息、受限剪贴板和共享盘安全弹出。Rust、Mock、网页测试与 Windows x64、WSL ARM 构建通过。全部工具通过原生及 ARM Linux 来宾 HTTP 模拟。MCP Inspector 和无屏副屏验证通过。 [板端验证](../software/app/ipkvm/README.md#mcp-服务) · [上位机验证](../software/app/pc-telemetry/README.md#mcp-主机端通道)
 - **MCP 人工输入优先设置**。网页可设置优先开关及 1–60 秒交还等待，默认开启及两秒。原生模拟验证默认拦截与到期放行、关闭后输入交错、急停仍生效和 `host_status` 返回设置。Rust 104 项、Mock 80 项、网页构建及 181 项测试通过。实板键鼠交错待测。 [接口与默认值](../software/app/api/README.md#mcp)
@@ -31,7 +31,7 @@
 
 - **Windows PC 遥测补充与实测**。Intel GPU 深度读数待接入。有其它 Ryzen 主机时，用 `--once` 交叉验证 BCLK 和 DRAM 带宽。有板子时验证 USB 与 Panel 显示。 [采集计划](superpowers/specs/2026-11-23-pc-telemetry-design.md)
 - **板级适配**。2026-11-22 归档与软件已用于 microSD UHS、显示电源和采集适配。待新版网表核对 RTL8211F-CG 的无源晶体接法。待实板验证 PHY 起振和链路、SGM3851A 的 SWIRE 波形和三路输出、LT8619C 的 IRQ 清除及 HDMI 采集，以及 microSD 的电压和速率。 [板级适配](linux-6.18.md) · [网口时序](development.md#单独验证本板网口)
-- **STC8 电源管理集成**。固件 1.1 加入 STC 本机硬件看门狗，已通过 SDCC 构建、状态机测试及模拟 ISP 回归。固件 1.2 已启用双键窗口并通过状态机和模拟 ISP 回归。实板待验证 ADC 判定窗口、UART 电平和收发、供电与复位波形、看门狗恢复，以及外部 UPDATE_HOLD 电路。 [STC8 说明与验证](../software/firmware/stc8/README.md)
+- **STC8 电源管理集成**。固件 1.1 加入 STC 本机硬件看门狗，已通过 SDCC 构建、状态机测试及模拟 ISP 回归。固件 1.3 已启用 E12 版双键窗口并通过状态机和模拟 ISP 回归。实板待验证 ADC 判定窗口、UART 电平和收发、供电与复位波形、看门狗恢复，以及外部 UPDATE_HOLD 电路。 [STC8 说明与验证](../software/firmware/stc8/README.md)
 
 ## TODO
 

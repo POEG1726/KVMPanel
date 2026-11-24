@@ -9,8 +9,9 @@ use std::{
 
 const POLL: Duration = Duration::from_millis(20);
 const LONG: Duration = Duration::from_millis(700);
-// 12-bit GPADC with 1800 mV full scale. Allow 1.18–1.45 V when learning idle.
-const IDLE_RAW: std::ops::RangeInclusive<u16> = 2686..=3299;
+const ADC_MAX: u16 = (1 << 12) - 1;
+// At the nominal 1.8 V scale, learn idle from 1.44 V up to the last unclipped code.
+const IDLE_RAW: std::ops::RangeInclusive<u16> = 3277..=(ADC_MAX - 1);
 // One effective 8-bit count in the 12-bit IIO value, about 7 mV.
 const STABLE_COUNTS: u16 = 16;
 const CALIBRATION_SAMPLES: u8 = 3;
@@ -30,13 +31,13 @@ enum State {
 
 // Midpoints of the closest edges of adjacent tolerance intervals, highest first.
 const WINDOWS: [(f64, State); 7] = [
-    (0.931_156, State::Idle),
-    (0.768_189, State::Plus),
-    (0.605_552, State::Minus),
-    (0.491_621, State::Both),
-    (0.378_965, State::Func),
-    (0.221_834, State::PlusFunc),
-    (0.065_932, State::MinusFunc),
+    (0.928_031, State::Idle),
+    (0.775_632, State::Plus),
+    (0.624_595, State::Minus),
+    (0.482_820, State::Both),
+    (0.344_458, State::Func),
+    (0.204_384, State::PlusFunc),
+    (0.065_696, State::MinusFunc),
 ];
 
 #[derive(Debug, PartialEq, Eq)]
@@ -64,6 +65,11 @@ impl Keys {
     }
 
     fn sample(&mut self, raw: u16, now: Instant) -> Option<Press> {
+        if raw == ADC_MAX {
+            // Saturation can confirm a release, but it tells us nothing about the actual idle level.
+            self.steady.1 = 0;
+            return self.confirm(State::Idle, now);
+        }
         let (first, count) = &mut self.steady;
         if *count == 0 || raw.abs_diff(*first) > STABLE_COUNTS {
             self.steady = (raw, 1);
@@ -85,29 +91,36 @@ impl Keys {
             return None;
         }
 
-        let baseline = self.baseline?;
-        let ratio = value / baseline;
-        let state = if raw > *IDLE_RAW.end() {
-            State::Invalid
-        } else {
-            WINDOWS
-                .iter()
-                .find(|&&(low, _)| ratio >= low)
-                .map_or(State::Invalid, |&(_, state)| state)
+        let Some(baseline) = self.baseline else {
+            return self.confirm(State::Invalid, now);
         };
-        let Some((same, since)) = self.candidate.filter(|&(same, _)| same == state) else {
+        let ratio = value / baseline;
+        let state = WINDOWS
+            .iter()
+            .find(|&&(low, _)| ratio >= low)
+            .map_or(State::Invalid, |&(_, state)| state);
+        let press = self.confirm(state, now);
+        if steady
+            && state == State::Idle
+            && self.confirmed == State::Idle
+            && (0.97..=1.03).contains(&ratio)
+        {
+            self.baseline = Some(baseline + (value - baseline) / 32.);
+        }
+        press
+    }
+
+    fn confirm(&mut self, state: State, now: Instant) -> Option<Press> {
+        let Some((_, since)) = self.candidate.filter(|&(same, _)| same == state) else {
             self.candidate = Some((state, now));
             return None;
         };
-        if steady && state == State::Idle && (0.97..=1.03).contains(&ratio) {
-            self.baseline = Some(baseline + (value - baseline) / 32.);
-        }
-        if same != self.confirmed {
-            let previous = std::mem::replace(&mut self.confirmed, same);
-            if previous == State::Idle && same == State::Func {
+        if state != self.confirmed {
+            let previous = std::mem::replace(&mut self.confirmed, state);
+            if previous == State::Idle && state == State::Func {
                 self.func_since = Some(since);
             } else if let Some(down) = self.func_since.take() {
-                if same == State::Idle {
+                if state == State::Idle {
                     // The threshold may fall between the last held sample and
                     // the first release sample.
                     return Some(if since.duration_since(down) >= LONG {
@@ -118,7 +131,7 @@ impl Keys {
                 }
             }
         }
-        if same == State::Func
+        if state == State::Func
             && self
                 .func_since
                 .is_some_and(|down| now.duration_since(down) >= LONG)
@@ -135,7 +148,7 @@ fn read_raw(path: &Path) -> io::Result<u16> {
         .trim()
         .parse::<u16>()
         .ok()
-        .filter(|raw| *raw < 4096)
+        .filter(|raw| *raw <= ADC_MAX)
         .ok_or(io::ErrorKind::InvalidData.into())
 }
 
@@ -235,13 +248,13 @@ mod tests {
     use super::*;
 
     const LEVELS: [(State, [f64; 2]); 8] = [
-        (State::Idle, [1287.568, 1326.179]),
-        (State::Plus, [1106.396, 1141.244]),
-        (State::Minus, [866.980, 896.023]),
-        (State::Both, [688.533, 712.628]),
-        (State::Func, [574.114, 594.757]),
-        (State::PlusFunc, [399.517, 414.471]),
-        (State::MinusFunc, [172.051, 178.821]),
+        (State::Idle, [1627.152, 1671.361]),
+        (State::Plus, [1387.561, 1428.017]),
+        (State::Minus, [1130.170, 1165.542]),
+        (State::Both, [896.405, 926.212]),
+        (State::Func, [669.572, 693.111]),
+        (State::PlusFunc, [448.052, 464.638]),
+        (State::MinusFunc, [216.476, 224.913]),
         (State::Invalid, [0., 0.]),
     ];
 
@@ -306,10 +319,10 @@ mod tests {
     #[test]
     fn learns_stable_idle_and_corrects_held_plus_at_boot() {
         let mut test = Test::new();
-        let plus = raw(1123. * 1.05 + 10.);
-        let idle = raw(1307. * 1.05 + 10.);
+        let plus = raw(1408. * 1.05 + 10.);
+        let idle = raw(1649. * 1.05 + 10.);
         test.settle(0);
-        test.settle(raw(584.));
+        test.settle(raw(681.));
         assert!(test.keys.baseline.is_none());
         test.step(plus);
         test.step(plus + 20);
@@ -329,10 +342,50 @@ mod tests {
     }
 
     #[test]
+    fn clipped_idle_at_boot_needs_unclipped_samples_to_calibrate() {
+        let mut test = Test::new();
+        test.step(ADC_MAX);
+        test.step(raw(681.));
+        test.step(ADC_MAX);
+        assert_eq!(test.keys.confirmed, State::Invalid);
+        test.settle(ADC_MAX);
+        assert_eq!(test.keys.confirmed, State::Idle);
+        assert_eq!(test.keys.baseline, None);
+
+        // Nearby saturated samples must not count as stable calibration samples.
+        let idle = ADC_MAX - 5;
+        test.step(idle);
+        test.step(idle);
+        assert_eq!(test.keys.baseline, None);
+        test.step(idle);
+        assert_eq!(test.keys.baseline, Some(f64::from(idle)));
+    }
+
+    #[test]
+    fn clipped_idle_releases_func_and_leaves_the_baseline_unchanged() {
+        // Exercise both an idle level that would qualify for a baseline reset
+        // and one close enough to the rail for a slow update.
+        for idle in [raw(1649.), ADC_MAX - 5] {
+            let mut test = Test::new();
+            test.settle(idle);
+            test.settle(raw(681.));
+            assert_eq!(test.keys.confirmed, State::Func);
+            assert_eq!(test.step(ADC_MAX), None);
+            assert_eq!(test.keys.confirmed, State::Func);
+            assert_eq!(test.step(ADC_MAX), Some(Press::Short));
+            test.settle(ADC_MAX);
+            assert_eq!(test.keys.confirmed, State::Idle);
+            assert_eq!(test.keys.baseline, Some(f64::from(idle)));
+            test.settle(raw(1408.));
+            assert_eq!(test.keys.confirmed, State::Plus);
+        }
+    }
+
+    #[test]
     fn confirms_two_samples_then_runs_short_only_after_release() {
         let mut test = Test::new();
-        let idle = raw(1307.);
-        let func = raw(584.);
+        let idle = raw(1649.);
+        let func = raw(681.);
         test.settle(idle);
         test.step(func);
         test.settle(idle);
@@ -349,8 +402,8 @@ mod tests {
     #[test]
     fn long_fires_once_at_threshold_and_release_does_not_repeat() {
         let mut test = Test::new();
-        let idle = raw(1307.);
-        let func = raw(584.);
+        let idle = raw(1649.);
+        let func = raw(681.);
         test.settle(idle);
         for _ in 0..LONG.as_millis() / POLL.as_millis() {
             assert_eq!(test.step(func), None);
@@ -362,9 +415,9 @@ mod tests {
 
     #[test]
     fn chord_invalid_and_read_failure_cancel_pending_func() {
-        let idle = raw(1307.);
-        let func = raw(584.);
-        for cancel in [Some(raw(407.)), Some(0), None] {
+        let idle = raw(1649.);
+        let func = raw(681.);
+        for cancel in [Some(raw(456.)), Some(0), None] {
             let mut test = Test::new();
             test.settle(idle);
             test.settle(func);

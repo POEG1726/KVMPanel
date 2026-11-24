@@ -15,8 +15,8 @@ from mcp_http import Client, free_port
 
 
 LEVELS_MV = {
-    "Idle": 1307, "Plus": 1123, "Minus": 881, "Both": 700, "Func": 584,
-    "PlusFunc": 407, "MinusFunc": 175, "Invalid": 0,
+    "Idle": 1649, "Plus": 1408, "Minus": 1148, "Both": 911, "Func": 681,
+    "PlusFunc": 456, "MinusFunc": 221, "Invalid": 0,
 }
 
 
@@ -71,6 +71,8 @@ def simulate(kvmd, gain, offset, *, full):
         port = free_port()
 
         def raw(state):
+            if state == "Clipped":
+                return 4095
             mv = LEVELS_MV[state] * gain + offset
             return round(max(0, mv) * 4096 / 1800)
 
@@ -82,9 +84,9 @@ def simulate(kvmd, gain, offset, *, full):
         def log_after(start=0):
             return log_path.read_text()[start:]
 
-        def set_state(state, *, previous=None):
+        def set_state(state, *, previous=None, stimulus=None):
             start = len(log_after())
-            sample(state)
+            sample(stimulus or state)
             def confirmed():
                 lines = log_after(start)
                 return lines if f"state={state}\n" in lines else None
@@ -93,15 +95,15 @@ def simulate(kvmd, gain, offset, *, full):
             if previous is not None:
                 # With tracing enabled the first matching raw sample must
                 # still report the previous confirmed state.
-                readings = [line for line in window.splitlines() if f"raw={raw(state)} " in line]
+                readings = [line for line in window.splitlines() if f"raw={raw(stimulus or state)} " in line]
                 assert len(readings) >= 2, readings
                 assert readings[0].endswith(f"state={previous}"), readings
                 assert readings[1].endswith(f"state={state}"), readings
 
-        def press_short():
+        def press_short(release="Idle"):
             set_state("Func")
             time.sleep(0.08)
-            set_state("Idle")
+            set_state("Idle", stimulus=release)
 
         sample("Plus" if full else "Func")
         env = {**os.environ, "KVMD_KEY_ADC": str(raw_path), "KVMD_KEY_ADC_TRACE": "0" if full else "1"}
@@ -133,7 +135,8 @@ def simulate(kvmd, gain, offset, *, full):
                 if not full:
                     return
 
-                press_short()
+                press_short("Clipped")
+                assert f"raw=4095 baseline={idle:.1f} state=Idle" in log_after()
                 assert panel.until(lambda m: m["t"] == "function_key") == {
                     "t": "function_key", "action": "toggle_settings", "display_asleep": False,
                 }
@@ -193,7 +196,7 @@ def main():
     args = parser.parse_args()
     simulate(args.kvmd.resolve(), 1.05, 10, full=True)
     simulate(args.kvmd.resolve(), 0.95, -10, full=False)
-    print("ADC simulation passed: seven states, invalid input, calibration recovery, gain and offset, two-sample confirmation, FUNC actions and MCP stop")
+    print("ADC simulation passed: seven states, invalid input, calibration recovery, gain and offset, clipping, two-sample confirmation, FUNC actions and MCP stop")
 
 
 if __name__ == "__main__":
