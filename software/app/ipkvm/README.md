@@ -75,7 +75,7 @@ E12 按键板在 5.000 V 下的全松开名义值为 1.649 V。按 GPADC 名义�
 PYTHONDONTWRITEBYTECODE=1 python3 software/app/ipkvm/tests/keys_sim.py "$CARGO_TARGET_DIR/debug/kvmd"
 ```
 
-可写文件模拟验证了 E12 按键七态、无效输入、基准学习与自愈、±5% 增益与 ±10 mV 偏移、两样本确认、截幅松键、FUNC 配置动作、暂停后恢复，以及物理键取消执行中的 MCP 按键。原生 Rust 57 项单元测试和 54 项集成测试通过，含冷启动截幅与已有基准截幅的回归测试。HTTP 22 个 MCP 工具回归通过。WSL Cortex-A7 musl 静态 `kvmd` 去符号后为 13,136,808 B，与 `dfca16b` 相同。实板还需验证实际读数、窗口余量、短长按手感及急停响应。
+可写文件模拟验证了 E12 按键七态、无效输入、基准学习与自愈、±5% 增益与 ±10 mV 偏移、两样本确认、截幅松键、FUNC 配置动作、暂停后恢复，以及物理键取消执行中的 MCP 按键。原生 Rust 57 项单元测试和 54 项集成测试通过，含冷启动截幅与已有基准截幅的回归测试。HTTP 22 个 MCP 工具回归通过。WSL Cortex-A7 musl 静态 `kvmd` 去符号后为 13,136,808 B，与 `7dbc0d1` 相同。实板还需验证实际读数、窗口余量、短长按手感及急停响应。
 
 ## MCP 服务
 
@@ -97,7 +97,7 @@ python3 software/app/ipkvm/tests/mcp_http.py "$CARGO_TARGET_DIR/debug/kvmd"
 
 2026-11-23 离线结果。原生 Rust 49 个单元测试及 53 个集成测试通过。全部 22 个工具在原生 `--sim` 和 QEMU Cortex-A7 Linux 来宾中的 ARM 静态 `--sim` 通过 HTTP 验证，涵盖可写介质确认和强关途中急停。来宾测试发现 32 位 `openat2` 打开超过 2 GiB 的镜像需要 `O_LARGEFILE`，补齐后约 12.2 GB 的模拟磁盘挂载及确认卸载通过。MCP Inspector CLI 另验证 `tools/list`、截图、点击、开机守护和进 BIOS。
 
-用相同 ARMv7 musl 目标、Cortex-A7 参数和 Bootlin sysroot 对比 `a009c44`。去符号的 `kvmd` 从 12,063,656 字节增至 13,030,312 字节，增加 966,656 字节（944 KiB）。ARM 模拟使用同一份去符号可执行文件。实际 HDMI、GPIO、USB HID 和 LED 路径待实板复测。
+用相同 ARMv7 musl 目标、Cortex-A7 参数和 Bootlin sysroot 对比 `2b89fd5`。去符号的 `kvmd` 从 12,063,656 字节增至 13,030,312 字节，增加 966,656 字节（944 KiB）。ARM 模拟使用同一份去符号可执行文件。实际 HDMI、GPIO、USB HID 和 LED 路径待实板复测。
 
 观察类审计在内存中按密钥和分钟合并，分钟结束或正常退出时写盘。突然断电可能丢失尚未落盘的观察记录。密钥的最近使用时间最多每分钟持久化一次。
 
