@@ -57,6 +57,7 @@ export interface State {
   version: string;
   /** In-process event bus; WebSocket and panel socket servers forward its events. */
   events: EventEmitter;
+  panelDisplayAsleep: boolean;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   accounts: Map<string, Account>;
@@ -120,6 +121,7 @@ export function createState(opts: { now?: () => number; sleep?: (ms: number) => 
   return {
     version: contract.info.version,
     events: new EventEmitter(),
+    panelDisplayAsleep: false,
     now: opts.now ?? Date.now,
     sleep: opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
     accounts: new Map([[admin.name, admin]]),

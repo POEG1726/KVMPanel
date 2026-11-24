@@ -12,6 +12,7 @@
         { "$ref": "#/$defs/Mcp" },
         { "$ref": "#/$defs/Board" },
         { "$ref": "#/$defs/Config" },
+        { "$ref": "#/$defs/FunctionKey" },
         { "$ref": "#/$defs/KvmRestarting" },
         { "$ref": "#/$defs/Result" }
       ]
@@ -33,6 +34,14 @@
         "active": { "type": "boolean" },
         "key_name": { "type": ["string", "null"] },
         "tool": { "type": ["string", "null"] }
+      }
+    },
+    "FunctionKey": {
+      "type": "object", "required": ["t", "action", "display_asleep"], "additionalProperties": false,
+      "properties": {
+        "t": { "const": "function_key" },
+        "action": { "enum": ["toggle_settings", "toggle_screen", "cycle_brightness"] },
+        "display_asleep": { "type": "boolean" }
       }
     },
     "McpStop": {
@@ -118,7 +127,7 @@
         "t": { "const": "board" },
         "ts": { "type": "integer", "description": "Unix ms" },
         "pc_power": { "enum": ["on", "off", "unknown"], "description": "PC power LED input (PE12); unknown when it cannot be read" },
-        "display_asleep": { "type": "boolean", "description": "Offline sleep is active. Touch first wakes the panel." },
+        "display_asleep": { "type": "boolean", "description": "The display is off manually or due to offline sleep. Touch first wakes the panel." },
         "hostname": { "type": "string" },
         "version": { "type": "string", "description": "KVMPanel software version" },
         "uptime_s": { "type": "integer", "minimum": 0 },

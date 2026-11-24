@@ -1496,6 +1496,7 @@ components:
               uniqueItems: true
               default: []
         function_key:
+          description: A confirmed single FUNC press of at least 700 ms runs long once. A shorter press runs short on full release. A confirmed chord or invalid state cancels a pending press.
           type: object
           required: [short, long]
           additionalProperties: false

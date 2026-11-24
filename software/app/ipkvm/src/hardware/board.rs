@@ -28,7 +28,7 @@ pub(super) fn run(command: &mut Command) -> io::Result<Vec<u8>> {
         )))
     }
 }
-fn named(dir: &Path, namefile: &str, name: &str) -> io::Result<PathBuf> {
+pub(super) fn named(dir: &Path, namefile: &str, name: &str) -> io::Result<PathBuf> {
     fs::read_dir(dir)?
         .flatten()
         .map(|e| e.path())

@@ -13,7 +13,7 @@
 #include "power.h"
 #include "protocol.h"
 
-enum { IDLE = 800, BOTH = 260, SINGLE = 520, FUNC = 650 };
+enum { IDLE = 268, BOTH = 143, SINGLE = 180 };
 static uint8_t flash[1024], levels[3], isp_calls, writes, events_used;
 static uint8_t events[16];
 static uint16_t now;
@@ -112,8 +112,12 @@ static void gestures(void)
     boot();
     run(80, BOTH); /* A button already down at boot is not a fresh gesture. */
     run(100, IDLE);
-    run(600, FUNC);
-    run(600, SINGLE);
+    const uint16_t other_states[] = {0, 35, 37, 81, 85, 117, 122, 177, 184, 226, 234};
+    for (unsigned int i = 0; i < sizeof(other_states) / sizeof(other_states[0]); ++i) {
+        run(600, other_states[i]);
+        run(100, IDLE);
+        assert(!levels[OUT_MAIN] && !events_used);
+    }
     run(100, IDLE);
     assert(!levels[OUT_MAIN] && !events_used);
     short_press();
@@ -143,6 +147,24 @@ static void gestures(void)
     assert(!levels[OUT_MAIN]);
     run(TICK_MS, IDLE);
     assert(levels[OUT_MAIN] && !levels[OUT_PD] && levels[OUT_RESET]);
+}
+
+/** @brief Accept both tolerance extremes with quantization of the real ladder. */
+static void tolerance_edges(void)
+{
+    const uint16_t idle[] = {263, 272};
+    const uint16_t both[] = {141, 146};
+    for (unsigned int i = 0; i < sizeof(idle) / sizeof(idle[0]); ++i) {
+        for (unsigned int j = 0; j < sizeof(both) / sizeof(both[0]); ++j) {
+            memset(flash, 0xff, sizeof(flash));
+            boot();
+            run(100, idle[i]);
+            run(100, both[j]);
+            assert(!levels[OUT_MAIN]);
+            run(100, idle[i]);
+            assert(levels[OUT_MAIN]);
+        }
+    }
 }
 
 /** @brief Require Linux arming and final confirmation for normal poweroff. */
@@ -219,6 +241,7 @@ int main(void)
     gestures();
     shutdown_and_isp();
     interruption();
+    tolerance_edges();
     puts("STC8 gestures, power sequencing, forced and normal shutdown, ISP pause and journal passed");
     return 0;
 }

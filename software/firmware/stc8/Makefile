@@ -29,8 +29,6 @@ $(OUT)/kvmpanel-stc8.bin: $(OUT)/kvmpanel-stc8.ihx
 
 $(OUT)/power-test: test_power.c power.c journal.c board.h protocol.h power.h journal.h | $(OUT)
 	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -O2 \
-		-DKEY_BOTH_LOW=230 -DKEY_BOTH_HIGH=300 -DKEY_IDLE_LOW=770 \
-		-DKEY_IDLE_HIGH=850 -DKEY_HYSTERESIS=10 \
 		test_power.c power.c journal.c -o $@
 
 test: $(OUT)/power-test

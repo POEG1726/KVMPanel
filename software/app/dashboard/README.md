@@ -1,6 +1,6 @@
 # Dashboard
 
-板端使用 LVGL 9 和 Linux framebuffer。CPU、GPU、内存和系统页显示 `kvmd` 实际收到的指标。`Display` 页可旋转屏幕或逐项选择指标，配置与 KVM 网页共享。电脑遥测离线时显示板子自身状态，读取到关机的电源灯状态时可短按开机。离线息屏后，第一下触摸只唤醒屏幕。
+板端使用 LVGL 9 和 Linux framebuffer。CPU、GPU、内存和系统页显示 `kvmd` 实际收到的指标。`Display` 页可旋转屏幕或逐项选择指标，配置与 KVM 网页共享。电脑遥测离线时显示板子自身状态，读取到关机的电源灯状态时可短按开机。离线或 FUNC 息屏后，第一下触摸只唤醒屏幕。默认 FUNC 短按切换 `Display` 页，长按开关屏幕。在 `Display` 页用 `Remote KVM` 恢复被 FUNC 暂停的远程服务。亮度档由 `kvmd` 设置背光并同步配置。 [物理功能键消息](../api/README.md#副屏-panel-socket)
 
 ## 构建与启动
 
@@ -21,5 +21,7 @@ cmake --build "$work/build/dashboard-board"
 MCP 正在执行输入、电源或介质操作时，顶部横幅显示密钥名称和停止按钮。按钮经本地 panel socket 发送 `mcp_stop`，收到成功回复后隐藏横幅，失败时可重试。原生和 ARM 静态构建通过，无屏模拟检查了横幅、息屏遮罩、停止消息和失败后的重试。常用中文由 LVGL 自带的思源黑体提供，横幅专用字形来自 Noto Sans SC 2.004 子集。 [字形源码](https://github.com/notofonts/noto-cjk/tree/main/Sans/SubsetOTF/SC) · [字体许可证](lvgl/NotoSans-LICENSE)
 
 Debian 镜像可带上 Dashboard 服务，详情见 [镜像构建](../../os/debian/README.md)。原生及 ARM/QEMU 已验证 Unix socket 接收、动态指标、离线状态和四个屏幕方向。实板触摸、色彩、渲染速率及内存峰值待测。
+
+物理 FUNC 已通过原生与 ARM 副屏构建。无屏测试覆盖进入和退出设置、息屏遮罩与唤醒、恢复远程 KVM 和 MCP 停止。原生副屏连接 `kvmd --sim` 的 Unix socket 后，模拟短按触发了副屏的指标清单请求。
 
 原型在 `feat/panel-proto`、`feat/panel-slint` 和 `feat/panel-qt`。板端采用按组分页的指标列表。原型动画、曲线排版和横屏方案 B 留在对应分支。 [软件进度](../../../docs/software-progress.md)

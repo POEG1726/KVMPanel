@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Server } from 'node:net';
 import { buildServer } from '../src/server.js';
 import { messageValidator } from '../src/contract.js';
-import { startPanelServer } from '../src/panel/server.js';
+import { simulateFunctionKey, startPanelServer } from '../src/panel/server.js';
 import { login } from './helpers.js';
 
 const validToPanel = messageValidator('panel.schema.json', 'ToPanel');
@@ -90,6 +90,32 @@ describe('panel socket', () => {
     await app.inject({ method: 'PATCH', url: '/api/config', headers: { cookie }, payload: { panel: { brightness: 33 } } });
     const pushed = await p.next((m) => m.t === 'config' && m.config.panel.brightness === 33);
     expect(validToPanel(pushed)).toBe(true);
+  });
+
+  it('pushes physical FUNC actions and the current display state', async () => {
+    const p = await open();
+    await p.next((m) => m.t === 'board');
+    for (const [press, action, asleep] of [
+      ['long', 'toggle_screen', true],
+      ['short', 'toggle_settings', false],
+      ['long', 'toggle_screen', true],
+    ] as const) {
+      simulateFunctionKey(app.kvm, press);
+      const msg = await p.next((m) => m.t === 'function_key');
+      expect(validToPanel(msg)).toBe(true);
+      expect(msg).toEqual({ t: 'function_key', action, display_asleep: asleep });
+    }
+    p.send({ t: 'action', id: 4, action: 'wake_display' });
+    expect((await p.next((m) => m.t === 'board' && !m.display_asleep)).display_asleep).toBe(false);
+    p.send({ t: 'patch_config', id: 5, patch: { function_key: { short: 'cycle_brightness' } } });
+    expect((await p.next((m) => m.t === 'result' && m.id === 5)).ok).toBe(true);
+    for (const [auto, level] of [[false, 20], [false, 50], [false, 100], [true, 100]]) {
+      simulateFunctionKey(app.kvm, 'short');
+      const cfg = await p.next((m) => m.t === 'config' && m.config.panel.brightness === level
+        && m.config.panel.auto_brightness === auto);
+      expect(validToPanel(cfg)).toBe(true);
+      expect(await p.next((m) => m.t === 'function_key')).toMatchObject({ action: 'cycle_brightness' });
+    }
   });
 
   it('hides metrics listed in hidden_metrics', async () => {

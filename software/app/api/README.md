@@ -142,7 +142,8 @@ $env:KVMPANEL_MOCK_PC = 'off'; npm start --prefix software/app/api/mock
 | `status` | 右上角状态栏用：`eth`、`pc`、`usb_a`、`kvm.sessions`，另有 `lux`。连上时推一次，变化时推，另外每 5 秒推一次 |
 | `telemetry` | 每秒一次，包含 `ts` 和 `metrics[]`。每项为 `{id,label,unit,value,min,max,warn?,group}`。仅报告已知、未隐藏的指标。`value: null` 表示采集器暂时无法提供读数，副屏保留该行并显示 `—`。`warn` 已合并 `config.panel.thresholds` |
 | `pc` | 上位机连接状态。连上 socket 时推一次，此后每次变化都推。断开期间不发 `telemetry`，副屏切到离线状态页 |
-| `board` | 每秒一次，不管电脑是否连着：电脑电源灯 `pc_power`（`on`/`off`/`unknown`）、主机名、版本、运行时间、板子 CPU、SoC 温度、内存和 SD 用量、`eth`（链路速率、双工、MAC、板子自己的收发 bit/s）、`access`（访问地址、Tailscale IP）、`kvm`（远程会话、HDMI 输入、视频流、虚拟介质、正在运行的 USB 功能）。离线状态页用它，字段见 `/Board` |
+| `board` | 每秒一次，也可因副屏唤醒或按键状态更新而立即推送。不管电脑是否连着都有：电脑电源灯 `pc_power`（`on`/`off`/`unknown`）、主机名、版本、运行时间、板子 CPU、SoC 温度、内存和 SD 用量、`eth`（链路速率、双工、MAC、板子自己的收发 bit/s）、`access`（访问地址、Tailscale IP）、`kvm`（远程会话、HDMI 输入、视频流、虚拟介质、正在运行的 USB 功能）。离线状态页用它，字段见 `/Board` |
+| `function_key` | 物理 FUNC 触发的副屏动作，带 `action`（`toggle_settings`、`toggle_screen`、`cycle_brightness`）和执行后的 `display_asleep`。只推给当时连接的副屏。 |
 | `kvm_restarting` | 网页端的 KVM 服务正在重启，副屏自身不受影响 |
 | `result` | 对请求的回复，`id` 和请求相同。如果请求那一行本身无法解析，回复里没有 `id`，错误为 `bad_message` |
 
@@ -154,8 +155,10 @@ $env:KVMPANEL_MOCK_PC = 'off'; npm start --prefix software/app/api/mock
 | `patch_config`（`patch`） | 成功时 `result.data` 是新配置，失败时带 `error` 和 `detail` |
 | `action`（`reboot`、`shutdown`、`restart_kvm`、`reset_hid`、`disconnect_sessions`、`eject_media`、`usb_apply`、`pc_power_on`） | `result.ok`。`pc_power_on` 等于短按一次电脑电源键；电源灯亮着时拒绝，错误为 `pc_on`，保证副屏不会把电脑关掉 |
 | `metric_catalogue` | `result.data` 含当前已知指标的 `id`、`label`、`unit`、`group`，包括已隐藏的字段。副屏可通过 `patch_config` 更新 `panel.hidden_metrics` 和 `panel.orientation` |
-| `action`（`wake_display`） | 重置副屏离线息屏倒计时。`board.display_asleep` 为 `true` 时，副屏消费触摸作为唤醒动作 |
+| `action`（`wake_display`） | 唤醒副屏并重置离线息屏倒计时。`board.display_asleep` 为 `true` 时，副屏消费触摸作为唤醒动作 |
 | `device_info` | `result.data` 和 `GET /api/device` 相同 |
+
+物理 FUNC 从全松开开始单按，达到 700 ms 时执行一次 `function_key.long`，不足 700 ms 时在全松开后执行 `function_key.short`。确认组合或无效状态会取消尚未执行的动作。进入设置会唤醒屏幕，退出设置返回之前的标签页。`toggle_screen` 切换屏幕开关，息屏时也可触摸唤醒。`cycle_brightness` 循环切换手动 20%、50%、100% 和自动亮度，由 `config` 推送当前档位。`pause_kvm` 关闭 `kvm.enabled`，可在副屏设置重新打开。`stop_mcp` 使用与副屏停止按钮相同的急停入口。
 
 **告警阈值**：`config.panel.thresholds` 的键可以是指标 id，比如 `gpu.temp`；也可以是以 `.*` 结尾的前缀，比如 `mem.dimm.*`。同一个指标同时匹配时，精确的 id 优先于前缀。在 PATCH 里把某个键设为 null 就删除这个阈值。默认值为 `cpu.tctl` 85、`gpu.mem_junction` 95、`mem.dimm.*` 60。
 

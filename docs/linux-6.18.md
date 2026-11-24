@@ -19,7 +19,7 @@
 | JPEG / MJPEG | 已移植 Cedrus JPEG 编码并接入 `kvmd`，ARM 内核、DTB 和应用已构建 | 实板节点、真实吞吐、CPU 占用和采集并发 |
 | TD4322 / DSI / 背光 | 参考初始化、TE 和 DCS 亮度已编译，面板节点禁用。SGM3851A 默认开启三路输出，SWIRE 电压接口已实现并通过编码测试 | 测三路输出和 CTRL 波形，确认面板型号、电平、极性与时序 |
 | S3508 / BH1750 | I²C2 节点与内核驱动就绪；新版触摸 IRQ 接 PD14，S3508 节点禁用 | 确认触摸型号与 IRQ 极性，验证 F12 坐标和光照读数 |
-| 主板控制 / 实体键 | 已核对光继电器 GPIO 和 H7 的 KEY_ADC 线路，板级 DT 已启用 GPADC0 | 核对 GPIO 电平、ADC 电压、按键映射与 STC 交接 |
+| 主板控制 / 实体键 | 已核对光继电器 GPIO 和 H7 的 KEY_ADC 线路，板级 DT 已启用 GPADC0，`kvmd` 运行时读取 IIO | 核对 GPIO、GPADC 原始读数与窗口余量、实际 FUNC 响应和 STC 双键手势 |
 | 温度 / 看门狗 | D1 THS、SID 校准、thermal zone、系统 WDT 节点已编译 | 校准读数、固件所有权、喂狗与受控复位 |
 | 自身关机 | STC8 的 UART2 协议、内核最终断电帧和 Debian systemd 关机钩子已实现。模拟 UART 已验证存储清理后的准备和待断电命令 | 实测最终断电帧、文件系统状态、主轨掉电和恢复时序 |
 | C906 / HiFi4 | remoteproc、mailbox、RPMsg 和两份回环固件已构建并打包 | 两核的时钟、复位、共享内存可见性、独立及同时回环 |
@@ -30,7 +30,7 @@ C906 和 HiFi4 由 A7 上的 Linux remoteproc 加载。板级 DT 使用 CPUX mai
 
 三个驱动通过 ARMv7 `W=1` 编译，最终内核和板级 DTB 已生成。已核对两份 ELF 的加载段、RPMsg resource table 与 DT 的地址和大小，预留区和本次 FEL 镜像互不重叠。QEMU 的板外测试通过，覆盖 Buildroot 镜像启动、固件目录、诊断程序和既有基础服务。两个核的复位、时钟和 RPMsg 收发待在实板验证。
 
-H7.1 的 `KEY_ADC` 直连 STC 的 P3.2，经 Q1 连到 T113-i 的 `GPADC0`（`T113_ADC`），`GPADC1` 悬空。板级 DT 和内核配置开放 GPADC0 供 Linux 读取。按键板电阻和 Q1 两侧电压实测后，再为 FUNC 和普通按键设置 `adc-keys` 阈值。GPADC 输入满量程以 AVCC 为上限。 [新版网表](../hardware/exports/2026-11-22/Netlist_Schematic2_2026-11-22.enet) · [T113-i 数据手册 §5.7](../hardware/reference/datasheets/T113-i_Datasheet_V1.4.pdf)
+H7.1 的 `KEY_ADC` 直连 STC 的 P3.2，经 Q1 连到 T113-i 的 `GPADC0`（`T113_ADC`），`GPADC1` 悬空。板级 DT 和内核配置开放 GPADC0 供 Linux 读取。GPADC0 的 IIO 设备名为 `sun20i-gpadc`。驱动每次读取 `in_voltage0_raw` 时发起一次转换，用数据就绪中断等待结果。驱动的 scale 为 1800 mV / 4096 计数。运行中的 `kvmd` 以 20 ms 周期读取，同全松开基准作比分类，设备树沿用现有 GPADC0 定义。基础、DSI 和组合 DTB 用同一内核源码重编译，产物与本次改动前逐字节一致。FUNC 单按才派发动作，双键开关机仍由 STC 独立处理。 [新版网表](../hardware/exports/2026-11-22/Netlist_Schematic2_2026-11-22.enet) · [T113-i 数据手册 §5.7](../hardware/reference/datasheets/T113-i_Datasheet_V1.4.pdf) · [路径覆盖与窗口](../software/app/ipkvm/README.md#机箱物理按键)
 
 ## MIPI DSI
 

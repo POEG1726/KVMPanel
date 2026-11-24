@@ -2,6 +2,7 @@ mod auth;
 mod config;
 pub mod console;
 pub mod hardware;
+pub mod keys;
 mod mcp;
 pub mod panel;
 mod schema;
@@ -157,7 +158,9 @@ pub struct Inner {
     pub socket_closes: tokio::sync::watch::Sender<u16>,
     pub hw: Arc<dyn hardware::Hardware>,
     panel_metrics: RwLock<Vec<Value>>,
-    panel_activity: Mutex<Instant>,
+    panel_display: Mutex<panel::Display>,
+    panel_display_changed: tokio::sync::Notify,
+    panel_keys: broadcast::Sender<Value>,
     auth: Mutex<auth::Auth>,
     cfg: config::ConfigState,
 }
@@ -178,7 +181,9 @@ impl App {
             socket_closes: tokio::sync::watch::channel(0).0,
             hw,
             panel_metrics: Default::default(),
-            panel_activity: Mutex::new(Instant::now()),
+            panel_display: Default::default(),
+            panel_display_changed: Default::default(),
+            panel_keys: broadcast::channel(8).0,
             auth: Mutex::new(auth::Auth::open(data_dir)?),
             cfg: config::ConfigState::open(data_dir)?,
         })))

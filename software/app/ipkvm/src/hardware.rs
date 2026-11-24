@@ -12,6 +12,16 @@ pub(crate) mod hid;
 pub(crate) mod layout;
 mod pattern;
 mod video;
+pub(crate) fn key_adc_path() -> Option<std::path::PathBuf> {
+    board::named(
+        std::path::Path::new("/sys/bus/iio/devices"),
+        "name",
+        "sun20i-gpadc",
+    )
+    .ok()
+    .map(|dev| dev.join("in_voltage0_raw"))
+}
+
 pub trait Hardware: Send + Sync {
     fn stop_video(&self) {}
     fn usb_bound(&self) -> io::Result<bool>;

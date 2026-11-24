@@ -89,7 +89,7 @@ void power_init(uint16_t now)
     }
 }
 
-/** @brief Classify only measured none/both windows. Keep a little hysteresis. */
+/** @brief Classify the full-release and dual-key windows. Keep a little hysteresis. */
 static uint8_t classify(int16_t adc, uint8_t previous)
 {
 #if KEY_BOTH_LOW <= KEY_BOTH_HIGH && KEY_IDLE_LOW <= KEY_IDLE_HIGH
@@ -140,7 +140,7 @@ static void keys(uint16_t now, uint16_t adc, uint8_t fresh)
     if (gesture) {
         duration = now - down_at;
         /* Raw ADC leaving the hysteresis window cancels the long hold at once.
-         * Startup still requires the measured full-release window. */
+         * Startup still requires the full-release window. */
         if (observed != KEY_BOTH) {
             gesture = 0;
             short_ok = fresh && state == OFF && duration >= TICKS(SHORT_MIN_MS) &&

@@ -215,6 +215,67 @@ async fn collect(app: App, host: Arc<Mutex<Host>>) {
     }
 }
 
+pub(crate) struct Display {
+    activity: Instant,
+    forced_off: bool,
+    asleep: bool,
+}
+
+impl Default for Display {
+    fn default() -> Self {
+        Self {
+            activity: Instant::now(),
+            forced_off: false,
+            asleep: false,
+        }
+    }
+}
+
+impl Display {
+    fn wake(&mut self) {
+        self.activity = Instant::now();
+        self.forced_off = false;
+        self.asleep = false;
+    }
+}
+
+pub(crate) async fn function_key(app: &App, action: &str) -> Result<(), ApiError> {
+    if action == "cycle_brightness" {
+        let app = app.clone();
+        tokio::task::spawn_blocking(move || {
+            let config = app.config();
+            let panel = &config["panel"];
+            let current = panel["brightness"].as_u64().unwrap_or(70);
+            let level = if panel["auto_brightness"] == true {
+                Some(20)
+            } else {
+                [20, 50, 100].into_iter().find(|level| *level > current)
+            };
+            let patch = match level {
+                Some(level) => json!({"auto_brightness":false,"brightness":level}),
+                None => json!({"auto_brightness":true}),
+            };
+            app.patch_config(&json!({"panel":patch}), None)
+        })
+        .await
+        .map_err(io::Error::other)??;
+    }
+    let mut display = app.panel_display.lock().unwrap();
+    match action {
+        "toggle_screen" if !display.asleep => {
+            display.forced_off = true;
+            display.asleep = true;
+        }
+        "toggle_screen" | "toggle_settings" => display.wake(),
+        _ => {}
+    }
+    let _ = app.panel_keys.send(json!({
+        "t":"function_key","action":action,"display_asleep":display.asleep
+    }));
+    app.panel_display_changed.notify_one();
+    Ok(())
+}
+
 fn brightness(config: &Value, lux: Option<f64>, offline: Option<Duration>) -> u64 {
     let sleep = config["offline_sleep_min"].as_u64().unwrap_or(5);
     if sleep > 0 && offline.is_some_and(|elapsed| elapsed >= Duration::from_secs(sleep * 60)) {
@@ -251,7 +312,10 @@ async fn sampler(app: App, tx: broadcast::Sender<Value>, pc: watch::Sender<bool>
     let mut last_status_time = None;
     let mut board = board::BoardSampler::default();
     loop {
-        tick.tick().await;
+        let periodic = tokio::select! {
+            _ = tick.tick() => true,
+            _ = app.panel_display_changed.notified() => false,
+        };
         let now = Instant::now();
         let ts = now_ms();
         let host = {
@@ -275,7 +339,7 @@ async fn sampler(app: App, tx: broadcast::Sender<Value>, pc: watch::Sender<bool>
             let _=tx.send(json!({"t":"pc","connected":connected,"last_seen_ts":host.last_seen.map(|(_,ts)|ts)}));
         }
         let poll_app = app.clone();
-        let Ok((next_board, state, mut board_state)) = tokio::task::spawn_blocking(move || {
+        let Ok((next_board, state, board_state)) = tokio::task::spawn_blocking(move || {
             let info = system::device_info(&poll_app);
             let state = sample_status(&poll_app, connected, &info);
             let board_state = board.sample(&poll_app, &info, now, ts);
@@ -287,30 +351,33 @@ async fn sampler(app: App, tx: broadcast::Sender<Value>, pc: watch::Sender<bool>
         };
         board = next_board;
         let panel = &app.config()["panel"];
-        let mut asleep = false;
-        if !app.sim {
-            if connected || app.mcp.activity()["active"] == true {
-                offline_since = None;
-            } else {
-                offline_since.get_or_insert(now);
-            }
-            let activity = *app.panel_activity.lock().unwrap();
-            let idle =
-                offline_since.map(|start| now.saturating_duration_since(start.max(activity)));
+        if app.sim || connected || app.mcp.activity()["active"] == true {
+            offline_since = None;
+        } else {
+            offline_since.get_or_insert(now);
+        }
+        let level = {
+            let mut display = app.panel_display.lock().unwrap();
+            let idle = offline_since
+                .map(|start| now.saturating_duration_since(start.max(display.activity)));
             let sleep = panel["offline_sleep_min"].as_u64().unwrap_or(5);
-            asleep = sleep > 0 && idle.is_some_and(|idle| idle >= Duration::from_secs(sleep * 60));
-            let level = brightness(panel, state["lux"].as_f64(), idle);
-            if previous_brightness != Some(level) {
-                let hw = app.hw.clone();
-                if matches!(
-                    tokio::task::spawn_blocking(move || hw.brightness(level)).await,
-                    Ok(Ok(()))
-                ) {
-                    previous_brightness = Some(level);
-                }
+            display.asleep = display.forced_off
+                || (sleep > 0 && idle.is_some_and(|idle| idle >= Duration::from_secs(sleep * 60)));
+            if display.asleep {
+                0
+            } else {
+                brightness(panel, state["lux"].as_f64(), idle)
+            }
+        };
+        if !app.sim && previous_brightness != Some(level) {
+            let hw = app.hw.clone();
+            if matches!(
+                tokio::task::spawn_blocking(move || hw.brightness(level)).await,
+                Ok(Ok(()))
+            ) {
+                previous_brightness = Some(level);
             }
         }
-        board_state["display_asleep"] = json!(asleep);
         let _ = tx.send(board_state);
         if state != last_status
             || last_status_time
@@ -320,7 +387,7 @@ async fn sampler(app: App, tx: broadcast::Sender<Value>, pc: watch::Sender<bool>
             last_status = state;
             last_status_time = Some(now);
         }
-        if connected {
+        if connected && periodic {
             let samples = if app.sim { None } else { Some(&host.samples) };
             let mut catalogue_settings = panel.clone();
             catalogue_settings["hidden_metrics"] = json!([]);
@@ -376,7 +443,8 @@ fn request(app: &App, m: Value) -> Value {
             "usb_apply" => app.apply_usb().map(|()| None),
             "pc_power_on" => crate::console::panel_power_on(app).map(|()| None),
             "wake_display" => {
-                *app.panel_activity.lock().unwrap() = Instant::now();
+                app.panel_display.lock().unwrap().wake();
+                app.panel_display_changed.notify_one();
                 Ok(None)
             }
             action => system::device_action(app, action).map(|()| None),
@@ -409,6 +477,7 @@ async fn client<T: AsyncRead + AsyncWrite + Unpin>(
     let mut closes = app.socket_closes.subscribe();
     let mut applies = tokio::task::JoinSet::new();
     let mut events = app.events.subscribe();
+    let mut function_keys = app.panel_keys.subscribe();
     let (initial_config, mut config_updates) = app.subscribe_config();
     let (read, mut write) = tokio::io::split(io);
     let mut lines = FramedRead::new(read, LinesCodec::new_with_max_length(1024 * 1024));
@@ -452,6 +521,11 @@ async fn client<T: AsyncRead + AsyncWrite + Unpin>(
                     reply(&mut write,status(&app,connected).await?).await?;
                 }
             },
+            message=function_keys.recv()=>match message {
+                Ok(message)=>reply(&mut write,message).await?,
+                Err(broadcast::error::RecvError::Lagged(_))=>continue,
+                Err(broadcast::error::RecvError::Closed)=>return Ok(()),
+            },
             update=config_updates.recv()=>{
                 let config=match update{
                     Ok(cfg)=>cfg,
@@ -491,7 +565,13 @@ async fn client<T: AsyncRead + AsyncWrite + Unpin>(
                 None=>return Ok(())
             },
             msg=telemetry.recv()=>match msg{
-                Ok(data)=>reply(&mut write,data).await?,
+                Ok(mut data)=>{
+                    if data["t"] == "board" {
+                        // A queued sample may predate a function-key or touch wake message.
+                        data["display_asleep"] = json!(app.panel_display.lock().unwrap().asleep);
+                    }
+                    reply(&mut write,data).await?
+                },
                 Err(broadcast::error::RecvError::Lagged(_))=>continue,
                 Err(_)=>return Ok(()),
             }

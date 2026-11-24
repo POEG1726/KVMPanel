@@ -42,6 +42,7 @@ export function boardMessage(state: State, tick: number) {
     t: 'board' as const,
     ts: state.now(),
     pc_power: state.power.on ? ('on' as const) : ('off' as const),
+    display_asleep: state.panelDisplayAsleep,
     hostname: info.hostname,
     version: info.version,
     uptime_s: info.uptime_s,
@@ -61,6 +62,34 @@ export function boardMessage(state: State, tick: number) {
       usb_functions: USB_FUNCTIONS.filter((f) => state.usbApplied[f] === true),
     },
   };
+}
+
+/** Simulate a confirmed physical press through its configured action. */
+export function simulateFunctionKey(state: State, press: 'short' | 'long') {
+  const action = state.config.function_key[press];
+  switch (action) {
+    case 'stop_mcp':
+      return stopMcp(state);
+    case 'pause_kvm':
+      return applyConfigPatch(state, { kvm: { enabled: false } }, null);
+    case 'toggle_settings':
+      state.panelDisplayAsleep = false;
+      break;
+    case 'toggle_screen':
+      state.panelDisplayAsleep = !state.panelDisplayAsleep;
+      break;
+    case 'cycle_brightness': {
+      const panel = state.config.panel;
+      const level = panel.auto_brightness === true ? 20 : [20, 50, 100].find((v) => v > Number(panel.brightness));
+      applyConfigPatch(state, { panel: level === undefined
+        ? { auto_brightness: true }
+        : { auto_brightness: false, brightness: level } }, null);
+      break;
+    }
+    default:
+      return;
+  }
+  state.events.emit('function_key', { t: 'function_key', action, display_asleep: state.panelDisplayAsleep });
 }
 
 /** NDJSON server for the dashboard process (TCP on a PC, a Unix socket on the board). */
@@ -93,6 +122,7 @@ export function startPanelServer(state: State, listen: Listen): Promise<Server> 
     setImmediate(() => clients.forEach((s) => s.end()));
   };
   const onStatus = () => { broadcast(statusMessage(state)); broadcast({ t: 'mcp', ...state.mcpActivity }); };
+  state.events.on('function_key', broadcast);
   state.events.on('config_changed', onConfig);
   state.events.on('kvm_restarting', onRestart);
   state.events.on('console_sessions', onStatus);
@@ -146,7 +176,10 @@ export function startPanelServer(state: State, listen: Listen): Promise<Server> 
       case 'device_info':
         return reply({ ok: true, data: deviceInfo(state) });
       case 'action':
-        if (m.action === 'eject_media') {
+        if (m.action === 'wake_display') {
+          state.panelDisplayAsleep = false;
+          broadcast(boardMessage(state, tick));
+        } else if (m.action === 'eject_media') {
           state.mediaMount = null;
           state.media = { mounted: null, mode: null };
           state.events.emit('status_changed');
@@ -169,6 +202,7 @@ export function startPanelServer(state: State, listen: Listen): Promise<Server> 
   server.on('close', () => {
     clearInterval(telemetry);
     clearInterval(status);
+    state.events.off('function_key', broadcast);
     state.events.off('config_changed', onConfig);
     state.events.off('kvm_restarting', onRestart);
     state.events.off('console_sessions', onStatus);

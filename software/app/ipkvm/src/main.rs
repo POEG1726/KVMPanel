@@ -56,6 +56,7 @@ async fn main() -> io::Result<()> {
     }
     tokio::spawn(kvmd::console::jiggler(app.clone()));
     tokio::spawn(kvmd::mcp_background(app.clone()));
+    tokio::spawn(kvmd::keys::run(app.clone()));
     kvmd::system::start_services(app.clone());
     let panel = args.panel.unwrap_or_else(|| {
         if args.sim {

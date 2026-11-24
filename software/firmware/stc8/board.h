@@ -18,14 +18,14 @@
 #define ISP_MIN_MS       500
 #define ISP_MAX_MS       3000
 
-/* Inclusive 10-bit ADC counts. Both windows require H7 measurements.
- * The shipped defaults disable gestures until both windows are calibrated. */
+/* Inclusive VCC-referenced ADC counts. Boundaries come from adjacent
+ * 1%-tolerance resistor states; see README.md for the calculated margins. */
 #ifndef KEY_BOTH_LOW
-#define KEY_BOTH_LOW     1
-#define KEY_BOTH_HIGH    0
-#define KEY_IDLE_LOW     1
-#define KEY_IDLE_HIGH    0
-#define KEY_HYSTERESIS   0
+#define KEY_BOTH_LOW     132
+#define KEY_BOTH_HIGH    161
+#define KEY_IDLE_LOW     249
+#define KEY_IDLE_HIGH    1023
+#define KEY_HYSTERESIS   4
 #elif !defined(KEY_BOTH_HIGH) || !defined(KEY_IDLE_LOW) || \
       !defined(KEY_IDLE_HIGH) || !defined(KEY_HYSTERESIS)
 #error Set both ADC windows and hysteresis together

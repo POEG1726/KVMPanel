@@ -16,7 +16,7 @@
 
 enum { SHELL = 0x101722, SURFACE = 0x182331, TEXT = 0xf0f6fc, MUTED = 0x92a7ba,
        ACCENT = 0x77ddc2, ALERT = 0xffad76, MAX_METRICS = 768, CHANGE_ID = 2,
-       MCP_STOP_ID = 5 };
+       MCP_STOP_ID = 5, SETTINGS_TAB = 4 };
 
 typedef struct {
     char id[48];
@@ -26,7 +26,7 @@ typedef struct {
 
 static lv_display_t *display;
 static lv_obj_t *tabs, *groups[4], *note, *power, *offline, *settings_list, *rotation, *sleep_mask;
-static lv_obj_t *mcp_banner, *mcp_label, *mcp_button;
+static lv_obj_t *mcp_banner, *mcp_label, *mcp_button, *kvm_switch;
 LV_FONT_DECLARE(mcp_font)
 static lv_font_t mcp_display_font;
 static MetricRow rows[MAX_METRICS];
@@ -39,7 +39,8 @@ static cJSON *hidden;
 static unsigned row_count;
 static bool requested_change;
 static bool powering_on;
-static bool mcp_active, display_asleep;
+static bool mcp_active, display_asleep, kvm_enabled = true;
+static uint32_t last_metric_tab;
 static uint32_t power_request_time;
 static uint32_t last_telemetry;
 static volatile sig_atomic_t stop;
@@ -119,7 +120,7 @@ static void mcp_state(const cJSON *message)
         lv_obj_remove_state(mcp_button, LV_STATE_DISABLED);
     mcp_active = active;
     lv_obj_set_hidden(mcp_banner, !active);
-    lv_obj_set_hidden(sleep_mask, !display_asleep || active);
+    lv_obj_set_hidden(sleep_mask, !display_asleep);
     if (active && !lv_obj_has_state(mcp_button, LV_STATE_DISABLED)) {
         const char *name = str(message, "key_name");
         lv_label_set_text_fmt(mcp_label, "%s%s%s", "AI 正在操作",
@@ -127,21 +128,21 @@ static void mcp_state(const cJSON *message)
     }
 }
 
-/** Create a patch for the shared panel settings, including all hidden IDs. */
-static bool patch(const char *key, cJSON *value)
+/** @brief Send a change to one section of the shared configuration. */
+static bool patch(const char *section, const char *key, cJSON *value)
 {
     if (requested_change || !value) {
         cJSON_Delete(value);
         return false;
     }
     cJSON *root = cJSON_CreateObject();
-    cJSON *panel = root ? cJSON_AddObjectToObject(root, "panel") : NULL;
-    if (!panel) {
+    cJSON *part = root ? cJSON_AddObjectToObject(root, section) : NULL;
+    if (!part) {
         cJSON_Delete(root);
         cJSON_Delete(value);
         return false;
     }
-    cJSON_AddItemToObject(panel, key, value);
+    cJSON_AddItemToObject(part, key, value);
     requested_change = send("patch_config", CHANGE_ID, "patch", root);
     return requested_change;
 }
@@ -167,13 +168,53 @@ static void set_rotation(lv_event_t *event)
 {
     const uint32_t index = lv_dropdown_get_selected(lv_event_get_target_obj(event));
     if (index < sizeof(directions) / sizeof(directions[0]))
-        patch("orientation", cJSON_CreateString(directions[index]));
+        patch("panel", "orientation", cJSON_CreateString(directions[index]));
 }
 
+/** @brief Request metrics in settings and remember the previously visible page. */
 static void settings_open(lv_event_t *event)
 {
-    if (lv_tabview_get_tab_active(lv_event_get_target_obj(event)) == 4)
+    (void)event;
+    const uint32_t tab = lv_tabview_get_tab_active(tabs);
+    if (tab == SETTINGS_TAB)
         send("metric_catalogue", 1, NULL, NULL);
+    else
+        last_metric_tab = tab;
+}
+
+/** @brief Apply a physical FUNC action received from kvmd. */
+static void function_key(const cJSON *message)
+{
+    const char *action = str(message, "action");
+    if (strcmp(action, "toggle_settings") == 0) {
+        const uint32_t tab = lv_tabview_get_tab_active(tabs);
+        if (tab != SETTINGS_TAB)
+            last_metric_tab = tab;
+        lv_tabview_set_active(tabs, tab == SETTINGS_TAB ? last_metric_tab : SETTINGS_TAB, LV_ANIM_OFF);
+        settings_open(NULL);
+    } else if (strcmp(action, "toggle_screen") != 0) {
+        return; /* Brightness is applied to the backlight by kvmd. */
+    }
+    display_asleep = cJSON_IsTrue(field(message, "display_asleep"));
+    lv_obj_set_hidden(sleep_mask, !display_asleep);
+}
+
+/** @brief Update the switch from the authoritative configuration. */
+static void update_kvm_switch(void)
+{
+    if (kvm_enabled)
+        lv_obj_add_state(kvm_switch, LV_STATE_CHECKED);
+    else
+        lv_obj_remove_state(kvm_switch, LV_STATE_CHECKED);
+}
+
+/** @brief Allow remote KVM to be reenabled locally after a physical pause. */
+static void change_kvm(lv_event_t *event)
+{
+    (void)event;
+    const bool enabled = lv_obj_has_state(kvm_switch, LV_STATE_CHECKED);
+    patch("kvm", "enabled", cJSON_CreateBool(enabled));
+    update_kvm_switch();
 }
 
 static int hidden_index(const char *id)
@@ -207,7 +248,7 @@ static void select_metric(lv_event_t *event)
         if (!visible && index < 0)
             cJSON_AddItemToArray(next, cJSON_CreateString(id));
     }
-    if (!patch("hidden_metrics", next)) {
+    if (!patch("panel", "hidden_metrics", next)) {
         if (index < 0)
             lv_obj_add_state(check, LV_STATE_CHECKED);
         else
@@ -246,7 +287,13 @@ static void inventory(const cJSON *list)
 
 static void configure(const cJSON *message)
 {
-    const cJSON *panel = field(field(message, "config"), "panel");
+    const cJSON *config = field(message, "config");
+    const cJSON *enabled = field(field(config, "kvm"), "enabled");
+    if (cJSON_IsBool(enabled)) {
+        kvm_enabled = cJSON_IsTrue(enabled);
+        update_kvm_switch();
+    }
+    const cJSON *panel = field(config, "panel");
     const cJSON *list = field(panel, "hidden_metrics");
     if (cJSON_IsArray(list)) {
         cJSON_Delete(hidden);
@@ -260,7 +307,7 @@ static void configure(const cJSON *message)
             break;
         }
     }
-    if (lv_tabview_get_tab_active(tabs) == 4)
+    if (lv_tabview_get_tab_active(tabs) == SETTINGS_TAB)
         send("metric_catalogue", 1, NULL, NULL);
 }
 
@@ -348,7 +395,7 @@ static void board_state(const cJSON *message)
     char text[192];
     const char *pc = str(message, "pc_power");
     display_asleep = cJSON_IsTrue(field(message, "display_asleep"));
-    lv_obj_set_hidden(sleep_mask, !display_asleep || mcp_active);
+    lv_obj_set_hidden(sleep_mask, !display_asleep);
     const bool pc_off = strcmp(pc, "off") == 0;
     const bool online = last_telemetry && lv_tick_elaps(last_telemetry) < 3000;
     const char *state = online ? "PC connected" : pc_off ? "PC is off" :
@@ -414,6 +461,8 @@ static void on_message(const cJSON *message)
         telemetry(field(message, "metrics"));
     else if (strcmp(type, "mcp") == 0)
         mcp_state(message);
+    else if (strcmp(type, "function_key") == 0)
+        function_key(message);
     else if (strcmp(type, "result") == 0) {
         const double id = number(message, "id");
         const bool ok = cJSON_IsTrue(field(message, "ok"));
@@ -492,6 +541,10 @@ static void create_screen(void)
     rotation = lv_dropdown_create(settings);
     lv_dropdown_set_options(rotation, "Normal\n90° right\n180°\n90° left");
     lv_obj_add_event_cb(rotation, set_rotation, LV_EVENT_VALUE_CHANGED, NULL);
+    label(settings, "Remote KVM", TEXT);
+    kvm_switch = lv_switch_create(settings);
+    update_kvm_switch();
+    lv_obj_add_event_cb(kvm_switch, change_kvm, LV_EVENT_VALUE_CHANGED, NULL);
     label(settings, "Show metrics", TEXT);
     settings_list = lv_obj_create(settings);
     vertical(settings_list, SURFACE);

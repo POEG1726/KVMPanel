@@ -2,6 +2,15 @@
 
 最近五项有实际进展的软件工作，最新一项在顶部。全项目状态见 [软件进度](docs/software-progress.md)。
 
+## 机箱物理按键
+
+核对日期 2026-11-23。
+
+- **代码**。T113 从 GPADC0 的 IIO raw 节点以 20 ms 采样，自动学习全松开基准和确认七个键态。FUNC 以 700 ms 分短长按，接入副屏、远程暂停和 MCP 急停。STC 1.2 的默认双键窗口 132–161，全松开窗口 249–1023，迟滞 4 计数。 [kvmd 入口](software/app/ipkvm/README.md#机箱物理按键) · [STC 入口](software/firmware/stc8/README.md)
+- **构建**。STC 镜像占用程序 Flash 6034 B。三份 DTB、原生和 ARM 副屏均已构建。ARM 静态 `kvmd` 去符号后为 13,136,808 B，较 `5a53387` 增加 72 KiB。
+- **模拟**。Rust 55 项单测和 54 项集成、HTTP 22 个 MCP 工具与 Mock 81 项通过。可写 ADC 文件覆盖校准、误差、组合与 FUNC 派发，并验证急停取消执行中的 MCP 按键。副屏无屏验证设置切换、屏幕唤醒和恢复 KVM，STC 状态机和模拟 ISP 通过。
+- **实板待测**。用 `KVMD_KEY_ADC_TRACE=1` 记录松开和各组合的原始读数与基准。复核两端窗口余量、STC 双键短按开机与强关、FUNC 短长按手感和急停。 [GPADC 与 H7 接线](docs/linux-6.18.md#c906hifi4-与-gpadc)
+
 ## MCP 服务
 
 核对日期 2026-11-23。
@@ -10,7 +19,7 @@
 - **构建**。网页、原生和 ARM Dashboard、WSL ARM 静态 `kvmd`、Windows x64 构建通过。ARM `kvmd` 去符号后为 13,030,312 字节，较 MCP 前增加 944 KiB。 [板端构建与验证](software/app/ipkvm/README.md#mcp-服务) · [Windows 构建与模拟](software/app/pc-telemetry/README.md#mcp-主机端通道)
 - **模拟**。Rust 102 项、Mock 79 项、网页 179 项通过。原生和 ARM Linux 来宾中的 `kvmd --sim` 经 HTTP 覆盖全部 22 个工具，包括可写介质确认和强关途中急停。MCP Inspector 验证了截图、点击、开机守护和进 BIOS。无屏副屏验证了横幅和停止，Unix panel socket 联调取消了正在长按的模拟按键。Windows 验证了 `info`、`clipboard`、`eject` 和默认关闭。
 - **人工输入优先更新**。设置页和 `host_status.control` 提供优先开关及 1–60 秒交还等待，默认开启及两秒。原生 Rust 104 项、HTTP 全部 22 个工具、Mock 80 项、网页构建和 181 项测试通过。验证了默认拦截与到期放行、关闭后输入交错和急停。上面的 ARM、Windows、Inspector 和副屏记录适用于 MCP 首版。 [管理接口](software/app/api/README.md#mcp)
-- **实板待测**。接手从 [设计 §13](docs/superpowers/specs/2026-11-23-mcp-design.md#13-验证) 开始，核对人工和 MCP 键鼠交错、USB 双向吞吐、真实 LUN 2 弹出、绝对坐标、GPIO 急停、BIOS 连按、启动时间线、WS2812 和实际触摸。物理功能键接入按第 10 节留给板级联调。
+- **实板待测**。接手从 [设计 §13](docs/superpowers/specs/2026-11-23-mcp-design.md#13-验证) 开始，核对人工和 MCP 键鼠交错、USB 双向吞吐、真实 LUN 2 弹出、绝对坐标、GPIO 急停、BIOS 连按、启动时间线、WS2812 和实际触摸。物理 FUNC 急停已通过原生模拟，实板待测。
 
 ## T113 接口驱动强度
 
@@ -35,10 +44,3 @@
 
 - `kvmd` 每秒上报 `board`，通过 `metric_catalogue` 提供包含隐藏项的清单，检查 PE12 后才处理 `pc_power_on`。板端 Dashboard 用 LVGL framebuffer 逐项显隐、四方向旋转，主机离线时显示板子状态并可息屏唤醒。Rust、Mock、网页、ARM 静态构建及原生和 ARM/QEMU 无屏冒烟均通过。 [Dashboard](software/app/dashboard/README.md) · [协议](software/app/api/README.md#副屏-panel-socket)
 - `build/debian/kvmpanel-debian13-armhf-dashboard.img.xz` 包含副屏、`kvmd`、WS2812 和 MJPEG 内核，已离线检查文件系统、服务及组合 DTB。接手先核对实际屏、触摸设备和 /dev/fb0，再测试 USB 实板数据、开机按钮、息屏和方向。当前主屏用分组指标列表，原型的横屏方案 B 及曲线排版尚待移植。 [镜像构建](software/os/debian/README.md)
-
-## WS2812 板级驱动
-
-核对日期 2026-11-23。
-
-- 组合 DTB 启用 T113 硬件 LEDC，以 PG13 驱动四颗 WS2812B-2020-V6。完成 ARM zImage 构建、驱动链接及设备树绑定检查。输出在 WSL 的 `~/work/KVMPanel/build/linux-ws2812/`。 [WS2812 接线、时序与 sysfs](docs/linux-6.18.md#ws2812)
-- 实板可用后测 PG13 的位时序和复位低电平，逐颗核对 LED1、LED2、LED4、LED5 的三色及亮度。

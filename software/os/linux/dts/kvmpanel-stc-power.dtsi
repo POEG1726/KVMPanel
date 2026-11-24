@@ -26,7 +26,7 @@
 	#size-cells = <0>;
 	status = "okay";
 
-	/* H7 KEY_ADC via Q1. Linux key mapping requires measured levels. */
+	/* H7 KEY_ADC via Q1, read through IIO by kvmd while Linux is running. */
 	channel@0 {
 		reg = <0>;
 	};
